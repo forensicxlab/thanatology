@@ -1,8 +1,10 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
+import Database from "@tauri-apps/plugin-sql";
+
 import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
@@ -14,6 +16,8 @@ import Dashboard from "./components/Dashboard";
 import Cases from "./components/Cases";
 import Tasks from "./components/Tasks";
 import Settings from "./components/Settings";
+import FirstLaunch from "./components/firstLaunch/FirstLaunch";
+import { SnackbarProvider } from "./components/SnackbarProvider";
 
 const darkTheme = createTheme({
   palette: {
@@ -22,26 +26,44 @@ const darkTheme = createTheme({
 });
 
 const App: React.FC = () => {
-  // async function greet() {
-  //   // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  //   setGreetMsg(await invoke("greet", { "test" }));
-  // }
+  const [database, setDatabase] = React.useState<Database | null>(null);
+  const [firstLaunch, setFirstLaunch] = React.useState<Boolean>(false);
+
+  const loadDatabase = async () => {
+    const db = await Database.load("sqlite:thanatology.db");
+    setDatabase(db);
+    const users = await db.select("SELECT * from users");
+    console.log(users);
+    users ? setFirstLaunch(false) : setFirstLaunch(true);
+  };
+
+  React.useEffect(() => {
+    loadDatabase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <Router>
-        <Routes>
-          <Route path="/" element={<MiniDrawer />}>
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="cases" element={<Cases />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="settings" element={<Settings />} />
-            {/*
-            <Route path="evidences/:id" element={<EvidenceDetail />} />
-            <Route path="cases/:id" element={<CaseDetail />} /> */}
-          </Route>
-        </Routes>
-      </Router>
+      <SnackbarProvider>
+        {firstLaunch ? (
+          <FirstLaunch database={database} setFirstLaunch={setFirstLaunch} />
+        ) : (
+          <Router>
+            <Routes>
+              <Route path="/" element={<MiniDrawer />}>
+                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="cases" element={<Cases />} />
+                <Route path="tasks" element={<Tasks />} />
+                <Route path="settings" element={<Settings />} />
+                {/*
+                <Route path="evidences/:id" element={<EvidenceDetail />} />
+                <Route path="cases/:id" element={<CaseDetail />} /> */}
+              </Route>
+            </Routes>
+          </Router>
+        )}
+      </SnackbarProvider>
     </ThemeProvider>
   );
 };

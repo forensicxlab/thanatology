@@ -22,8 +22,11 @@ import {
   Memory,
   QuestionMark,
   Settings,
+  ChevronRight,
+  ChevronLeft,
 } from "@mui/icons-material";
 import { Outlet, Link } from "react-router";
+import ResponsiveAppBar from "./AppBar";
 
 const drawerWidth = 240;
 
@@ -139,36 +142,9 @@ export default function MiniDrawer() {
   return (
     <Box sx={{ display: "flex" }}>
       <CssBaseline />
-      <AppBar position="fixed" open={open}>
-        <Toolbar>
-          <IconButton
-            color="inherit"
-            aria-label="open drawer"
-            onClick={handleDrawerOpen}
-            edge="start"
-            sx={[
-              {
-                marginRight: 5,
-              },
-              open && { display: "none" },
-            ]}
-          >
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" noWrap component="div">
-            Thanatology
-          </Typography>
-        </Toolbar>
-      </AppBar>
       <Drawer variant="permanent" open={open}>
         <DrawerHeader>
-          <IconButton onClick={handleDrawerClose}>
-            {theme.direction === "rtl" ? (
-              <ChevronRightIcon />
-            ) : (
-              <ChevronLeftIcon />
-            )}
-          </IconButton>
+          <ResponsiveAppBar />
         </DrawerHeader>
         <Divider />
         <List>
@@ -196,6 +172,32 @@ export default function MiniDrawer() {
               </ListItemButton>
             </ListItem>
           ))}
+        </List>
+        <List>
+          <ListItem disablePadding sx={{ display: "block" }}>
+            <ListItemButton
+              sx={{
+                minHeight: 48,
+                justifyContent: open ? "initial" : "center",
+                px: 2.5,
+              }}
+            >
+              <ListItemIcon
+                sx={{
+                  minWidth: 0,
+                  mr: open ? 3 : "auto",
+                  justifyContent: "center",
+                }}
+              >
+                <IconButton
+                  onClick={open ? handleDrawerClose : handleDrawerOpen}
+                >
+                  {open ? <ChevronRight /> : <ChevronLeft />}
+                </IconButton>
+              </ListItemIcon>
+              <ListItemText primary="Close" sx={{ opacity: open ? 1 : 0 }} />
+            </ListItemButton>
+          </ListItem>
         </List>
       </Drawer>
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
