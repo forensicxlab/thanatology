@@ -4,8 +4,6 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import Database from "@tauri-apps/plugin-sql";
-
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
@@ -13,11 +11,12 @@ import CssBaseline from "@mui/material/CssBaseline";
 import MiniDrawer from "./components/MiniDrawer";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router";
 import Dashboard from "./components/Dashboard";
-import Cases from "./components/Cases";
+import Cases from "./components/cases/Cases";
 import Tasks from "./components/Tasks";
 import Settings from "./components/Settings";
 import FirstLaunch from "./components/firstLaunch/FirstLaunch";
 import { SnackbarProvider } from "./components/SnackbarProvider";
+import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper";
 
 const darkTheme = createTheme({
   palette: {
@@ -52,8 +51,9 @@ const App: React.FC = () => {
           <Router>
             <Routes>
               <Route path="/" element={<MiniDrawer />}>
-                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="" element={<Dashboard />} />
                 <Route path="cases" element={<Cases />} />
+                <Route path="case/new" element={<CaseCreationStepper />} />
                 <Route path="tasks" element={<Tasks />} />
                 <Route path="settings" element={<Settings />} />
                 {/*

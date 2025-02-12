@@ -3,6 +3,7 @@ import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";
 import Grid from "@mui/material/Grid2";
 import Typography from "@mui/material/Typography";
+import CreateCaseButton from "./cases/buttons/CreateCaseButton";
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: "#fff",
   ...theme.typography.body2,
@@ -17,10 +18,12 @@ const Item = styled(Paper)(({ theme }) => ({
 export default function Dashboard() {
   return (
     <Box sx={{ flexGrow: 1 }}>
-      <Typography variant="h4" gutterBottom>
-        Dashboard
+      <Typography variant="h6" gutterBottom>
+        Dashboard: We obviously do the beautifull UI in the end. Focus on
+        functionnalities.
       </Typography>
-      <Grid container spacing={2}>
+      <CreateCaseButton />
+      {/* <Grid container spacing={2}>
         <Grid size={8}>
           <Item>size=8</Item>
         </Grid>
@@ -33,7 +36,7 @@ export default function Dashboard() {
         <Grid size={8}>
           <Item>size=8</Item>
         </Grid>
-      </Grid>
+      </Grid> */}
     </Box>
   );
 }

@@ -148,7 +148,7 @@ export default function MiniDrawer() {
         </DrawerHeader>
         <Divider />
         <List>
-          {["Dashboard", "Cases", "Tasks", "Settings"].map((text, index) => (
+          {["", "Cases", "Tasks", "Settings"].map((text, index) => (
             <ListItem key={index} disablePadding sx={{ display: "block" }}>
               <ListItemButton
                 sx={{
@@ -168,7 +168,10 @@ export default function MiniDrawer() {
                 >
                   {renderIcon(index)}
                 </ListItemIcon>
-                <ListItemText primary={text} sx={{ opacity: open ? 1 : 0 }} />
+                <ListItemText
+                  primary={text === "" ? "Dashboard" : text}
+                  sx={{ opacity: open ? 1 : 0 }}
+                />
               </ListItemButton>
             </ListItem>
           ))}
