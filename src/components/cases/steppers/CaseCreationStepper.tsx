@@ -24,7 +24,6 @@ export default function CaseCreationStepper() {
   const availableUsernames = ["alice", "bob", "charlie", "dave"]; // TODO: fetch from database
 
   // ---------------- EVIDENCE FIELDS------------------
-
   const defaultEmptyEvidence: EvidenceData = {
     evidenceName: "",
     evidenceType: "Disk image",
@@ -41,13 +40,29 @@ export default function CaseCreationStepper() {
     { ...defaultEmptyEvidence },
   ]);
 
-  const isStepOptional = (step: number) => {
-    return step === 1;
+  // Helper function to check if the case information is complete
+  const isCaseInfoValid = (): boolean => {
+    return name.trim() !== "" && description.trim() !== "";
+    // Optionally, if you want at least one collaborator:
+    // && selectedCollaborators.length > 0;
   };
 
-  const isStepSkipped = (step: number) => {
-    return skipped.has(step);
+  // Helper function to check if an evidence is fully filled
+  const isEvidenceComplete = (evidence: EvidenceData): boolean => {
+    return (
+      evidence.evidenceName.trim() !== "" &&
+      evidence.evidenceType.trim() !== "" &&
+      evidence.evidenceDescription.trim() !== ""
+    );
   };
+
+  // Check if every evidence in the array is complete
+  const isEvidenceStepValid = (): boolean =>
+    evidences.every(isEvidenceComplete);
+
+  const isStepOptional = (step: number) => step === 1;
+
+  const isStepSkipped = (step: number) => skipped.has(step);
 
   const handleNext = () => {
     let newSkipped = skipped;
@@ -56,8 +71,7 @@ export default function CaseCreationStepper() {
       newSkipped.delete(activeStep);
     } else {
       if (activeStep === 1) {
-        // The user was on the evidence step and did not skip it.
-        // You might add validations or other logic here.
+        // Additional validations for the evidence step could go here if needed.
       }
     }
     setActiveStep((prevActiveStep) => prevActiveStep + 1);
@@ -177,7 +191,14 @@ export default function CaseCreationStepper() {
                 Load evidence(s) later
               </Button>
             )}
-            <Button onClick={handleNext}>
+            <Button
+              onClick={handleNext}
+              // Disable Next on the Case Information and Evidence steps if not all fields are filled
+              disabled={
+                (activeStep === 0 && !isCaseInfoValid()) ||
+                (activeStep === 1 && !isEvidenceStepValid())
+              }
+            >
               {activeStep === steps.length - 1 ? "Finish" : "Next"}
             </Button>
           </Box>

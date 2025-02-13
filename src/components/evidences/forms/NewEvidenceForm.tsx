@@ -99,16 +99,13 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
           label="Evidence Type"
           onChange={(e) =>
             onEvidenceTypeChange(
-              e.target.value as "Disk image" | "Memory Image" | "Procmon dump",
+              e.target.value as "Disk image" | "Memory Image",
             )
           }
         >
           <MenuItem value="Disk image">Disk image</MenuItem>
           <MenuItem value="Memory Image" disabled>
             Memory Image
-          </MenuItem>
-          <MenuItem value="Procmon dump" disabled>
-            Procmon dump
           </MenuItem>
         </Select>
       </FormControl>

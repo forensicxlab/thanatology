@@ -9,3 +9,23 @@ export interface EvidenceData {
   sealReason: string;
   sealReferenceFile: File | null;
 }
+
+export interface Partition {
+  //TODO Take the fields from the exhume module
+}
+
+export interface Module {
+  name: String;
+  //...TODO
+}
+
+export interface ProcessDiskImage {
+  imageFormat: string;
+  isFormatCompatible: boolean;
+  partitions: Partition[];
+  compatibleModules: Module[];
+  selectedModules: Module[];
+  status: string;
+  startDate: Date;
+  endDate: Date;
+}
