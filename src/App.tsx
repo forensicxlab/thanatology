@@ -17,6 +17,8 @@ import Settings from "./components/Settings";
 import FirstLaunch from "./components/firstLaunch/FirstLaunch";
 import { SnackbarProvider } from "./components/SnackbarProvider";
 import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper";
+import DiskImage from "./components/preprocessing/DiskImage";
+import { EvidenceData, ProcessedEvidenceMetadata } from "./dbutils/types";
 
 const darkTheme = createTheme({
   palette: {
@@ -41,6 +43,24 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const dummyEvidenceData: EvidenceData = {
+    evidenceName: "Dummy Disk Image",
+    evidenceType: "Disk image",
+    evidenceLocation:
+      "/Users/k1nd0ne/Work/Thanatology/framework/samples/RAW/s4a-challenge4",
+    evidenceDescription: "This is a dummy disk image used for testing.",
+    sealNumber: "SEAL123",
+    sealingDateTime: new Date().toISOString(),
+    sealingLocation: "Test Lab",
+    sealingPerson: "Test User",
+    sealReason: "For testing purposes",
+    sealReferenceFile: null,
+  };
+
+  const handlePreprocessingComplete = (metadata: ProcessedEvidenceMetadata) => {
+    console.log("Preprocessing complete:", metadata);
+  };
+
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
@@ -56,6 +76,16 @@ const App: React.FC = () => {
                 <Route path="case/new" element={<CaseCreationStepper />} />
                 <Route path="tasks" element={<Tasks />} />
                 <Route path="settings" element={<Settings />} />
+                <Route
+                  path="/evidence/preprocess"
+                  element={
+                    <DiskImage
+                      evidenceData={dummyEvidenceData}
+                      onComplete={handlePreprocessingComplete}
+                    />
+                  }
+                />
+
                 {/*
                 <Route path="evidences/:id" element={<EvidenceDetail />} />
                 <Route path="cases/:id" element={<CaseDetail />} /> */}

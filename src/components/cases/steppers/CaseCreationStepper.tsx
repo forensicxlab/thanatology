@@ -27,6 +27,7 @@ export default function CaseCreationStepper() {
   const defaultEmptyEvidence: EvidenceData = {
     evidenceName: "",
     evidenceType: "Disk image",
+    evidenceLocation: "",
     evidenceDescription: "",
     sealNumber: "",
     sealingDateTime: "",

@@ -86,6 +86,7 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
               hideSubmitButton
               evidenceName={evidence.evidenceName}
               evidenceType={evidence.evidenceType}
+              evidenceLocation={evidence.evidenceLocation}
               evidenceDescription={evidence.evidenceDescription}
               sealNumber={evidence.sealNumber}
               sealingDateTime={evidence.sealingDateTime}
@@ -98,6 +99,9 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
               }
               onEvidenceTypeChange={(value) =>
                 updateEvidenceField(index, "evidenceType", value)
+              }
+              onEvidenceLocationChange={(value) =>
+                updateEvidenceField(index, "evidenceLocation", value)
               }
               onEvidenceDescriptionChange={(value) =>
                 updateEvidenceField(index, "evidenceDescription", value)

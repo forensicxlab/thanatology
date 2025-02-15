@@ -10,10 +10,12 @@ import {
   FormControl,
   Typography,
 } from "@mui/material";
+import { open } from "@tauri-apps/plugin-dialog";
 
 export interface NewEvidenceFormProps {
   evidenceName: string;
   evidenceType: "Disk image" | "Memory Image" | "Procmon dump";
+  evidenceLocation: string;
   evidenceDescription: string;
   sealNumber: string;
   sealingDateTime: string; // expecting a string formatted as "YYYY-MM-DDThh:mm"
@@ -26,6 +28,7 @@ export interface NewEvidenceFormProps {
   onEvidenceTypeChange: (
     value: "Disk image" | "Memory Image" | "Procmon dump",
   ) => void;
+  onEvidenceLocationChange: (value: string) => void;
   onEvidenceDescriptionChange: (value: string) => void;
   onSealNumberChange: (value: string) => void;
   onSealingDateTimeChange: (value: string) => void;
@@ -43,6 +46,7 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
   const {
     evidenceName,
     evidenceType,
+    evidenceLocation,
     evidenceDescription,
     sealNumber,
     sealingDateTime,
@@ -52,6 +56,7 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
     sealReferenceFile,
     onEvidenceNameChange,
     onEvidenceTypeChange,
+    onEvidenceLocationChange,
     onEvidenceDescriptionChange,
     onSealNumberChange,
     onSealingDateTimeChange,
@@ -69,6 +74,23 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
       onSealReferenceFileChange(event.target.files[0]);
     } else {
       onSealReferenceFileChange(null);
+    }
+  };
+
+  const handleFileSelect = async () => {
+    try {
+      // Open the file dialog; adjust filters as needed.
+      const selected = await open({
+        multiple: false,
+        directory: false,
+      });
+
+      // When multiple is false, selected is either a string or null.
+      if (selected) {
+        onEvidenceLocationChange(selected as string);
+      }
+    } catch (error) {
+      console.error("Error selecting file:", error);
     }
   };
 
@@ -108,6 +130,17 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
             Memory Image
           </MenuItem>
         </Select>
+      </FormControl>
+      <FormControl fullWidth required>
+        <TextField
+          label="Selected File"
+          value={evidenceLocation}
+          fullWidth
+          slotProps={{ input: { readOnly: true } }}
+        />
+        <Button variant="contained" onClick={handleFileSelect}>
+          Browse...
+        </Button>
       </FormControl>
 
       {/* Description */}

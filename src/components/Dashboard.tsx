@@ -4,6 +4,7 @@ import Paper from "@mui/material/Paper";
 import Grid from "@mui/material/Grid2";
 import Typography from "@mui/material/Typography";
 import CreateCaseButton from "./cases/buttons/CreateCaseButton";
+import TempPreprocessSim from "./evidences/buttons/TempPreprocessSim";
 const Item = styled(Paper)(({ theme }) => ({
   backgroundColor: "#fff",
   ...theme.typography.body2,
@@ -23,6 +24,8 @@ export default function Dashboard() {
         functionnalities.
       </Typography>
       <CreateCaseButton />
+      <TempPreprocessSim />
+
       {/* <Grid container spacing={2}>
         <Grid size={8}>
           <Item>size=8</Item>
