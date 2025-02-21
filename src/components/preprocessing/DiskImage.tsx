@@ -8,29 +8,25 @@ import {
   StepLabel,
   Typography,
   FormControl,
-  RadioGroup,
   FormControlLabel,
-  Radio,
-  FormGroup,
   Checkbox,
+  FormGroup,
   StepContent,
 } from "@mui/material";
 import CircularProgress from "@mui/material/CircularProgress";
-import { green } from "@mui/material/colors";
+import { DataGrid, GridColDef, GridRenderCellParams } from "@mui/x-data-grid";
 
 import {
   EvidenceData,
   ProcessedEvidenceMetadata,
-  MBRPartitionEntry,
   ExtractionModule,
+  Partitions,
 } from "../../dbutils/types";
 
 interface DiskImageProps {
   evidenceData: EvidenceData;
   onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
-
-// -- COMPONENT
 
 const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
   // Step control
@@ -39,17 +35,23 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
     "Check Evidence Existence",
     "Autocheck Disk Image Format",
     "Partition Discovery",
-    "Read Partition",
+    "Read Partition(s)",
     "Select Artefact Extraction Modules",
     "Finalize Metadata",
   ];
 
-  // Data coming from backend calls:
+  // Data from backend calls:
   const [diskImageFormat, setDiskImageFormat] = useState<string>("");
-  const [partitions, setPartitions] = useState<MBRPartitionEntry[]>([]);
-  const [selectedPartitionIndex, setSelectedPartitionIndex] = useState<
-    number | null
-  >(null);
+  const [partitions, setPartitions] = useState<Partitions>();
+  // Combine MBR and EBR entries into one array.
+  console.log(partitions);
+  const allPartitions = partitions
+    ? [...partitions.mbr.partition_table, ...partitions.ebr]
+    : [];
+  // Allow multiple partition selections:
+  const [selectedPartitionIndices, setSelectedPartitionIndices] = useState<
+    number[]
+  >([]);
   const [extractionModules, setExtractionModules] = useState<
     ExtractionModule[]
   >([]);
@@ -57,271 +59,317 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
     string[]
   >([]);
 
-  // -------------------------------
-  // Step 0: Check Evidence Existence
-  // -------------------------------
-  const checkEvidenceExistence = async (): Promise<boolean> => {
-    try {
-      // Replace with your actual API call & parameters.
-      console.log(evidenceData.evidenceLocation);
-      const exists: boolean = await invoke("check_evidence_exists", {
-        path: evidenceData.evidenceLocation, // ensure the file has a path property
-      });
-      if (!exists) {
-        console.error("Evidence not found at the specified location.");
-      }
-      return exists;
-    } catch (error) {
-      console.error("Error checking evidence existence:", error);
-      return false;
-    }
-  };
+  // Error state for the current step.
+  const [currentError, setCurrentError] = useState<string | null>(null);
 
   // -------------------------------
-  // Step 1: Auto-check Disk Image Format
+  // Auto Steps: 0, 1 & 2
   // -------------------------------
-  const checkDiskImageFormat = async (): Promise<boolean> => {
-    try {
-      // Assume the backend returns the format (e.g. "E01", "DD", etc.)
-      const format: string = await invoke("check_disk_image_format", {
-        path: evidenceData.evidenceLocation,
-      });
-      setDiskImageFormat(format);
-      return true;
-    } catch (error) {
-      console.error("Error in disk image format check:", error);
-      return false;
-    }
-  };
-
-  // -------------------------------
-  // Step 2: Partition Discovery
-  // -------------------------------
-  const discoverPartitions = async (): Promise<boolean> => {
-    try {
-      // Replace with your actual API call to discover partitions.
-      const discovered: MBRPartitionEntry[] = await invoke(
-        "discover_partitions",
-        {
+  const runAutoStep = async (step: number) => {
+    if (step === 0) {
+      try {
+        const exists: boolean = await invoke("check_evidence_exists", {
           path: evidenceData.evidenceLocation,
-        },
-      );
-      setPartitions(discovered);
-      return true;
-    } catch (error) {
-      console.error("Error during partition discovery:", error);
-      return false;
+        });
+        if (!exists) {
+          setCurrentError("Evidence not found at the specified location.");
+        } else {
+          setCurrentError(null);
+          setActiveStep(1);
+        }
+      } catch (error) {
+        console.error("Error checking evidence existence:", error);
+        setCurrentError(`Error checking evidence existence: ${error}`);
+      }
+    } else if (step === 1) {
+      try {
+        const format: string = await invoke("check_disk_image_format", {
+          path: evidenceData.evidenceLocation,
+        });
+        setDiskImageFormat(format);
+        setCurrentError(null);
+        setActiveStep(2);
+      } catch (error) {
+        console.error("Error in disk image format check:", error);
+        setCurrentError(`Error in disk image format check: ${error}`);
+      }
+    } else if (step === 2) {
+      try {
+        const discovered: Partitions = await invoke("discover_partitions", {
+          path: evidenceData.evidenceLocation,
+        });
+        setPartitions(discovered);
+        setCurrentError(null);
+        setActiveStep(3);
+      } catch (error) {
+        console.error("Error during partition discovery:", error);
+        setCurrentError("Error during partition discovery.");
+      }
     }
   };
 
-  // -------------------------------
-  // Step 3: Read Selected Partition
-  // -------------------------------
-  const readSelectedPartition = async (): Promise<boolean> => {
-    if (selectedPartitionIndex === null) {
-      console.error("No partition selected.");
-      return false;
+  // Automatically run auto steps.
+  useEffect(() => {
+    if (activeStep < 3) {
+      runAutoStep(activeStep);
     }
-    try {
-      const selectedPartition = partitions[selectedPartitionIndex];
-      // The API is assumed to read the partition and return a status.
-      await invoke("read_partition", {
-        partition: selectedPartition,
-        path: evidenceData.evidenceLocation,
-      });
-      return true;
-    } catch (error) {
-      console.error("Error reading partition:", error);
-      return false;
-    }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStep]);
 
   // -------------------------------
-  // Step 4: Fetch Extraction Modules for Selected Partition
-  // -------------------------------
-  const fetchExtractionModules = async (): Promise<boolean> => {
-    if (selectedPartitionIndex === null) {
-      console.error("No partition selected for extraction modules.");
-      return false;
-    }
-    try {
-      const selectedPartition = partitions[selectedPartitionIndex];
-      const modules: ExtractionModule[] = await invoke(
-        "get_extraction_modules",
-        {
-          partition: selectedPartition,
-        },
-      );
-      setExtractionModules(modules);
-      return true;
-    } catch (error) {
-      console.error("Error fetching extraction modules:", error);
-      return false;
-    }
-  };
-
-  // -------------------------------
-  // Handlers for Navigation
+  // Manual Steps Handlers (Steps 3-5)
   // -------------------------------
   const handleNext = async () => {
-    // For each step, perform the necessary API calls and validations.
-    if (activeStep === 0) {
-      const exists = await checkEvidenceExistence();
-      if (!exists) return;
-    } else if (activeStep === 1) {
-      const formatOk = await checkDiskImageFormat();
-      if (!formatOk) return;
-    } else if (activeStep === 2) {
-      const partitionsOk = await discoverPartitions();
-      if (!partitionsOk) return;
-    } else if (activeStep === 3) {
-      const readOk = await readSelectedPartition();
-      if (!readOk) return;
+    setCurrentError(null);
+    if (activeStep === 3) {
+      // Step 3: Read selected partition(s)
+      if (selectedPartitionIndices.length === 0) {
+        setCurrentError("No partition selected.");
+        return;
+      }
+      try {
+        for (const idx of selectedPartitionIndices) {
+          const selectedPartition = allPartitions[idx];
+          await invoke("read_partition", {
+            partition: selectedPartition,
+            path: evidenceData.evidenceLocation,
+          });
+        }
+      } catch (error) {
+        console.error("Error reading partition(s):", error);
+        setCurrentError("Error reading selected partition(s).");
+        return;
+      }
     } else if (activeStep === 4) {
-      // Ensure at least one extraction module is selected.
+      // Step 4: Ensure at least one extraction module is selected.
       if (selectedExtractionModules.length === 0) {
-        console.error("No extraction modules selected.");
+        setCurrentError("No extraction modules selected.");
         return;
       }
     } else if (activeStep === 5) {
-      // Finalize metadata and pass to the onComplete callback.
-      if (selectedPartitionIndex === null) {
-        console.error("No partition selected.");
+      // Finalize metadata.
+      if (selectedPartitionIndices.length === 0) {
+        setCurrentError("No partition selected.");
         return;
       }
       const metadata: ProcessedEvidenceMetadata = {
         evidenceData,
         diskImageFormat,
-        selectedPartition: partitions[selectedPartitionIndex],
+        selectedPartitions: allPartitions.filter((_, idx) =>
+          selectedPartitionIndices.includes(idx),
+        ),
         extractionModules: extractionModules.filter((mod) =>
           selectedExtractionModules.includes(mod.id),
         ),
-      };
+      } as any;
       onComplete(metadata);
       return;
     }
-
-    // Proceed to the next step.
     setActiveStep((prev) => prev + 1);
   };
 
   const handleBack = () => {
+    setCurrentError(null);
     setActiveStep((prev) => prev - 1);
   };
 
   // -------------------------------
-  // Handlers for User Selections
+  // Handlers for Selections
   // -------------------------------
-  // Partition selection (Step 3)
-  const handlePartitionSelection = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    setSelectedPartitionIndex(parseInt(event.target.value, 10));
+  const togglePartitionSelection = (index: number) => {
+    setSelectedPartitionIndices((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index],
+    );
   };
 
-  // Extraction module toggling (Step 4)
   const handleExtractionModuleToggle = (moduleId: string) => {
-    setSelectedExtractionModules((prev) => {
-      if (prev.includes(moduleId)) {
-        return prev.filter((id) => id !== moduleId);
-      } else {
-        return [...prev, moduleId];
-      }
-    });
+    setSelectedExtractionModules((prev) =>
+      prev.includes(moduleId)
+        ? prev.filter((id) => id !== moduleId)
+        : [...prev, moduleId],
+    );
   };
 
-  // When reaching step 4, fetch the extraction modules if not already done.
+  // When reaching step 4, fetch extraction modules if not already done.
   useEffect(() => {
     if (
       activeStep === 4 &&
-      partitions.length > 0 &&
-      selectedPartitionIndex !== null &&
+      allPartitions.length > 0 &&
+      selectedPartitionIndices.length > 0 &&
       extractionModules.length === 0
     ) {
-      fetchExtractionModules();
+      const fetchModules = async () => {
+        try {
+          let modulesCombined: ExtractionModule[] = [];
+          for (const idx of selectedPartitionIndices) {
+            const selectedPartition = allPartitions[idx];
+            const modules: ExtractionModule[] = await invoke(
+              "get_extraction_modules",
+              {
+                partition: selectedPartition,
+              },
+            );
+            modulesCombined = modulesCombined.concat(modules);
+          }
+          // Deduplicate modules by id.
+          const uniqueModules = modulesCombined.reduce(
+            (acc: ExtractionModule[], mod: ExtractionModule) => {
+              if (!acc.some((m) => m.id === mod.id)) {
+                acc.push(mod);
+              }
+              return acc;
+            },
+            [],
+          );
+          setExtractionModules(uniqueModules);
+        } catch (error) {
+          console.error("Error fetching extraction modules:", error);
+          setCurrentError("Error fetching extraction modules.");
+        }
+      };
+      fetchModules();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStep, partitions, selectedPartitionIndex]);
+  }, [
+    activeStep,
+    allPartitions,
+    selectedPartitionIndices,
+    extractionModules.length,
+  ]);
+
+  // Define columns for the DataGrid
+  const columns: GridColDef[] = [
+    { field: "id", headerName: "ID", width: 70 },
+    { field: "boot_indicator", headerName: "Boot Indicator", width: 150 },
+    {
+      field: "start_chs",
+      headerName: "Start CHS",
+      width: 150,
+      renderCell: (params: GridRenderCellParams) => (
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {params.value.join(", ")}
+        </div>
+      ),
+    },
+    { field: "partition_type", headerName: "Partition Type", width: 150 },
+    { field: "description", headerName: "Description", width: 150 },
+    {
+      field: "end_chs",
+      headerName: "End CHS",
+      width: 150,
+      renderCell: (params: GridRenderCellParams) => (
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {params.value.join(", ")}
+        </div>
+      ),
+    },
+    { field: "start_lba", headerName: "Start LBA", width: 150 },
+    { field: "size_sectors", headerName: "Size (Sectors)", width: 150 },
+    { field: "sector_size", headerName: "Sector Size", width: 150 },
+    { field: "first_byte_addr", headerName: "First Byte Addr", width: 150 },
+  ];
+
+  // Prepare rows for the DataGrid by adding an 'id' field.
+  const rows = allPartitions.map((partition, index) => ({
+    id: index,
+    ...partition,
+  }));
 
   // -------------------------------
-  // Render Step Content
+  // Step Content Renderer
   // -------------------------------
   const getStepContent = (step: number) => {
     switch (step) {
       case 0:
         return (
           <Typography variant="body1">
-            Checking if evidence exists at: {evidenceData.evidenceLocation}
+            Checked evidence existence at: {evidenceData.evidenceLocation}
           </Typography>
         );
       case 1:
         return (
           <Typography variant="body1">
-            Performing auto-check of the disk image format...
+            Disk image format: {diskImageFormat || "Checking..."}
           </Typography>
         );
       case 2:
         return (
-          <Typography variant="body1">
-            Discovering partitions on the disk image...
-          </Typography>
+          <Box>
+            <Typography variant="body1">
+              Partition discovery completed. Found {allPartitions.length}{" "}
+              partition(s).
+            </Typography>
+            {allPartitions.length > 0 && (
+              <Box sx={{ height: 400, width: "100%", mt: 2 }}>
+                <DataGrid
+                  rowHeight={40}
+                  disableRowSelectionOnClick
+                  rows={rows}
+                  columns={columns}
+                  hideFooter
+                />
+              </Box>
+            )}
+          </Box>
         );
       case 3:
         return (
-          <div>
+          <Box>
             <Typography variant="body1">
-              Select a partition to analyze:
+              Select partition(s) to analyze:
             </Typography>
             <FormControl component="fieldset">
-              <RadioGroup
-                value={
-                  selectedPartitionIndex !== null
-                    ? selectedPartitionIndex.toString()
-                    : ""
-                }
-                onChange={handlePartitionSelection}
-              >
-                {partitions.map((partition, index) => (
+              <FormGroup>
+                {allPartitions.map((partition, index) => (
                   <FormControlLabel
                     key={index}
-                    value={index.toString()}
-                    control={<Radio />}
-                    label={`Partition ${index + 1} - Type: ${partition.partition_type} - Size: ${partition.size_sectors} sectors`}
+                    control={
+                      <Checkbox
+                        checked={selectedPartitionIndices.includes(index)}
+                        onChange={() => togglePartitionSelection(index)}
+                      />
+                    }
+                    label={`Partition ${index + 1}: Type: ${partition.partition_type}, Size: ${partition.size_sectors} sectors`}
                   />
                 ))}
-              </RadioGroup>
+              </FormGroup>
             </FormControl>
-          </div>
+          </Box>
         );
       case 4:
         return (
-          <div>
+          <Box>
             <Typography variant="body1">
-              Select artefact extraction modules for the chosen partition:
+              Select artefact extraction modules for the chosen partition(s):
             </Typography>
             {extractionModules.length === 0 ? (
               <Typography variant="body2">Loading modules...</Typography>
             ) : (
-              <FormGroup>
-                {extractionModules.map((module) => (
-                  <FormControlLabel
-                    key={module.id}
-                    control={
-                      <Checkbox
-                        checked={selectedExtractionModules.includes(module.id)}
-                        onChange={() => handleExtractionModuleToggle(module.id)}
-                      />
-                    }
-                    label={`${module.name} - ${module.description}`}
-                  />
-                ))}
-              </FormGroup>
+              <FormControl component="fieldset">
+                <FormGroup>
+                  {extractionModules.map((module) => (
+                    <FormControlLabel
+                      key={module.id}
+                      control={
+                        <Checkbox
+                          checked={selectedExtractionModules.includes(
+                            module.id,
+                          )}
+                          onChange={() =>
+                            handleExtractionModuleToggle(module.id)
+                          }
+                        />
+                      }
+                      label={`${module.name} - ${module.description}`}
+                    />
+                  ))}
+                </FormGroup>
+              </FormControl>
             )}
-          </div>
+          </Box>
         );
       case 5:
         return (
-          <div>
+          <Box>
             <Typography variant="body1">
               Review and finalize metadata:
             </Typography>
@@ -331,18 +379,19 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
             <Typography variant="body2">
               <strong>Disk Image Format:</strong> {diskImageFormat}
             </Typography>
-            {selectedPartitionIndex !== null && (
+            {selectedPartitionIndices.length > 0 && (
               <Typography variant="body2">
-                <strong>Selected Partition:</strong> Partition{" "}
-                {selectedPartitionIndex + 1} - Type:{" "}
-                {partitions[selectedPartitionIndex].partition_type}
+                <strong>Selected Partition(s):</strong>{" "}
+                {selectedPartitionIndices
+                  .map((idx) => `Partition ${idx + 1}`)
+                  .join(", ")}
               </Typography>
             )}
             <Typography variant="body2">
               <strong>Selected Extraction Modules:</strong>{" "}
               {selectedExtractionModules.join(", ")}
             </Typography>
-          </div>
+          </Box>
         );
       default:
         return <Typography variant="body1">Unknown step.</Typography>;
@@ -357,36 +406,57 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
       <Stepper activeStep={activeStep} orientation="vertical">
         {steps.map((label, idx) => (
           <Step key={idx}>
-            <Box sx={{ position: "relative" }}>
-              {activeStep === idx && (
-                <CircularProgress
-                  size={30}
-                  sx={{
-                    position: "absolute",
-                    top: 5,
-                    left: -3,
-                    zIndex: 1,
-                  }}
-                />
-              )}
-              <StepLabel>{label}</StepLabel>
-            </Box>
-            <StepContent> {getStepContent(activeStep)}</StepContent>
+            <StepLabel error={idx === activeStep && currentError !== null}>
+              {idx > activeStep ? label : getStepContent(idx)}
+            </StepLabel>
+            {idx <= activeStep && (
+              <StepContent>
+                {/* If there's an error on the active (auto) step, show it with a Retry button */}
+                {idx === activeStep && currentError && activeStep < 3 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="body2" color="error">
+                      {currentError}
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      onClick={() => runAutoStep(activeStep)}
+                      sx={{ mt: 1 }}
+                    >
+                      Retry
+                    </Button>
+                  </Box>
+                )}
+              </StepContent>
+            )}
           </Step>
         ))}
       </Stepper>
-      <div style={{ marginTop: "20px" }}>
-        <Button
-          disabled={activeStep === 0}
-          onClick={handleBack}
-          style={{ marginRight: "10px" }}
-        >
-          Back
-        </Button>
-        <Button variant="contained" color="primary" onClick={handleNext}>
-          {activeStep === steps.length - 1 ? "Finish" : "Next"}
-        </Button>
-      </div>
+      {/* Only show navigation buttons for manual steps (steps 3 and beyond) */}
+      {activeStep >= 3 && (
+        <div style={{ marginTop: "20px" }}>
+          <Button
+            disabled={activeStep === 3}
+            onClick={handleBack}
+            style={{ marginRight: "10px" }}
+          >
+            Back
+          </Button>
+          <Button variant="contained" color="primary" onClick={handleNext}>
+            {activeStep === steps.length - 1 ? "Finish" : "Next"}
+          </Button>
+        </div>
+      )}
+      {/* Optionally, show a loading indicator for auto steps */}
+      {activeStep < 3 && !currentError && (
+        <Box sx={{ display: "flex", alignItems: "center", mt: 2 }}>
+          <CircularProgress size={30} />
+          <Typography variant="body2" sx={{ ml: 1 }}>
+            Processing…
+          </Typography>
+        </Box>
+      )}
     </div>
   );
 };

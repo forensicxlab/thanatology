@@ -48,6 +48,23 @@ export interface MBRPartitionEntry {
   size_sectors: number;
   sector_size: number;
   first_byte_addr: number;
+  description: string;
+}
+
+export interface MBR {
+  bootloader: number[];
+  partition_table: [
+    MBRPartitionEntry,
+    MBRPartitionEntry,
+    MBRPartitionEntry,
+    MBRPartitionEntry,
+  ]; // Partition table (max 4 entries)
+  boot_signature: number;
+}
+
+export interface Partitions {
+  mbr: MBR;
+  ebr: MBRPartitionEntry[];
 }
 
 export interface ExtractionModule {
