@@ -35,7 +35,7 @@ export interface ProcessDiskImage {
 export interface ProcessedEvidenceMetadata {
   evidenceData: EvidenceData;
   diskImageFormat: string;
-  selectedPartition: MBRPartitionEntry;
+  selectedPartitions: MBRPartitionEntry[];
   extractionModules: ExtractionModule[];
 }
 
@@ -60,6 +60,7 @@ export interface MBR {
     MBRPartitionEntry,
   ]; // Partition table (max 4 entries)
   boot_signature: number;
+  bootloader_disam: String;
 }
 
 export interface Partitions {

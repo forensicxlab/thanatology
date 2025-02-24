@@ -1,5 +1,7 @@
 use exhume_body::Body;
-use exhume_partitions::Partitions;
+use exhume_extfs::extfs::ExtFS;
+use exhume_lvm::Lvm2;
+use exhume_partitions::{mbr::MBRPartitionEntry, Partitions};
 use tauri_plugin_sql::Migration;
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::{Deserialize, Serialize};
@@ -43,16 +45,28 @@ fn discover_partitions(path: String) -> Result<Partitions, String> {
 }
 
 /// Attempt to read the selected partition from the disk image.
-/// Here we simply simulate a successful read if the partition size is greater than 0.
-// #[tauri::command]
-// fn read_partition(partition: Partitions, path: String) -> Result<bool, String> {
-//     if partition.size_sectors > 0 {
-//         println!("Successfully read partition: {:?}", partition);
-//         Ok(true)
-//     } else {
-//         Err("Failed to read partition: partition size is zero".into())
-//     }
-// }
+/// Here we try to read the selected partitions.
+#[tauri::command]
+fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool, String> {
+    let mut body: Body = Body::new(path.to_string(), "auto");
+
+    // Extfs
+    if partition.partition_type == 0x83 {
+        match ExtFS::new(&mut body, partition.first_byte_addr as u64) {
+            Ok(_) => Ok(true),
+            Err(err) => Err(format!("Could not parse the extfs partition: {:?}", err)),
+        }
+    }
+    // LVM
+    else if partition.partition_type == 0x8E {
+        match Lvm2::open(&mut body, partition.first_byte_addr as u64) {
+            Ok(_) => Ok(true),
+            Err(err) => Err(format!("Could not parse the lvm partition: {:?}", err)),
+        }
+    } else {
+        Err("Thanatology doesn't support the exhume of this partition type.".to_string())
+    }
+}
 
 /// Fetch a list of extraction modules compatible with the selected partition.
 /// The list returned here depends on the partition type.
@@ -99,7 +113,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             check_evidence_exists,
             check_disk_image_format,
             discover_partitions,
-            //read_partition,
+            read_mbr_partition,
             //get_extraction_modules
         ])
         .run(tauri::generate_context!())

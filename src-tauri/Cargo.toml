@@ -27,3 +27,4 @@ tauri-plugin-dialog = "2"
 exhume_body = { path = "../../exhume_body" }
 exhume_partitions = { path = "../../exhume_partitions" }
 exhume_extfs = { path = "../../exhume_extfs" }
+exhume_lvm = { path = "../../exhume_lvm" }
