@@ -16,8 +16,14 @@ export interface Partition {
 }
 
 export interface Module {
-  name: String;
-  //...TODO
+  id: string;
+  name: string;
+  category: string;
+  version: string;
+  mandatory: boolean;
+  description: string;
+  os: string;
+  parent_id: number;
 }
 
 export interface ProcessDiskImage {
@@ -36,7 +42,7 @@ export interface ProcessedEvidenceMetadata {
   evidenceData: EvidenceData;
   diskImageFormat: string;
   selectedPartitions: MBRPartitionEntry[];
-  extractionModules: ExtractionModule[];
+  extractionModules: Module[];
 }
 
 export interface MBRPartitionEntry {
@@ -66,10 +72,4 @@ export interface MBR {
 export interface Partitions {
   mbr: MBR;
   ebr: MBRPartitionEntry[];
-}
-
-export interface ExtractionModule {
-  id: string;
-  name: string;
-  description: string;
 }

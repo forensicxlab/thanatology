@@ -10,17 +10,21 @@ import {
   StepContent,
 } from "@mui/material";
 import CircularProgress from "@mui/material/CircularProgress";
-import CustomStepIcon from "./icons/CustomStepIcon";
 import {
   EvidenceData,
   ProcessedEvidenceMetadata,
-  ExtractionModule,
+  Module,
   Partitions,
   MBRPartitionEntry,
 } from "../../dbutils/types";
+import { useSnackbar } from "../SnackbarProvider";
+
 import MBRPartitionComponent from "./MBRPartitionComponent";
+import { getMBRCompatibleModules } from "../../dbutils/sqlite";
+import Database from "@tauri-apps/plugin-sql";
 
 interface DiskImageProps {
+  database: Database | null;
   evidenceData: EvidenceData;
   onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
@@ -32,7 +36,13 @@ interface PartitionReadResult {
   message: string;
 }
 
-const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
+const DiskImage: React.FC<DiskImageProps> = ({
+  database,
+  evidenceData,
+  onComplete,
+}) => {
+  const { display_message } = useSnackbar();
+
   // Step control.
   const [activeStep, setActiveStep] = useState<number>(0);
   const steps = [
@@ -53,9 +63,7 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
   const [selectedPartitions, setSelectedPartitions] = useState<
     MBRPartitionEntry[]
   >([]);
-  const [extractionModules, setExtractionModules] = useState<
-    ExtractionModule[]
-  >([]);
+  const [extractionModules, setExtractionModules] = useState<Module[]>([]);
   const [selectedExtractionModules, setSelectedExtractionModules] = useState<
     string[]
   >([]);
@@ -262,25 +270,28 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
     ) {
       const fetchModules = async () => {
         try {
-          let modulesCombined: ExtractionModule[] = [];
-          for (const partition of selectedPartitions) {
-            const modules: ExtractionModule[] = await invoke(
-              "get_extraction_modules",
-              { partition },
-            );
-            modulesCombined = modulesCombined.concat(modules);
-          }
-          // Deduplicate modules by id.
-          const uniqueModules = modulesCombined.reduce(
-            (acc: ExtractionModule[], mod: ExtractionModule) => {
-              if (!acc.some((m) => m.id === mod.id)) {
-                acc.push(mod);
-              }
-              return acc;
-            },
-            [],
-          );
-          setExtractionModules(uniqueModules);
+          // Map each partition to its module promise
+          const modulesPromises = selectedPartitions.map(async (partition) => {
+            try {
+              // Await the promise for each partition
+              const modules = await getMBRCompatibleModules(
+                partition,
+                database,
+              );
+              return modules || []; // Return an empty array if null
+            } catch (error: any) {
+              console.error(error);
+              display_message("warning", error);
+              return []; // Return an empty array on error
+            }
+          });
+
+          // Wait for all module arrays to resolve
+          const modulesArrays = await Promise.all(modulesPromises);
+          // Flatten the resulting arrays into a single array
+          const combinedModules = modulesArrays.flat();
+          // Update state with the combined modules
+          setExtractionModules(combinedModules);
         } catch (error) {
           console.error("Error fetching extraction modules:", error);
           setCurrentError("Error fetching extraction modules.");
@@ -289,7 +300,6 @@ const DiskImage: React.FC<DiskImageProps> = ({ evidenceData, onComplete }) => {
       fetchModules();
     }
   }, [activeStep, selectedPartitions, extractionModules.length]);
-
   // For displaying discovered partitions count.
   const allPartitionsCount = partitions
     ? partitions.mbr.partition_table.length + partitions.ebr.length

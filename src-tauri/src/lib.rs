@@ -68,37 +68,6 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
     }
 }
 
-/// Fetch a list of extraction modules compatible with the selected partition.
-/// The list returned here depends on the partition type.
-// #[tauri::command]
-// fn get_extraction_modules(partition: MBRPartitionEntry) -> Result<Vec<ExtractionModule>, String> {
-//     let modules = match partition.partition_type {
-//         0x07 => vec![
-//             ExtractionModule {
-//                 id: "fs_extract".to_string(),
-//                 name: "File System Extraction".to_string(),
-//                 description: "Extracts file system artefacts.".to_string(),
-//             },
-//             ExtractionModule {
-//                 id: "event_logs".to_string(),
-//                 name: "Event Log Extraction".to_string(),
-//                 description: "Extracts Windows event logs.".to_string(),
-//             },
-//         ],
-//         0x83 => vec![ExtractionModule {
-//             id: "linux_fs".to_string(),
-//             name: "Linux File System Extraction".to_string(),
-//             description: "Extracts Linux file system artefacts.".to_string(),
-//         }],
-//         _ => vec![ExtractionModule {
-//             id: "generic".to_string(),
-//             name: "Generic Extraction".to_string(),
-//             description: "Generic artefact extraction module.".to_string(),
-//         }],
-//     };
-//     Ok(modules)
-// }
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     tauri::Builder::default()
@@ -114,7 +83,6 @@ pub fn run(init_migrations: Vec<Migration>) {
             check_disk_image_format,
             discover_partitions,
             read_mbr_partition,
-            //get_extraction_modules
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

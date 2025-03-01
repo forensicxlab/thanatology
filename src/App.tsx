@@ -33,9 +33,9 @@ const App: React.FC = () => {
   const loadDatabase = async () => {
     const db = await Database.load("sqlite:thanatology.db");
     setDatabase(db);
-    const users = await db.select("SELECT * from users");
+    const users: Array<any> = await db.select("SELECT * from users");
     console.log(users);
-    users ? setFirstLaunch(false) : setFirstLaunch(true);
+    users.length > 0 ? setFirstLaunch(false) : setFirstLaunch(true);
   };
 
   React.useEffect(() => {
@@ -47,7 +47,7 @@ const App: React.FC = () => {
     evidenceName: "Dummy Disk Image",
     evidenceType: "Disk image",
     evidenceLocation:
-      "/Users/k1nd0ne/Work/Thanatology/framework/samples/EWF/WebServer/Webserver.E01",
+      "/Users/fguyard/work/Thanatology/samples/WebServer/Webserver.E01",
     //evidenceLocation: "/Users/k1nd0ne/Work/Thanatology/framework/samples/RAW/s4a-challenge4",
     evidenceDescription: "This is a dummy disk image used for testing.",
     sealNumber: "SEAL123",
@@ -81,6 +81,7 @@ const App: React.FC = () => {
                   path="/evidence/preprocess"
                   element={
                     <DiskImage
+                      database={database}
                       evidenceData={dummyEvidenceData}
                       onComplete={handlePreprocessingComplete}
                     />

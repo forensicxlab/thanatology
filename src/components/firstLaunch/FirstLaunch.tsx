@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import Database from "@tauri-apps/plugin-sql";
-import { createUser } from "../../dbutils/sqlite";
+import { createUser, createModules } from "../../dbutils/sqlite";
 import { useSnackbar } from "../SnackbarProvider";
 
 interface PgCredentials {
@@ -70,14 +70,21 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
         );
       } else {
         createUser(username, database)
-          .then(() => setFirstLaunch(false))
+          .then(() =>
+            createModules(database)
+              .then(() => setFirstLaunch(false))
+              .catch((error: any) => {
+                console.log(error);
+                display_message("warning", error);
+              }),
+          )
           .catch((error: any) => {
             console.log(error);
             display_message("warning", error);
           });
       }
     } else {
-      console.log("TODO !");
+      console.log("TODO (Postgresql) : ");
     }
   };
 
