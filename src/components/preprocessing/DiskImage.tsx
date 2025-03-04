@@ -8,8 +8,14 @@ import {
   StepLabel,
   Typography,
   StepContent,
+  CircularProgress,
+  List,
+  ListItem,
+  ListItemText,
+  Divider,
 } from "@mui/material";
-import CircularProgress from "@mui/material/CircularProgress";
+import TerminalIcon from "@mui/icons-material/Terminal";
+import ComputerIcon from "@mui/icons-material/Computer";
 import {
   EvidenceData,
   ProcessedEvidenceMetadata,
@@ -29,7 +35,6 @@ interface DiskImageProps {
   onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
 
-// Type for partition read results.
 interface PartitionReadResult {
   partitionLabel: string;
   success: boolean;
@@ -43,23 +48,19 @@ const DiskImage: React.FC<DiskImageProps> = ({
 }) => {
   const { display_message } = useSnackbar();
 
-  // Step control.
-  const [activeStep, setActiveStep] = useState<number>(0);
   const steps = [
     "Check Evidence Existence",
     "Autocheck Disk Image Format",
     "Partition Discovery & Selection",
     "Read Partition(s)",
-    "Select Artefact Extraction Modules",
     "Finalize Metadata",
   ];
 
-  // Data from backend calls.
+  const [activeStep, setActiveStep] = useState<number>(0);
   const [diskImageFormat, setDiskImageFormat] = useState<string>("");
   const [partitions, setPartitions] = useState<Partitions | undefined>(
     undefined,
   );
-  // Instead of storing partition indices, store the actual partition objects.
   const [selectedPartitions, setSelectedPartitions] = useState<
     MBRPartitionEntry[]
   >([]);
@@ -69,14 +70,12 @@ const DiskImage: React.FC<DiskImageProps> = ({
   >([]);
   const [partitionsLocked, setPartitionsLocked] = useState<boolean>(false);
   const [currentError, setCurrentError] = useState<string | null>(null);
-
-  // New state to keep track of read results for each partition.
   const [partitionReadResults, setPartitionReadResults] = useState<
     PartitionReadResult[]
   >([]);
 
   // -------------------------------
-  // Auto Steps: 0 & 1 (Evidence Existence and Disk Image Format)
+  // Auto Steps: Evidence existence and disk image format.
   // -------------------------------
   const runAutoStep = async (step: number) => {
     if (step === 0) {
@@ -109,7 +108,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
     }
   };
 
-  // Automatically run auto steps.
   useEffect(() => {
     if (activeStep < 2) {
       runAutoStep(activeStep);
@@ -117,7 +115,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
   }, [activeStep]);
 
   // -------------------------------
-  // Partition Discovery on merged step (Step 2)
+  // Partition Discovery (Step 2)
   // -------------------------------
   useEffect(() => {
     if (activeStep === 2 && !partitions) {
@@ -138,10 +136,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
   }, [activeStep, partitions, evidenceData.evidenceLocation]);
 
   // -------------------------------
-  // Automatically read partitions (Step 3)
+  // Partition Reading (Step 3)
   // -------------------------------
   useEffect(() => {
-    // When reaching step 3 and if no read result exists yet, auto-trigger the partition reading.
     if (
       activeStep === 3 &&
       partitionReadResults.length === 0 &&
@@ -196,26 +193,22 @@ const DiskImage: React.FC<DiskImageProps> = ({
   ]);
 
   // -------------------------------
-  // Manual Steps Handlers (Steps 2-5)
+  // Step Handlers
   // -------------------------------
   const handleNext = async () => {
     setCurrentError(null);
 
     if (activeStep === 2) {
-      // Ensure at least one partition is selected.
       if (selectedPartitions.length === 0) {
         setCurrentError("No partition selected.");
         return;
       }
-      // Lock partition selection so it can't be changed later.
       setPartitionsLocked(true);
     } else if (activeStep === 3) {
-      // In step 3, wait for partition reading to complete.
       if (partitionReadResults.length === 0) {
         setCurrentError("Still reading partitions, please wait...");
         return;
       }
-      // Ensure at least one partition was read successfully.
       if (!partitionReadResults.some((r) => r.success)) {
         setCurrentError(
           "None of the selected partitions were successfully read.",
@@ -223,21 +216,10 @@ const DiskImage: React.FC<DiskImageProps> = ({
         return;
       }
     } else if (activeStep === 4) {
-      // Ensure at least one extraction module is selected.
-      if (selectedExtractionModules.length === 0) {
-        setCurrentError("No extraction modules selected.");
-        return;
-      }
-    } else if (activeStep === 5) {
-      // Finalize metadata.
-      if (selectedPartitions.length === 0) {
-        setCurrentError("No partition selected.");
-        return;
-      }
       const metadata: ProcessedEvidenceMetadata = {
         evidenceData,
         diskImageFormat,
-        selectedPartitions: selectedPartitions,
+        selectedPartitions,
         extractionModules: extractionModules.filter((mod) =>
           selectedExtractionModules.includes(mod.id),
         ),
@@ -251,47 +233,36 @@ const DiskImage: React.FC<DiskImageProps> = ({
   const handleBack = () => {
     setCurrentError(null);
     if (activeStep === 3) {
-      // Optionally, clear partition read results if going back from step 3.
       setPartitionReadResults([]);
-      // Unlock partition selection to allow modifications.
       setPartitionsLocked(false);
     }
     setActiveStep((prev) => prev - 1);
   };
 
   // -------------------------------
-  // When reaching the extraction modules step, fetch modules if not already done.
+  // Fetch Modules (Triggered on Final Step - Step 4)
   // -------------------------------
   useEffect(() => {
-    if (
-      activeStep === 4 &&
-      selectedPartitions.length > 0 &&
-      extractionModules.length === 0
-    ) {
+    if (activeStep === 4 && selectedPartitions.length > 0) {
       const fetchModules = async () => {
         try {
-          // Map each partition to its module promise
-          const modulesPromises = selectedPartitions.map(async (partition) => {
-            try {
-              // Await the promise for each partition
-              const modules = await getMBRCompatibleModules(
-                partition,
-                database,
-              );
-              return modules || []; // Return an empty array if null
-            } catch (error: any) {
-              console.error(error);
-              display_message("warning", error);
-              return []; // Return an empty array on error
-            }
-          });
-
-          // Wait for all module arrays to resolve
+          const modulesPromises = selectedPartitions.map((partition) =>
+            getMBRCompatibleModules(partition, database)
+              .then((modules) => modules || [])
+              .catch((error: any) => {
+                console.error(error);
+                display_message("warning", error);
+                return [];
+              }),
+          );
           const modulesArrays = await Promise.all(modulesPromises);
-          // Flatten the resulting arrays into a single array
           const combinedModules = modulesArrays.flat();
-          // Update state with the combined modules
-          setExtractionModules(combinedModules);
+          // Changed here: use mod.id as key for uniqueness rather than parent_id
+          const uniqueModules = Array.from(
+            new Map(combinedModules.map((mod) => [mod.id, mod])).values(),
+          );
+          setExtractionModules(uniqueModules);
+          setSelectedExtractionModules(uniqueModules.map((mod) => mod.id));
         } catch (error) {
           console.error("Error fetching extraction modules:", error);
           setCurrentError("Error fetching extraction modules.");
@@ -299,15 +270,54 @@ const DiskImage: React.FC<DiskImageProps> = ({
       };
       fetchModules();
     }
-  }, [activeStep, selectedPartitions, extractionModules.length]);
-  // For displaying discovered partitions count.
-  const allPartitionsCount = partitions
-    ? partitions.mbr.partition_table.length + partitions.ebr.length
-    : 0;
+  }, [activeStep, selectedPartitions]);
+
+  // -------------------------------
+  // Helpers for Nested List Rendering
+  // -------------------------------
+  const getModuleIcon = (os: string) => {
+    if (os.toLowerCase() === "linux") {
+      return <TerminalIcon sx={{ mr: 1 }} />;
+    }
+    return <ComputerIcon sx={{ mr: 1 }} />;
+  };
+
+  const renderModuleList = (
+    modulesByParent: Record<string, Module[]>,
+    parentId: string = "0",
+  ) => {
+    if (!modulesByParent[parentId]) return null;
+    return (
+      <List disablePadding>
+        {modulesByParent[parentId].map((mod) => (
+          <React.Fragment key={mod.id}>
+            <ListItem disablePadding>
+              {getModuleIcon(mod.os)}
+              <ListItemText
+                primary={`${mod.name}`}
+                secondary={`${mod.description}`}
+              />
+            </ListItem>
+            <Divider component="li" />
+
+            {modulesByParent[mod.id.toString()] && (
+              <Box sx={{ pl: 4 }}>
+                {renderModuleList(modulesByParent, mod.id.toString())}
+              </Box>
+            )}
+          </React.Fragment>
+        ))}
+      </List>
+    );
+  };
 
   // -------------------------------
   // Step Content Renderer
   // -------------------------------
+  const allPartitionsCount = partitions
+    ? partitions.mbr.partition_table.length + partitions.ebr.length
+    : 0;
+
   const getStepContent = (step: number) => {
     switch (step) {
       case 0:
@@ -330,16 +340,29 @@ const DiskImage: React.FC<DiskImageProps> = ({
                 <Typography variant="body1">
                   Partition discovery: Found {allPartitionsCount} partition(s).
                 </Typography>
-                <Typography variant="body2">
-                  Please select the partition(s) to analyse.
-                </Typography>
-                <MBRPartitionComponent
-                  partitions={partitions}
-                  locked={partitionsLocked} // Pass the lock flag here
-                  onSelectPartitions={(selected) =>
-                    setSelectedPartitions(selected)
-                  }
-                />
+                {!partitionsLocked ? (
+                  <>
+                    <Typography variant="body2">
+                      Please select the partition(s) to analyse.
+                    </Typography>
+                    <MBRPartitionComponent
+                      partitions={partitions}
+                      locked={partitionsLocked}
+                      onSelectPartitions={(selected) =>
+                        setSelectedPartitions(selected)
+                      }
+                    />
+                  </>
+                ) : (
+                  <Typography variant="body2">
+                    Partition selection completed. Selected partition(s):{" "}
+                    {selectedPartitions
+                      .map(
+                        (part, i) => `Partition ${i + 1} (${part.description})`,
+                      )
+                      .join(", ")}
+                  </Typography>
+                )}
               </>
             ) : (
               <Box sx={{ display: "flex", alignItems: "center", mt: 2 }}>
@@ -370,7 +393,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
                     color={result.success ? "success" : "warning"}
                   >
                     {result.partitionLabel}:{" "}
-                    {result.success ? "Success" : `${result.message}`}
+                    {result.success ? "Success" : result.message}
                   </Typography>
                 ))}
               </Box>
@@ -378,40 +401,18 @@ const DiskImage: React.FC<DiskImageProps> = ({
           </Box>
         );
       case 4:
-        return (
-          <Box>
-            <Typography variant="body1">
-              Select artefact extraction modules for the chosen partition(s):
-            </Typography>
-            {extractionModules.length === 0 ? (
-              <Typography variant="body2">Loading modules...</Typography>
-            ) : (
-              <Box>
-                {extractionModules.map((module) => (
-                  <Box key={module.id} sx={{ my: 1 }}>
-                    <Button
-                      variant={
-                        selectedExtractionModules.includes(module.id)
-                          ? "contained"
-                          : "outlined"
-                      }
-                      onClick={() => {
-                        setSelectedExtractionModules((prev) =>
-                          prev.includes(module.id)
-                            ? prev.filter((id) => id !== module.id)
-                            : [...prev, module.id],
-                        );
-                      }}
-                    >
-                      {module.name} - {module.description}
-                    </Button>
-                  </Box>
-                ))}
-              </Box>
-            )}
-          </Box>
+        const modulesByParent = extractionModules.reduce(
+          (acc, mod) => {
+            const key = (mod.parent_id ?? 0).toString();
+            if (!acc[key]) {
+              acc[key] = [];
+            }
+            acc[key].push(mod);
+            return acc;
+          },
+          {} as Record<string, Module[]>,
         );
-      case 5:
+
         return (
           <Box>
             <Typography variant="body1">
@@ -431,10 +432,16 @@ const DiskImage: React.FC<DiskImageProps> = ({
                   .join(", ")}
               </Typography>
             )}
-            <Typography variant="body2">
-              <strong>Selected Extraction Modules:</strong>{" "}
-              {selectedExtractionModules.join(", ")}
-            </Typography>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body1">
+                Artefact extraction modules for the chosen partition(s):
+              </Typography>
+              {extractionModules.length === 0 ? (
+                <Typography variant="body2">Loading modules...</Typography>
+              ) : (
+                renderModuleList(modulesByParent)
+              )}
+            </Box>
           </Box>
         );
       default:
@@ -453,7 +460,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
             <StepLabel error={idx === activeStep && currentError !== null}>
               {idx > activeStep ? label : getStepContent(idx)}
             </StepLabel>
-
             {idx <= activeStep && (
               <StepContent>
                 {idx === activeStep && currentError && (

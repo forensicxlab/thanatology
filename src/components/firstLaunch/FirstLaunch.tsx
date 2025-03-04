@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import Database from "@tauri-apps/plugin-sql";
-import { createUser, createModules } from "../../dbutils/sqlite";
+import { createUser } from "../../dbutils/sqlite"; // Removed createModules as it's now handled via migrations.
 import { useSnackbar } from "../SnackbarProvider";
 
 interface PgCredentials {
@@ -66,18 +66,11 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
       if (username.length < 3) {
         display_message(
           "warning",
-          "Please enter a username with a least 3 characters",
+          "Please enter a username with at least 3 characters",
         );
       } else {
         createUser(username, database)
-          .then(() =>
-            createModules(database)
-              .then(() => setFirstLaunch(false))
-              .catch((error: any) => {
-                console.log(error);
-                display_message("warning", error);
-              }),
-          )
+          .then(() => setFirstLaunch(false))
           .catch((error: any) => {
             console.log(error);
             display_message("warning", error);
@@ -135,7 +128,7 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
               <FormControlLabel
                 value="sqlite"
                 control={<Radio />}
-                label="SQLite - For a local use and no collaboration"
+                label="SQLite - For local use and no collaboration"
               />
               <FormControlLabel
                 value="postgres"

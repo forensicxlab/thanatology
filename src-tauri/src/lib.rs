@@ -46,6 +46,8 @@ fn discover_partitions(path: String) -> Result<Partitions, String> {
 
 /// Attempt to read the selected partition from the disk image.
 /// Here we try to read the selected partitions.
+/// TODO: We have to try to create all of the filesystem objects without checking the type except for LVM.
+/// If LVM we try LVM first before the creation of all of the other underlying filesystems.
 #[tauri::command]
 fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool, String> {
     let mut body: Body = Body::new(path.to_string(), "auto");

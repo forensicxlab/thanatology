@@ -47,7 +47,7 @@ const App: React.FC = () => {
     evidenceName: "Dummy Disk Image",
     evidenceType: "Disk image",
     evidenceLocation:
-      "/Users/fguyard/work/Thanatology/samples/WebServer/Webserver.E01",
+      "/Users/k1nd0ne/Work/Thanatology/framework/samples/EWF/WebServer/Webserver.E01",
     //evidenceLocation: "/Users/k1nd0ne/Work/Thanatology/framework/samples/RAW/s4a-challenge4",
     evidenceDescription: "This is a dummy disk image used for testing.",
     sealNumber: "SEAL123",
