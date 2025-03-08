@@ -70,6 +70,16 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
     }
 }
 
+#[tauri::command]
+fn default_processing_action(evidence_id: i64) -> Result<String, String> {
+    println!(
+        "Default processing action triggered for evidence_id: {} (currently does nothing)",
+        evidence_id
+    );
+    // TODO: Implement real processing logic in the future
+    Ok("Default processing action initiated.".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     tauri::Builder::default()
@@ -85,6 +95,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             check_disk_image_format,
             discover_partitions,
             read_mbr_partition,
+            default_processing_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

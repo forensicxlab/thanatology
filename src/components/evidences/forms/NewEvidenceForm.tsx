@@ -1,5 +1,5 @@
 // NewEvidenceForm.tsx
-import React, { ChangeEvent } from "react";
+import React from "react";
 import {
   Box,
   Button,
@@ -8,7 +8,6 @@ import {
   Select,
   InputLabel,
   FormControl,
-  Typography,
 } from "@mui/material";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -17,12 +16,6 @@ export interface NewEvidenceFormProps {
   evidenceType: "Disk image" | "Memory Image" | "Procmon dump";
   evidenceLocation: string;
   evidenceDescription: string;
-  sealNumber: string;
-  sealingDateTime: string; // expecting a string formatted as "YYYY-MM-DDThh:mm"
-  sealingLocation: string;
-  sealingPerson: string;
-  sealReason: string;
-  sealReferenceFile?: File | null;
   // Handlers for controlled fields:
   onEvidenceNameChange: (value: string) => void;
   onEvidenceTypeChange: (
@@ -30,12 +23,6 @@ export interface NewEvidenceFormProps {
   ) => void;
   onEvidenceLocationChange: (value: string) => void;
   onEvidenceDescriptionChange: (value: string) => void;
-  onSealNumberChange: (value: string) => void;
-  onSealingDateTimeChange: (value: string) => void;
-  onSealingLocationChange: (value: string) => void;
-  onSealingPersonChange: (value: string) => void;
-  onSealReasonChange: (value: string) => void;
-  onSealReferenceFileChange: (file: File | null) => void;
   // Form submit handler (used when not embedded)
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   // When true, the component will render without a form wrapper and submit button.
@@ -48,34 +35,13 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
     evidenceType,
     evidenceLocation,
     evidenceDescription,
-    sealNumber,
-    sealingDateTime,
-    sealingLocation,
-    sealingPerson,
-    sealReason,
-    sealReferenceFile,
     onEvidenceNameChange,
     onEvidenceTypeChange,
     onEvidenceLocationChange,
     onEvidenceDescriptionChange,
-    onSealNumberChange,
-    onSealingDateTimeChange,
-    onSealingLocationChange,
-    onSealingPersonChange,
-    onSealReasonChange,
-    onSealReferenceFileChange,
     onSubmit,
     hideSubmitButton,
   } = props;
-
-  // Handle file input change for the reference file.
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      onSealReferenceFileChange(event.target.files[0]);
-    } else {
-      onSealReferenceFileChange(null);
-    }
-  };
 
   const handleFileSelect = async () => {
     try {
@@ -121,7 +87,7 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
           label="Evidence Type"
           onChange={(e) =>
             onEvidenceTypeChange(
-              e.target.value as "Disk image" | "Memory Image",
+              e.target.value as "Disk image" | "Memory Image" | "Procmon dump",
             )
           }
         >
@@ -129,19 +95,21 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
           <MenuItem value="Memory Image" disabled>
             Memory Image
           </MenuItem>
+          <MenuItem value="Procmon dump" disabled>
+            Procmon dump
+          </MenuItem>
         </Select>
       </FormControl>
-      <FormControl fullWidth required>
-        <TextField
-          label="Selected File"
-          value={evidenceLocation}
-          fullWidth
-          slotProps={{ input: { readOnly: true } }}
-        />
-        <Button variant="contained" onClick={handleFileSelect}>
-          Browse...
-        </Button>
-      </FormControl>
+
+      <TextField
+        label="Selected File"
+        value={evidenceLocation}
+        fullWidth
+        slotProps={{ input: { readOnly: true } }}
+      />
+      <Button variant="contained" onClick={handleFileSelect}>
+        Locate the evidence...
+      </Button>
 
       {/* Description */}
       <TextField
@@ -152,67 +120,6 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
         multiline
         rows={4}
       />
-
-      {/* Seal Number */}
-      <TextField
-        label="Seal Number"
-        value={sealNumber}
-        onChange={(e) => onSealNumberChange(e.target.value)}
-        fullWidth
-        required
-      />
-
-      {/* Sealing Date and Time */}
-      <TextField
-        label="Sealing Date and Time"
-        type="datetime-local"
-        value={sealingDateTime}
-        onChange={(e) => onSealingDateTimeChange(e.target.value)}
-        slotProps={{ inputLabel: { shrink: true } }}
-        fullWidth
-        required
-      />
-
-      {/* Sealing Location */}
-      <TextField
-        label="Sealing Location"
-        value={sealingLocation}
-        onChange={(e) => onSealingLocationChange(e.target.value)}
-        fullWidth
-        required
-      />
-
-      {/* Sealing Person */}
-      <TextField
-        label="Sealing Person"
-        value={sealingPerson}
-        onChange={(e) => onSealingPersonChange(e.target.value)}
-        fullWidth
-        required
-      />
-
-      {/* Seal Reason */}
-      <TextField
-        label="Seal Reason and Reference to Authority/Decision"
-        value={sealReason}
-        onChange={(e) => onSealReasonChange(e.target.value)}
-        fullWidth
-        multiline
-        rows={3}
-      />
-
-      {/* Reference File Upload */}
-      <Box>
-        <Button variant="contained" component="label">
-          Upload Reference File
-          <input type="file" hidden onChange={handleFileChange} />
-        </Button>
-        {sealReferenceFile && (
-          <Typography variant="body2" sx={{ mt: 1 }}>
-            Selected File: {sealReferenceFile.name}
-          </Typography>
-        )}
-      </Box>
 
       {/* Conditionally render submit button if not embedded */}
       {!hideSubmitButton && (

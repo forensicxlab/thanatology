@@ -4,12 +4,11 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import Database from "@tauri-apps/plugin-sql";
-import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import MiniDrawer from "./components/MiniDrawer";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router";
+import { BrowserRouter as Router, Routes, Route } from "react-router";
 import Dashboard from "./components/Dashboard";
 import Cases from "./components/cases/Cases";
 import Tasks from "./components/Tasks";
@@ -17,9 +16,10 @@ import Settings from "./components/Settings";
 import FirstLaunch from "./components/firstLaunch/FirstLaunch";
 import { SnackbarProvider } from "./components/SnackbarProvider";
 import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper";
-import DiskImage from "./components/preprocessing/DiskImage";
-import { EvidenceData, ProcessedEvidenceMetadata } from "./dbutils/types";
-
+import DiskImage from "./components/evidences/preprocessing/DiskImage";
+import { Evidence, ProcessedEvidenceMetadata } from "./dbutils/types";
+import CaseDetails from "./components/cases/CaseDetails";
+import PreProcessing from "./components/evidences/preprocessing/Preprocessing";
 const darkTheme = createTheme({
   palette: {
     mode: "dark",
@@ -43,21 +43,6 @@ const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dummyEvidenceData: EvidenceData = {
-    evidenceName: "Dummy Disk Image",
-    evidenceType: "Disk image",
-    evidenceLocation:
-      "/Users/k1nd0ne/Work/Thanatology/framework/samples/EWF/WebServer/Webserver.E01",
-    //evidenceLocation: "/Users/k1nd0ne/Work/Thanatology/framework/samples/RAW/s4a-challenge4",
-    evidenceDescription: "This is a dummy disk image used for testing.",
-    sealNumber: "SEAL123",
-    sealingDateTime: new Date().toISOString(),
-    sealingLocation: "Test Lab",
-    sealingPerson: "Test User",
-    sealReason: "For testing purposes",
-    sealReferenceFile: null,
-  };
-
   const handlePreprocessingComplete = (metadata: ProcessedEvidenceMetadata) => {
     console.log("Preprocessing complete:", metadata);
   };
@@ -73,24 +58,24 @@ const App: React.FC = () => {
             <Routes>
               <Route path="/" element={<MiniDrawer />}>
                 <Route path="" element={<Dashboard />} />
-                <Route path="cases" element={<Cases />} />
-                <Route path="case/new" element={<CaseCreationStepper />} />
+                <Route path="cases" element={<Cases database={database} />} />
+                <Route
+                  path="case/new"
+                  element={<CaseCreationStepper database={database} />}
+                />
                 <Route path="tasks" element={<Tasks />} />
                 <Route path="settings" element={<Settings />} />
                 <Route
-                  path="/evidence/preprocess"
-                  element={
-                    <DiskImage
-                      database={database}
-                      evidenceData={dummyEvidenceData}
-                      onComplete={handlePreprocessingComplete}
-                    />
-                  }
+                  path="cases/:id"
+                  element={<CaseDetails database={database} />}
+                />
+                <Route
+                  path="evidences/preprocess/:id"
+                  element={<PreProcessing database={database} />}
                 />
 
                 {/*
-                <Route path="evidences/:id" element={<EvidenceDetail />} />
-                <Route path="cases/:id" element={<CaseDetail />} /> */}
+                <Route path="evidences/:id" element={<EvidenceDetail />} />*/}
               </Route>
             </Routes>
           </Router>

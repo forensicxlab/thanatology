@@ -37,7 +37,9 @@ const NewCaseForm: React.FC<NewCaseFormProps> = ({
       <Typography variant="h5" component="h1" gutterBottom>
         Case information
       </Typography>
+
       <TextField
+        variant="outlined"
         required
         fullWidth
         label="Case Name"
@@ -46,6 +48,7 @@ const NewCaseForm: React.FC<NewCaseFormProps> = ({
         margin="normal"
       />
       <TextField
+        key="Description"
         required
         fullWidth
         label="Description"

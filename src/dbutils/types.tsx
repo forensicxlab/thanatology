@@ -1,14 +1,18 @@
-export interface EvidenceData {
-  evidenceName: string;
-  evidenceType: "Disk image" | "Memory Image" | "Procmon dump";
-  evidenceLocation: string;
-  evidenceDescription: string;
-  sealNumber: string;
-  sealingDateTime: string;
-  sealingLocation: string;
-  sealingPerson: string;
-  sealReason: string;
-  sealReferenceFile: File | null;
+export interface Evidence {
+  id: number;
+  case_id: number;
+  name: string;
+  type: "Disk image" | "Memory Image" | "Procmon dump";
+  path: string;
+  description: string;
+  status: number;
+}
+
+export interface Case {
+  id: number;
+  name: string;
+  description: string;
+  collaborators: number[]; // Array of user IDs for collaborators
 }
 
 export interface Partition {
@@ -27,7 +31,7 @@ export interface Module {
 }
 
 export interface ProcessDiskImage {
-  evidence: EvidenceData;
+  evidence: Evidence;
   imageFormat: string; // RAW, EWF, ...
   isFormatCompatible: boolean;
   partitions: Partition[];
@@ -39,9 +43,9 @@ export interface ProcessDiskImage {
 }
 
 export interface ProcessedEvidenceMetadata {
-  evidenceData: EvidenceData;
+  evidenceData: Evidence;
   diskImageFormat: string;
-  selectedPartitions: MBRPartitionEntry[];
+  selectedMbrPartitions: MBRPartitionEntry[];
   extractionModules: Module[];
 }
 
@@ -72,4 +76,5 @@ export interface MBR {
 export interface Partitions {
   mbr: MBR;
   ebr: MBRPartitionEntry[];
+  //Todo: Add GPT
 }

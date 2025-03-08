@@ -12,12 +12,12 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DeleteIcon from "@mui/icons-material/Delete";
 import NewEvidenceForm from "./NewEvidenceForm";
-import { EvidenceData } from "../../../dbutils/types";
+import { Evidence } from "../../../dbutils/types";
 
 interface MultipleEvidenceFormProps {
-  evidences: EvidenceData[];
-  setEvidences: React.Dispatch<React.SetStateAction<EvidenceData[]>>;
-  defaultEmptyEvidence: EvidenceData;
+  evidences: Evidence[];
+  setEvidences: React.Dispatch<React.SetStateAction<Evidence[]>>;
+  defaultEmptyEvidence: Evidence;
 }
 
 const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
@@ -31,10 +31,10 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
   };
 
   // Update a field for a specific evidence (by index)
-  const updateEvidenceField = <K extends keyof EvidenceData>(
+  const updateEvidenceField = <K extends keyof Evidence>(
     index: number,
     field: K,
-    value: EvidenceData[K],
+    value: Evidence[K],
   ) => {
     setEvidences((prev) => {
       const updated = [...prev];
@@ -84,45 +84,21 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
           <AccordionDetails>
             <NewEvidenceForm
               hideSubmitButton
-              evidenceName={evidence.evidenceName}
-              evidenceType={evidence.evidenceType}
-              evidenceLocation={evidence.evidenceLocation}
-              evidenceDescription={evidence.evidenceDescription}
-              sealNumber={evidence.sealNumber}
-              sealingDateTime={evidence.sealingDateTime}
-              sealingLocation={evidence.sealingLocation}
-              sealingPerson={evidence.sealingPerson}
-              sealReason={evidence.sealReason}
-              sealReferenceFile={evidence.sealReferenceFile}
+              evidenceName={evidence.name}
+              evidenceType={evidence.type}
+              evidenceLocation={evidence.path}
+              evidenceDescription={evidence.description}
               onEvidenceNameChange={(value) =>
-                updateEvidenceField(index, "evidenceName", value)
+                updateEvidenceField(index, "name", value)
               }
               onEvidenceTypeChange={(value) =>
-                updateEvidenceField(index, "evidenceType", value)
+                updateEvidenceField(index, "type", value)
               }
               onEvidenceLocationChange={(value) =>
-                updateEvidenceField(index, "evidenceLocation", value)
+                updateEvidenceField(index, "path", value)
               }
               onEvidenceDescriptionChange={(value) =>
-                updateEvidenceField(index, "evidenceDescription", value)
-              }
-              onSealNumberChange={(value) =>
-                updateEvidenceField(index, "sealNumber", value)
-              }
-              onSealingDateTimeChange={(value) =>
-                updateEvidenceField(index, "sealingDateTime", value)
-              }
-              onSealingLocationChange={(value) =>
-                updateEvidenceField(index, "sealingLocation", value)
-              }
-              onSealingPersonChange={(value) =>
-                updateEvidenceField(index, "sealingPerson", value)
-              }
-              onSealReasonChange={(value) =>
-                updateEvidenceField(index, "sealReason", value)
-              }
-              onSealReferenceFileChange={(file) =>
-                updateEvidenceField(index, "sealReferenceFile", file)
+                updateEvidenceField(index, "description", value)
               }
             />
           </AccordionDetails>
