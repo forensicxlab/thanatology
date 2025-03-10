@@ -83,7 +83,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
 
       <Grid container spacing={3}>
         {/* Left: Case Details */}
-        <Grid size={{ xs: 12, md: 4 }}>
+        <Grid size={12}>
           <Card sx={{ p: 2, bgcolor: "background.paper", boxShadow: 3 }}>
             <CardContent>
               {caseDetails ? (
@@ -107,7 +107,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
         </Grid>
 
         {/* Right: Evidence List */}
-        <Grid size={{ xs: 12, md: 8 }}>
+        <Grid size={12}>
           <Card sx={{ p: 2, boxShadow: 3, bgcolor: "background.paper" }}>
             <CardContent>
               <Typography variant="h6" color="secondary" gutterBottom>

@@ -56,7 +56,7 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
     <Box sx={{ flexGrow: 1, p: 3 }}>
       <Grid container spacing={3}>
         {/* Left: Evidence Metadata */}
-        <Grid size={{ xs: 12, md: 12, lg: 12, xl: 4 }}>
+        <Grid size={12}>
           <Card sx={{ p: 2, bgcolor: "background.paper", boxShadow: 3 }}>
             <CardContent>
               <Typography variant="h6" color="secondary">
@@ -100,7 +100,7 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
         </Grid>
 
         {/* Right: Disk Image Component */}
-        <Grid size={{ xs: 12, md: 12, lg: 12, xl: 8 }}>
+        <Grid size={12}>
           <Card sx={{ p: 2, boxShadow: 3, bgcolor: "background.paper" }}>
             <CardContent>
               <Typography variant="h6" color="secondary" gutterBottom>

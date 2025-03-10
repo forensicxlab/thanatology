@@ -1338,6 +1338,7 @@ dependencies = [
  "log",
  "prettytable-rs",
  "serde",
+ "serde_json",
  "uguid",
 ]
 
