@@ -18,6 +18,7 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import ComputerIcon from "@mui/icons-material/Computer";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
+import { useNavigate } from "react-router";
 
 import {
   Evidence,
@@ -53,6 +54,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
   onComplete,
 }) => {
   const { display_message } = useSnackbar();
+  const navigate = useNavigate();
 
   const steps = [
     "Check Evidence Existence",
@@ -336,19 +338,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
       });
   };
 
-  // Called when user clicks "Launch Processing Action"
-  const handleLaunchProcessing = async () => {
-    try {
-      const resp: string = await invoke("default_processing_action", {
-        evidenceId: evidenceData.id,
-      });
-      display_message("info", `Processing response: ${resp}`);
-    } catch (err) {
-      console.error("Error launching default processing:", err);
-      display_message("error", "Could not launch processing action.");
-    }
-  };
-
   // -------------------------------
   // Helpers for Nested List Rendering
   // -------------------------------
@@ -532,13 +521,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
         <Box mt={2}>
           <Button
             variant="contained"
-            onClick={handleLaunchProcessing}
-            sx={{ mr: 2 }}
-          >
-            Launch Processing Action
-          </Button>
-          <Button
-            variant="outlined"
             onClick={() =>
               onComplete({
                 evidenceData,
@@ -549,8 +531,17 @@ const DiskImage: React.FC<DiskImageProps> = ({
                 ),
               })
             }
+            sx={{ mr: 2 }}
           >
-            Go Back to the Case
+            Launch Processing Action
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              navigate("/cases/");
+            }}
+          >
+            I will start processing the evidence later.
           </Button>
         </Box>
       </Box>

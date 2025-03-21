@@ -274,7 +274,7 @@ export async function savePreprocessingMetadata(
     await db.execute(
       `
         INSERT INTO evidence_preprocessing_selected_partitions (
-          evidence_preprocessing_id,
+          evidence_id,
           partition_type,
           boot_indicator,
           start_chs_1,
@@ -291,7 +291,7 @@ export async function savePreprocessingMetadata(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
-        preprocessingId,
+        metadata.evidenceData.id,
         partition.partition_type,
         partition.boot_indicator,
         partition.start_chs[0],
@@ -318,4 +318,95 @@ export async function savePreprocessingMetadata(
   );
 
   return preprocessingId;
+}
+// Fetch the selected partitions metadata for a given evidence
+export async function getSelectedPartitions(
+  evidenceId: number,
+  db: Database | null,
+): Promise<MBRPartitionEntry[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  const rows: any[] = await db.select(
+    "SELECT * FROM evidence_preprocessing_selected_partitions WHERE evidence_id = $1",
+    [evidenceId],
+  );
+  // Map raw DB rows into complete MBRPartitionEntry objects
+  return rows.map((row) => ({
+    boot_indicator: row.boot_indicator,
+    start_chs: [row.start_chs_1, row.start_chs_2, row.start_chs_3],
+    partition_type: row.partition_type,
+    end_chs: [row.end_chs_1, row.end_chs_2, row.end_chs_3],
+    start_lba: row.start_lba,
+    size_sectors: row.size_sectors,
+    sector_size: row.sector_size,
+    first_byte_addr: row.first_byte_address,
+    description: row.description,
+  }));
+}
+
+// Fetch modules for processing.
+// Here we assume that the parent module (with parent_id IS NULL and os='Linux')
+// is executed first, followed by its children modules.
+export async function getModulesForProcessing(
+  db: Database | null,
+): Promise<Module[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  // Fetch the parent (root) module
+  const parentModules: Module[] = await db.select(
+    "SELECT * FROM modules WHERE parent_id IS NULL AND os = 'Linux' LIMIT 1",
+  );
+  if (parentModules.length === 0) return [];
+  // Fetch the children modules of that parent.
+  const childModules: Module[] = await db.select(
+    "SELECT * FROM modules WHERE parent_id = $1",
+    [parentModules[0].id],
+  );
+  return [parentModules[0], ...childModules];
+}
+
+// Set the processing status to running (2)
+export async function setProcessingInProgress(
+  db: Database | null,
+  metadata: ProcessedEvidenceMetadata,
+) {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  await db.execute(
+    `UPDATE evidence
+           SET status = 2
+         WHERE id = $1`,
+    [metadata.evidenceData.id],
+  );
+}
+
+// Set the processing status to finish for an evidence
+export async function setProcessingDone(
+  db: Database | null,
+  metadata: ProcessedEvidenceMetadata,
+) {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  await db.execute(
+    `UPDATE evidence
+           SET status = 3
+         WHERE id = $1`,
+    [metadata.evidenceData.id],
+  );
+}
+
+export async function getEvidencesStatus(
+  db: Database | null,
+): Promise<Evidence[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  const evidences: Evidence[] = await db.select(
+    "SELECT * FROM evidence WHERE status = 2",
+  );
+  return evidences;
 }

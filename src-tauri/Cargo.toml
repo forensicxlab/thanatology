@@ -28,3 +28,15 @@ exhume_body = { path = "../../exhume_body" }
 exhume_partitions = { path = "../../exhume_partitions" }
 exhume_extfs = { path = "../../exhume_extfs" }
 exhume_lvm = { path = "../../exhume_lvm" }
+exhume_ldfi = { path = "../../exhume_ldfi" }
+exhume_filesystem = { path = "../../exhume_filesystem" }
+exhume_progress = { path = "../../exhume_progress" }
+env_logger = "0.10"
+log = "0.4"
+
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8.0", features = [
+    "sqlite",
+    "runtime-tokio-native-tls",
+    "macros",
+] }

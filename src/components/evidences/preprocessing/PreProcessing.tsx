@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router";
 import Grid from "@mui/material/Grid2";
-
+import { start_processing } from "../processing/utils/diskimage";
 import {
   Box,
   Typography,
@@ -18,6 +18,7 @@ import { Evidence } from "../../../dbutils/types";
 import { getEvidence } from "../../../dbutils/sqlite";
 import DiskImage from "./DiskImage";
 import { useNavigate } from "react-router";
+import { useSnackbar } from "../../SnackbarProvider";
 
 interface PreProcessingProps {
   database: Database | null;
@@ -25,7 +26,7 @@ interface PreProcessingProps {
 
 const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
   const navigate = useNavigate();
-
+  const { display_message } = useSnackbar();
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const { id } = useParams<{ id: string }>();
 
@@ -110,7 +111,7 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
               <DiskImage
                 database={database}
                 evidenceData={evidence}
-                onComplete={() => {}}
+                onComplete={start_processing}
               />
             </CardContent>
           </Card>

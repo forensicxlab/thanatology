@@ -28,7 +28,6 @@ fn main() {
                     name       TEXT NOT NULL,
                     category   TEXT NOT NULL,
                     version    TEXT NOT NULL,
-                    mandatory  BOOLEAN NOT NULL,
                     description TEXT NOT NULL,
                     os         TEXT NOT NULL CHECK (os IN ('Linux', 'Windows', 'MacOs')),
                     parent_id  INTEGER,
@@ -42,36 +41,12 @@ fn main() {
             version: 3,
             description: "insert_default_modules",
             sql: r#"
-                -- Insert the root module LFSI (no parent)
-                INSERT INTO modules (name, category, version, mandatory, description, os, parent_id)
-                SELECT 'LFSI', 'Filesystem', '1.0', 1,
-                       'Linux FileSystem Indexing: Parse a given Linux filesystem metadata artefact (extfs, xfs, ...)',
-                       'Linux', NULL
-                WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'LFSI');
-
-                -- Insert LDFI with LFSI as parent
-                INSERT INTO modules (name, category, version, mandatory, description, os, parent_id)
-                SELECT 'LDFI', 'Filesystem', '1.0', 1,
+                -- Insert the root module LDFI (no parent)
+                INSERT INTO modules (name, category, version, description, os, parent_id)
+                SELECT 'LDFI', 'Filesystem', '1.0',
                        'Linux Directory and File Indexing: Parse a Linux filesystem to extract files and directories',
-                       'Linux',
-                       (SELECT id FROM modules WHERE name = 'LFSI')
+                       'Linux', NULL
                 WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'LDFI');
-
-                -- Insert LSCI with LDFI as parent
-                INSERT INTO modules (name, category, version, mandatory, description, os, parent_id)
-                SELECT 'LSCI', 'Filesystem', '1.0', 0,
-                       'Linux System Configuration Indexing: Extract system configuration information from a Linux filesystem',
-                       'Linux',
-                       (SELECT id FROM modules WHERE name = 'LDFI')
-                WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'LSCI');
-
-                -- Insert LNCI with LDFI as parent
-                INSERT INTO modules (name, category, version, mandatory, description, os, parent_id)
-                SELECT 'LNCI', 'Filesystem', '1.0', 0,
-                       'Linux Network Configuration Indexing: Extract network configuration information from a Linux filesystem',
-                       'Linux',
-                       (SELECT id FROM modules WHERE name = 'LDFI')
-                WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'LNCI');
             "#,
             kind: MigrationKind::Up,
         },
@@ -163,7 +138,7 @@ fn main() {
 
                 CREATE TABLE IF NOT EXISTS evidence_preprocessing_selected_partitions (
                     id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_preprocessing_id INTEGER NOT NULL,
+                    evidence_id               INTEGER NOT NULL,
                     partition_type            INTEGER NOT NULL,
                     boot_indicator            INTEGER,
                     start_chs_1              INTEGER,
@@ -177,8 +152,40 @@ fn main() {
                     sector_size              INTEGER,
                     first_byte_address       INTEGER,
                     description              TEXT,
-                    FOREIGN KEY (evidence_preprocessing_id)
-                        REFERENCES evidence_preprocessing_metadata(id)
+                    FOREIGN KEY (evidence_id)
+                        REFERENCES evidence(id)
+                        ON DELETE CASCADE
+                );
+            "#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "evidence_linux_file",
+            sql: r#"
+                CREATE TABLE IF NOT EXISTS linux_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id INTEGER NOT NULL,
+                    absolute_path TEXT,
+                    filename TEXT,
+                    parent_directory TEXT,
+                    inode_number INTEGER,
+                    file_type TEXT,
+                    size_bytes INTEGER,
+                    owner_uid INTEGER,
+                    group_gid INTEGER,
+                    permissions_mode INTEGER,
+                    hard_link_count INTEGER,
+                    access_time TEXT,
+                    modification_time TEXT,
+                    change_time TEXT,
+                    creation_time TEXT,
+                    extended_attributes TEXT,
+                    symlink_target TEXT,
+                    mount_point TEXT,
+                    filesystem_type TEXT,
+                    FOREIGN KEY (evidence_id)
+                        REFERENCES evidence(id)
                         ON DELETE CASCADE
                 );
             "#,

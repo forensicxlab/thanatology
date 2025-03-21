@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
@@ -16,10 +16,10 @@ import Settings from "./components/Settings";
 import FirstLaunch from "./components/firstLaunch/FirstLaunch";
 import { SnackbarProvider } from "./components/SnackbarProvider";
 import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper";
-import DiskImage from "./components/evidences/preprocessing/DiskImage";
-import { Evidence, ProcessedEvidenceMetadata } from "./dbutils/types";
 import CaseDetails from "./components/cases/CaseDetails";
 import PreProcessing from "./components/evidences/preprocessing/Preprocessing";
+import Processing from "./components/evidences/processing/Processing";
+
 const darkTheme = createTheme({
   palette: {
     mode: "dark",
@@ -42,10 +42,6 @@ const App: React.FC = () => {
     loadDatabase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handlePreprocessingComplete = (metadata: ProcessedEvidenceMetadata) => {
-    console.log("Preprocessing complete:", metadata);
-  };
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -73,9 +69,7 @@ const App: React.FC = () => {
                   path="evidences/preprocess/:id"
                   element={<PreProcessing database={database} />}
                 />
-
-                {/*
-                <Route path="evidences/:id" element={<EvidenceDetail />} />*/}
+                <Route path="evidences/process/:id" element={<Processing />} />
               </Route>
             </Routes>
           </Router>

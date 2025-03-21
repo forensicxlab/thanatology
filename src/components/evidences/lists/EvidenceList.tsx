@@ -18,6 +18,7 @@ import {
   Visibility,
 } from "@mui/icons-material";
 import Tooltip from "@mui/material/Tooltip";
+import { start_processing_from_id } from "../processing/utils/diskimage";
 import { useNavigate } from "react-router";
 
 export type Evidence = {
@@ -118,7 +119,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
             <Tooltip key="launch" title="Review for processing.">
               <GridActionsCellItem
                 icon={<DoubleArrowSharp />}
-                label="Launch Process"
+                label="Review for Pre-Process"
                 onClick={() => navigate(`/evidences/preprocess/${params.id}`)}
               />
             </Tooltip>,
@@ -130,12 +131,12 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
                 icon={<PlayArrow />}
                 label="Start Extraction"
                 onClick={() => {
-                  console.log("TODO");
+                  navigate(`/evidences/process/${params.id}`);
                 }}
               />
             </Tooltip>,
           ];
-        } else if (status === 3) {
+        } else if (status === 2) {
           return [
             <Tooltip key="review" title="Stop processing">
               <GridActionsCellItem
@@ -146,14 +147,23 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
                 }}
               />
             </Tooltip>,
+            <Tooltip key="review" title="View more">
+              <GridActionsCellItem
+                icon={<Visibility />}
+                label="Check the evidence analysis status."
+                onClick={() => {
+                  navigate(`/evidences/process/${params.id}`);
+                }}
+              />
+            </Tooltip>,
           ];
-        } else if (status === 2) {
+        } else if (status === 3) {
           return [
             <Tooltip key="review" title="Investigate">
               <GridActionsCellItem
                 icon={<PlayArrow />}
                 label="Investigate the evidence"
-                onClick={() => navigate(`/evidences/${params.id}`)}
+                onClick={() => navigate(`/evidences/process/${params.id}`)}
               />
             </Tooltip>,
           ];
