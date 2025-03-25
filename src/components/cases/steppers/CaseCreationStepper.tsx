@@ -12,6 +12,7 @@ import { Evidence } from "../../../dbutils/types";
 import { createCaseAndEvidence } from "../../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
 import { useNavigate } from "react-router";
+import { CheckCircle } from "@mui/icons-material";
 
 const steps = ["Case information", "Evidence(s)", "Summary"];
 
@@ -162,19 +163,20 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
         })}
       </Stepper>
       {activeStep === steps.length ? (
-        <React.Fragment>
-          <Typography sx={{ mt: 2, mb: 1 }}>
-            Case created with success.
+        <Box sx={{ textAlign: "center", mt: 4 }}>
+          <CheckCircle sx={{ fontSize: 80, color: "green" }} />
+          <Typography variant="h5" gutterBottom>
+            Case created
           </Typography>
-          <Box sx={{ display: "flex", flexDirection: "row", pt: 2 }}>
-            <Box sx={{ flex: "1 1 auto" }} />
-            {createdCaseId ? (
-              <Button onClick={handleViewCase}>View Created Case</Button>
-            ) : (
-              <Button onClick={handleReset}>Reset</Button>
-            )}
-          </Box>
-        </React.Fragment>
+          <Typography variant="body1">
+            Your case is now created and the evidences binded.
+          </Typography>
+          {createdCaseId ? (
+            <Button onClick={handleViewCase}>View</Button>
+          ) : (
+            <Button onClick={handleReset}>Reset</Button>
+          )}
+        </Box>
       ) : (
         <React.Fragment>
           {activeStep === 0 && (

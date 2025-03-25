@@ -235,7 +235,7 @@ async fn process_linux_partition(
         );
         return;
     }
-    process_ldfi(&mut extfs, evidence_id, app, pool).await
+    process_ldfi(&mut extfs, evidence_id, partition.id.unwrap(), app, pool).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

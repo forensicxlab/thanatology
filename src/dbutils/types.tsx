@@ -50,6 +50,7 @@ export interface ProcessedEvidenceMetadata {
 }
 
 export interface MBRPartitionEntry {
+  id: number;
   boot_indicator: number;
   start_chs: [number, number, number];
   partition_type: number;
@@ -77,4 +78,28 @@ export interface Partitions {
   mbr: MBR;
   ebr: MBRPartitionEntry[];
   //Todo: Add GPT
+}
+
+// Define the LinuxFile interface
+export interface LinuxFile {
+  id: number;
+  evidence_id: number;
+  absolute_path: string;
+  filename: string;
+  parent_directory: string;
+  inode_number: number;
+  file_type: string;
+  size_bytes: number;
+  owner_uid: number;
+  group_gid: number;
+  permissions_mode: number;
+  hard_link_count: number;
+  access_time: string;
+  modification_time: string;
+  change_time: string;
+  creation_time: string;
+  extended_attributes: string;
+  symlink_target: string;
+  mount_point: string;
+  filesystem_type: string;
 }

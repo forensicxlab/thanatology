@@ -16,6 +16,7 @@ import {
   DialogTitle,
   Button,
   Fab,
+  Tooltip,
 } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import EditIcon from "@mui/icons-material/Edit";
@@ -97,19 +98,23 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       headerName: "Actions",
       type: "actions",
       getActions: (params) => [
-        <GridActionsCellItem
-          icon={<VisibilityIcon />}
-          label="View"
-          onClick={() => navigate(`/cases/${params.id}`)}
-        />,
-        <GridActionsCellItem
-          icon={<EditIcon />}
-          label="Edit"
-          sx={{
-            color: "primary.main",
-          }}
-          onClick={() => console.log("Editing case:", params.id)}
-        />,
+        <Tooltip title="View Case">
+          <GridActionsCellItem
+            icon={<VisibilityIcon />}
+            label="View"
+            onClick={() => navigate(`/cases/${params.id}`)}
+          />
+        </Tooltip>,
+        <Tooltip title="Edit Case">
+          <GridActionsCellItem
+            icon={<EditIcon />}
+            label="Edit"
+            sx={{
+              color: "primary.main",
+            }}
+            onClick={() => console.log("Editing case:", params.id)}
+          />
+        </Tooltip>,
       ],
     },
   ];

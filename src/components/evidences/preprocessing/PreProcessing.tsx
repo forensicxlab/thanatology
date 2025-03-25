@@ -102,19 +102,15 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
 
         {/* Right: Disk Image Component */}
         <Grid size={12}>
-          <Card sx={{ p: 2, boxShadow: 3, bgcolor: "background.paper" }}>
-            <CardContent>
-              <Typography variant="h6" color="secondary" gutterBottom>
-                Preprocessing
-              </Typography>
-              <Divider sx={{ my: 2 }} />
-              <DiskImage
-                database={database}
-                evidenceData={evidence}
-                onComplete={start_processing}
-              />
-            </CardContent>
-          </Card>
+          <Typography variant="h6" color="secondary" gutterBottom>
+            Preprocessing
+          </Typography>
+          <Divider sx={{ my: 2 }} />
+          <DiskImage
+            database={database}
+            evidenceData={evidence}
+            onComplete={start_processing}
+          />
         </Grid>
       </Grid>
     </Box>

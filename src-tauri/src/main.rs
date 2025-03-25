@@ -166,6 +166,7 @@ fn main() {
                 CREATE TABLE IF NOT EXISTS linux_files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     evidence_id INTEGER NOT NULL,
+                    partition_id INTEGER NOT NULL,
                     absolute_path TEXT,
                     filename TEXT,
                     parent_directory TEXT,
@@ -186,6 +187,9 @@ fn main() {
                     filesystem_type TEXT,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
+                        ON DELETE CASCADE
+                    FOREIGN KEY (partition_id)
+                        REFERENCES evidence_preprocessing_selected_partitions(id)
                         ON DELETE CASCADE
                 );
             "#,

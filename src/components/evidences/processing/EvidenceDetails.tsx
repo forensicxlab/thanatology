@@ -9,11 +9,11 @@ interface EvidenceDetailsProps {
 
 const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({ evidence }) => {
   return (
-    <Paper
-      elevation={3}
+    <Box
       sx={{
         p: 2,
         borderLeft: "6px solid #8bc34a",
+        boxShadow: 3,
       }}
     >
       <Box display="flex" alignItems="center" mb={1}>
@@ -43,7 +43,7 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({ evidence }) => {
           <strong>Description:</strong> {evidence.description}
         </Typography>
       </Box>
-    </Paper>
+    </Box>
   );
 };
 

@@ -18,7 +18,6 @@ import {
   Visibility,
 } from "@mui/icons-material";
 import Tooltip from "@mui/material/Tooltip";
-import { start_processing_from_id } from "../processing/utils/diskimage";
 import { useNavigate } from "react-router";
 
 export type Evidence = {
@@ -97,16 +96,45 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       field: "status",
       headerName: "Status",
       flex: 1,
-      renderCell: (params: GridRenderCellParams) => (
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <Info style={{ marginRight: 8 }} />
-          {params.value === 0
-            ? "Not processed"
-            : params.value === 1
-              ? "Pending start"
-              : "Processed"}
-        </div>
-      ),
+      renderCell: (params: GridRenderCellParams) => {
+        let statusColor;
+        let statusText;
+
+        switch (params.value) {
+          case 0:
+            statusColor = "red";
+            statusText = "Not processed";
+            break;
+          case 1:
+            statusColor = "orange";
+            statusText = "Pending start";
+            break;
+          case 2:
+            statusColor = "orange";
+            statusText = "Processing";
+            break;
+          case 3:
+            statusColor = "green";
+            statusText = "Ready";
+            break;
+          default:
+            statusColor = "grey";
+            statusText = "Unknown";
+        }
+
+        return (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              color: statusColor,
+            }}
+          >
+            <Info style={{ marginRight: 8 }} />
+            {statusText}
+          </div>
+        );
+      },
     },
     {
       field: "actions",
@@ -152,7 +180,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
                 icon={<Visibility />}
                 label="Check the evidence analysis status."
                 onClick={() => {
-                  navigate(`/evidences/process/${params.id}`);
+                  navigate(`/evidences/review/${params.id}`);
                 }}
               />
             </Tooltip>,
@@ -163,7 +191,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               <GridActionsCellItem
                 icon={<PlayArrow />}
                 label="Investigate the evidence"
-                onClick={() => navigate(`/evidences/process/${params.id}`)}
+                onClick={() => navigate(`/evidences/investigate/${params.id}`)}
               />
             </Tooltip>,
           ];

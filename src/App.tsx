@@ -19,6 +19,7 @@ import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper
 import CaseDetails from "./components/cases/CaseDetails";
 import PreProcessing from "./components/evidences/preprocessing/Preprocessing";
 import Processing from "./components/evidences/processing/Processing";
+import LinuxInvestigation from "./components/evidences/investigate/linux/Main";
 
 const darkTheme = createTheme({
   palette: {
@@ -70,6 +71,10 @@ const App: React.FC = () => {
                   element={<PreProcessing database={database} />}
                 />
                 <Route path="evidences/process/:id" element={<Processing />} />
+                <Route
+                  path="evidences/investigate/:id"
+                  element={<LinuxInvestigation />}
+                />
               </Route>
             </Routes>
           </Router>

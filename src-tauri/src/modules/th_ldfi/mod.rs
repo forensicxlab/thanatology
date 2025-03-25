@@ -17,6 +17,7 @@ use sqlx::Pool;
 pub async fn process_ldfi<T: Filesystem>(
     fs: &mut T,
     evidence_id: i64,
+    partition_id: i64,
     app: &AppHandle,
     pool: Pool<Sqlite>,
 ) where
@@ -67,7 +68,7 @@ pub async fn process_ldfi<T: Filesystem>(
         app,
     );
     // 5) Perform one bulk insert of all nodes in a single transaction.
-    if let Err(e) = bulk_insert_nodes(&pool, evidence_id, &nodes, &app).await {
+    if let Err(e) = bulk_insert_nodes(&pool, evidence_id, partition_id, &nodes, &app).await {
         emit_progress_event(
             &evidence_id,
             ProgressMessageLevel::Module,
@@ -103,6 +104,7 @@ fn flatten_plain_tree(node: &PlainFileSystemNode, accumulator: &mut Vec<PlainFil
 async fn bulk_insert_nodes(
     pool: &SqlitePool,
     evidence_id: i64,
+    partition_id: i64,
     nodes: &[PlainFileSystemNode],
     app: &AppHandle,
 ) -> Result<(), sqlx::Error> {
@@ -115,6 +117,7 @@ async fn bulk_insert_nodes(
     let stmt_str = r#"
         INSERT INTO linux_files (
             evidence_id,
+            partition_id,
             absolute_path,
             filename,
             parent_directory,
@@ -138,15 +141,14 @@ async fn bulk_insert_nodes(
 
     let mut processed = 0u64;
     for plain_node in nodes {
-        // Each node has a "linuxfile" field.
-        let mut lf = plain_node.linuxfile.clone();
-        // Attach the evidence_id (override any existing)
-        lf.evidence_id = Some(evidence_id);
-
+        // Instead of moving the linuxfile, borrow it.
+        let lf = &plain_node.linuxfile;
+        // We can supply the evidence_id directly in the query binding rather than modifying lf.
         let ext_attrs_text = lf.extended_attributes.to_string();
 
         if let Err(e) = sqlx::query(stmt_str)
-            .bind(lf.evidence_id)
+            .bind(Some(evidence_id))
+            .bind(partition_id)
             .bind(&lf.absolute_path)
             .bind(&lf.filename)
             .bind(&lf.parent_directory)
@@ -189,9 +191,6 @@ async fn bulk_insert_nodes(
             ),
             app,
         );
-
-        // Small yield to avoid locking too long on large sets
-        // sleep(Duration::from_millis(1)).await;
     }
 
     // Commit transaction when done

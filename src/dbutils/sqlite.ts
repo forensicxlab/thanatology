@@ -5,6 +5,7 @@ import {
   Case,
   Evidence,
   ProcessedEvidenceMetadata,
+  LinuxFile,
 } from "./types";
 
 export async function createUser(username: string, db: Database | null) {
@@ -333,6 +334,7 @@ export async function getSelectedPartitions(
   );
   // Map raw DB rows into complete MBRPartitionEntry objects
   return rows.map((row) => ({
+    id: row.id,
     boot_indicator: row.boot_indicator,
     start_chs: [row.start_chs_1, row.start_chs_2, row.start_chs_3],
     partition_type: row.partition_type,
@@ -409,4 +411,79 @@ export async function getEvidencesStatus(
     "SELECT * FROM evidence WHERE status = 2",
   );
   return evidences;
+}
+
+/**
+ * Fetches files for a given evidence and parent directory.
+ *
+ * @param db - The Database instance. If null, a new connection is established.
+ * @param evidenceId - The ID of the evidence.
+ * @param parentDirectory - The parent directory path.
+ * @returns An array of LinuxFile objects.
+ */
+export async function getFilesByEvidenceAndParent(
+  db: Database | null,
+  evidenceId: number,
+  parentDirectory: string,
+): Promise<LinuxFile[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+
+  const files: LinuxFile[] = await db.select(
+    `
+    SELECT
+      id,
+      evidence_id,
+      absolute_path,
+      filename,
+      parent_directory,
+      CASE
+        WHEN file_type = 'dir' THEN 'Directory'
+        ELSE 'File'
+      END AS file_type,
+      size_bytes
+    FROM linux_files
+    WHERE evidence_id = $1 AND parent_directory = $2
+    ORDER BY file_type DESC, filename ASC
+    `,
+    [evidenceId, parentDirectory],
+  );
+
+  return files;
+}
+
+/**
+ * Fetch a single partition entry by ID.
+ */
+export async function getPartitionById(
+  db: Database | null,
+  partitionId: number,
+): Promise<MBRPartitionEntry> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+
+  const rows: any[] = await db.select(
+    "SELECT * FROM evidence_preprocessing_selected_partitions WHERE id = ?",
+    [partitionId],
+  );
+
+  if (rows.length === 0) {
+    throw new Error(`Partition with ID ${partitionId} not found.`);
+  }
+
+  const row = rows[0];
+  return {
+    id: row.id,
+    boot_indicator: row.boot_indicator,
+    start_chs: [row.start_chs_1, row.start_chs_2, row.start_chs_3],
+    partition_type: row.partition_type,
+    end_chs: [row.end_chs_1, row.end_chs_2, row.end_chs_3],
+    start_lba: row.start_lba,
+    size_sectors: row.size_sectors,
+    sector_size: row.sector_size,
+    first_byte_addr: row.first_byte_address,
+    description: row.description,
+  };
 }

@@ -77,49 +77,33 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
 
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
-      <Typography variant="h4" gutterBottom color="primary">
-        Case Details
-      </Typography>
-
       <Grid container spacing={3}>
         {/* Left: Case Details */}
         <Grid size={12}>
-          <Card sx={{ p: 2, bgcolor: "background.paper", boxShadow: 3 }}>
-            <CardContent>
-              {caseDetails ? (
-                <>
-                  <Typography variant="h6" color="secondary">
-                    {caseDetails.name}
-                  </Typography>
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="body1">
-                    <strong>Identifier:</strong> CASE-{caseDetails.id}
-                  </Typography>
-                  <Typography variant="body1">
-                    <strong>Description:</strong> {caseDetails.description}
-                  </Typography>
-                </>
-              ) : (
-                <Typography>Loading case details...</Typography>
-              )}
-            </CardContent>
-          </Card>
+          {caseDetails ? (
+            <>
+              <Typography variant="h6" color="secondary">
+                CASES/{caseDetails.name}
+              </Typography>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="body1">
+                <strong>Identifier:</strong> CASE-{caseDetails.id}
+              </Typography>
+              <Typography variant="body1">
+                <strong>Description:</strong> {caseDetails.description}
+              </Typography>
+            </>
+          ) : (
+            <Typography>Loading case details...</Typography>
+          )}
         </Grid>
 
         {/* Right: Evidence List */}
         <Grid size={12}>
-          <Card sx={{ p: 2, boxShadow: 3, bgcolor: "background.paper" }}>
-            <CardContent>
-              <Typography variant="h6" color="secondary" gutterBottom>
-                Evidences
-              </Typography>
-              <Divider sx={{ my: 2 }} />
-              <EvidenceList
-                evidences={evidences}
-                onSelectionChange={setSelectedEvidenceIds}
-              />
-            </CardContent>
-          </Card>
+          <EvidenceList
+            evidences={evidences}
+            onSelectionChange={setSelectedEvidenceIds}
+          />
         </Grid>
       </Grid>
 
