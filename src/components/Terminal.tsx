@@ -5,7 +5,7 @@ import Drawer from "@mui/material/Drawer";
 import { Box, Fab } from "@mui/material";
 import { TerminalContextProvider } from "react-terminal";
 import { TerminalOutlined } from "@mui/icons-material";
-import { Evidence } from "./components/evidences/lists/EvidenceList";
+import { Evidence } from "./evidences/lists/EvidenceList";
 
 interface TerminalProps {
   evidence: Evidence;
@@ -25,8 +25,12 @@ const Terminal: React.FC<TerminalProps> = ({ evidence }) => {
 
   return (
     <>
-      {/* This button can go anywhere in your UI to trigger the drawer */}
-      <Fab color="secondary" aria-label="add" onClick={toggleDrawer}>
+      <Fab
+        color="secondary"
+        size="small"
+        aria-label="new-terminal"
+        onClick={toggleDrawer}
+      >
         <TerminalOutlined />
       </Fab>
 

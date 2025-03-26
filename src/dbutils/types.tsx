@@ -15,6 +15,11 @@ export interface Case {
   collaborators: number[]; // Array of user IDs for collaborators
 }
 
+export interface FsInfo {
+  block_size: number;
+  filesystem_type: string;
+}
+
 export interface Partition {
   //TODO Take the fields from the exhume module
 }

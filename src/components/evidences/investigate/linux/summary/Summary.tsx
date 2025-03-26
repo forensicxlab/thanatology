@@ -5,6 +5,7 @@ import Grid from "@mui/material/Grid2";
 import { getPartitionById } from "../../../../../dbutils/sqlite";
 import { Evidence, MBRPartitionEntry } from "../../../../../dbutils/types";
 import Partition from "../../../processing/Partition";
+import FileSystem from "./FileSystem";
 interface SummaryProps {
   evidence: Evidence;
   partition_id: number;
@@ -30,9 +31,10 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
   }, [partition_id, display_message]);
 
   return (
-    <Grid container spacing={2}>
-      <Grid size={6}>
-        {partition && (
+    partition &&
+    evidence && (
+      <Grid container spacing={2}>
+        <Grid size={6}>
           <Card variant="outlined">
             <CardContent>
               <Typography variant="h5" component="div" sx={{ mb: 1 }}>
@@ -42,32 +44,32 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
               <Partition partition={partition} index={partition_id - 1} />
             </CardContent>
           </Card>
-        )}
-      </Grid>
-      <Grid size={6}>
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h5" component="div" sx={{ mb: 1 }}>
-              FileSystem
-            </Typography>
-            <Divider sx={{ mb: 1 }} />
-            blabla
-          </CardContent>
-        </Card>
-      </Grid>
+        </Grid>
+        <Grid size={6}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="h5" component="div" sx={{ mb: 1 }}>
+                FileSystem
+              </Typography>
+              <Divider sx={{ mb: 1 }} />
+              <FileSystem path={evidence.path} partition={partition} />
+            </CardContent>
+          </Card>
+        </Grid>
 
-      <Grid size={12}>
-        <Card variant="outlined">
-          <CardContent>
-            <Typography variant="h5" component="div" sx={{ mb: 1 }}>
-              Module(s) Metadata
-            </Typography>
-            <Divider sx={{ mb: 1 }} />
-            blabla
-          </CardContent>
-        </Card>
+        <Grid size={12}>
+          <Card variant="outlined">
+            <CardContent>
+              <Typography variant="h5" component="div" sx={{ mb: 1 }}>
+                Module(s) Metadata
+              </Typography>
+              <Divider sx={{ mb: 1 }} />
+              blabla
+            </CardContent>
+          </Card>
+        </Grid>
       </Grid>
-    </Grid>
+    )
   );
 };
 

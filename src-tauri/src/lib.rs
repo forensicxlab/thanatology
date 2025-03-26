@@ -7,6 +7,7 @@ use exhume_lvm::Lvm2;
 use exhume_partitions::{mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{debug, info};
+use modules::th_filesystem::get_fs_info;
 use modules::th_ldfi::process_ldfi;
 use sqlx::query;
 use sqlx::sqlite::SqlitePool;
@@ -257,6 +258,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             discover_partitions,
             read_mbr_partition,
             process_linux_partitions,
+            get_fs_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -21,8 +21,7 @@ import Summary from "./summary/Summary";
 import System from "./system/System";
 import Network from "./network/Network";
 import { PartitionSelection } from "../PartitionSelection";
-import { TerminalContextProvider } from "react-terminal";
-import Terminal from "../../../../Terminal";
+import Terminal from "../../../Terminal";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -134,18 +133,6 @@ const InvestigateLinux: React.FC = () => {
 
       <Box
         sx={{
-          position: "absolute",
-          mr: 1,
-          bottom: "0",
-          right: "0",
-          zIndex: 1,
-        }}
-      >
-        <Terminal evidence={evidence} />
-      </Box>
-
-      <Box
-        sx={{
           flexGrow: 1,
           bgcolor: "background.paper",
           display: "flex",
@@ -153,6 +140,18 @@ const InvestigateLinux: React.FC = () => {
       >
         {selectedPartition ? (
           <>
+            <Box
+              sx={{
+                position: "absolute",
+                mb: 10,
+                mr: 1,
+                bottom: "0",
+                right: "0",
+                zIndex: 1,
+              }}
+            >
+              <Terminal evidence={evidence} />
+            </Box>
             <Tabs
               sx={{
                 "& .MuiTabs-indicator": {
