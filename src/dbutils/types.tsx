@@ -18,6 +18,7 @@ export interface Case {
 export interface FsInfo {
   block_size: number;
   filesystem_type: string;
+  metadata: Object;
 }
 
 export interface Partition {

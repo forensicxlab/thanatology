@@ -37,7 +37,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
         <Grid size={6}>
           <Card variant="outlined">
             <CardContent>
-              <Typography variant="h5" component="div" sx={{ mb: 1 }}>
+              <Typography variant="h6" component="div" sx={{ mb: 1 }}>
                 Partition
               </Typography>
               <Divider sx={{ mb: 1 }} />
@@ -48,7 +48,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
         <Grid size={6}>
           <Card variant="outlined">
             <CardContent>
-              <Typography variant="h5" component="div" sx={{ mb: 1 }}>
+              <Typography variant="h6" component="div" sx={{ mb: 1 }}>
                 FileSystem
               </Typography>
               <Divider sx={{ mb: 1 }} />

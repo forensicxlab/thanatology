@@ -37,16 +37,21 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
         elevation={3}
         sx={{
           p: 2,
-          borderRight: "4px solid #1976d2",
+          borderLeft: "4px solid #ab47bc",
         }}
       >
         <Typography variant="body2">
           <strong>Type:</strong> {fsInfo.filesystem_type}
         </Typography>
         <Typography variant="body2">
-          <strong>Size of a block/cluster: </strong>
+          <strong>Size of a block: </strong>
           {fsInfo.block_size} bytes
         </Typography>
+        {Object.entries(fsInfo.metadata).map(([key, value]) => (
+          <Typography variant="body2" key={key}>
+            <strong>{key}:</strong> {value.toString()}
+          </Typography>
+        ))}
       </Paper>
     )
   );
