@@ -1,6 +1,6 @@
 use exhume_body::Body;
-use exhume_filesystem::detect_filesystem;
-use exhume_filesystem::{Filesystem, FsInfo};
+use exhume_filesystem::detected_fs::detect_filesystem;
+use exhume_filesystem::filesystem::{Filesystem, FsInfo};
 use serde::{Deserialize, Serialize};
 
 #[tauri::command]

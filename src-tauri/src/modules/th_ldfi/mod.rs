@@ -1,4 +1,4 @@
-use exhume_filesystem::{Filesystem, FsDirEntry};
+use exhume_filesystem::filesystem::{DirEntryCommon, Filesystem};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{debug, info};
 // use std::time::Duration;
@@ -22,7 +22,7 @@ pub async fn process_ldfi<T: Filesystem>(
     pool: Pool<Sqlite>,
 ) where
     T::InodeType: 'static,
-    T::DirEntryType: FsDirEntry,
+    T::DirEntryType: DirEntryCommon,
 {
     info!("Strarting LDFI Module...");
     // (Optional) Create or ensure indexes to speed up queries:

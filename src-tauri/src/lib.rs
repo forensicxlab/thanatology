@@ -2,20 +2,20 @@ mod modules;
 use env_logger;
 use exhume_body::{Body, BodySlice};
 use exhume_extfs::ExtFS;
-use exhume_filesystem::Filesystem;
+use exhume_filesystem::detected_fs::{self, detect_filesystem};
+use exhume_filesystem::filesystem::{Filesystem, FsInfo};
 use exhume_lvm::Lvm2;
 use exhume_partitions::{mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{debug, info};
 use modules::th_filesystem::get_fs_info;
 use modules::th_ldfi::process_ldfi;
+use serde::{Deserialize, Serialize};
 use sqlx::query;
 use sqlx::sqlite::SqlitePool;
+use std::path::Path;
 use tauri::AppHandle;
 use tauri_plugin_sql::Migration;
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 async fn update_evidence_status(
     pool: &SqlitePool,
@@ -182,61 +182,26 @@ async fn process_linux_partition(
     let mut body = Body::new(disk_image_path, "auto");
     let sector_size = body.get_sector_size();
     let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
-    let mut slice = match BodySlice::new(
+
+    let mut fs = match detect_filesystem(
         &mut body,
         partition.first_byte_addr as u64,
         partition_size_bytes,
     ) {
-        Ok(s) => s,
-        Err(e) => {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Error creating BodySlice: {e:?}"),
-                &app,
-            );
-            return;
-        }
-    };
-
-    //TODO: THIS PART OF THE CODE HAS TO BE REWORKED TO RETURN THE RIGHT FS
-    //OBJECT TO CREATE WE LEAVE EXTFS FOR NOW BUT IT HURTS
-    if partition.partition_type != 0x83 {
-        emit_progress_event(
-            &evidence_id,
-            ProgressMessageLevel::Main,
-            ProgressMessageType::Error,
-            format!("Thanatology does not support this partition type."),
-            &app,
-        );
-        return;
-    }
-
-    let mut extfs = match ExtFS::new(&mut slice) {
         Ok(fs) => fs,
-        Err(e) => {
+        Err(err) => {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Error,
-                format!("Error creating ExtFS: {e:?}"),
+                format!("Could not detect the filesystem: {}", err.to_string()),
                 &app,
             );
             return;
         }
     };
-    if let Err(e) = extfs.open_fs() {
-        emit_progress_event(
-            &evidence_id,
-            ProgressMessageLevel::Main,
-            ProgressMessageType::Error,
-            format!("Error opening ExtFS: {e:?}"),
-            &app,
-        );
-        return;
-    }
-    process_ldfi(&mut extfs, evidence_id, partition.id.unwrap(), app, pool).await
+
+    process_ldfi(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
