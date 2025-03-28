@@ -150,7 +150,7 @@ const InvestigateLinux: React.FC = () => {
                 zIndex: 1,
               }}
             >
-              <Terminal evidence={evidence} />
+              <Terminal evidence={evidence} partitionId={selectedPartition} />
             </Box>
             <Tabs
               sx={{
@@ -268,10 +268,16 @@ const InvestigateLinux: React.FC = () => {
                 <Summary evidence={evidence} partition_id={selectedPartition} />
               </TabPanel>
               <TabPanel value={value} index={1}>
-                <System />
+                <System
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
               </TabPanel>
               <TabPanel value={value} index={2}>
-                <Network />
+                <Network
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
               </TabPanel>
               <TabPanel value={value} index={3}>
                 {/* Users content */}

@@ -83,25 +83,16 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
         None => return Err("Error: Overflow occurred when calculating partition size".to_string()),
     };
 
-    let mut isolated_partition: Option<BodySlice> =
-        match BodySlice::new(&mut body, partition.first_byte_addr as u64, partition_size) {
-            Ok(slice) => Some(slice),
-            Err(e) => return Err(format!("Error creating BodySlice: {:?}", e)),
-        };
-
-    if partition.partition_type == 0x83 {
-        match ExtFS::new(isolated_partition.as_mut().unwrap()) {
-            Ok(_) => Ok(true),
-            Err(err) => Err(format!("Could not parse the extfs partition: {:?}", err)),
+    let fs = match detect_filesystem(&mut body, partition.first_byte_addr as u64, partition_size) {
+        Ok(_) => true,
+        Err(err) => {
+            return Err(format!(
+                "Error detecting the filesystem: {}",
+                err.to_string()
+            ))
         }
-    } else if partition.partition_type == 0x8E {
-        match Lvm2::open(isolated_partition.as_mut().unwrap()) {
-            Ok(_) => Ok(true),
-            Err(err) => Err(format!("Could not parse the lvm partition: {:?}", err)),
-        }
-    } else {
-        Err("Thanatology doesn't support the exhume of this partition type.".to_string())
-    }
+    };
+    Ok(fs)
 }
 
 #[tauri::command]
@@ -204,6 +195,19 @@ async fn process_linux_partition(
     process_ldfi(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
 }
 
+#[tauri::command]
+fn new_whiteboard(app: AppHandle) {
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "drawer",
+        tauri::WebviewUrl::App("escalidraw.html".into()),
+    )
+    .title("Whiteboard")
+    .maximized(true)
+    .build()
+    .unwrap();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     env_logger::Builder::new()
@@ -224,6 +228,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             read_mbr_partition,
             process_linux_partitions,
             get_fs_info,
+            new_whiteboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

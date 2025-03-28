@@ -521,16 +521,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
         <Box mt={2}>
           <Button
             variant="contained"
-            onClick={() =>
-              onComplete({
-                evidenceData,
-                diskImageFormat,
-                selectedMbrPartitions,
-                extractionModules: extractionModules.filter((mod) =>
-                  selectedExtractionModules.includes(mod.id),
-                ),
-              })
-            }
+            onClick={() => {
+              navigate(`/evidences/process/${evidenceData.id}`);
+            }}
             sx={{ mr: 2 }}
           >
             Launch Processing Action
@@ -538,7 +531,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
           <Button
             variant="outlined"
             onClick={() => {
-              navigate("/cases/");
+              navigate(`/cases/`);
             }}
           >
             I will start processing the evidence later.

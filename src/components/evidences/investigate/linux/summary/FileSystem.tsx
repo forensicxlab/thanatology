@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { MBRPartitionEntry, FsInfo } from "../../../../../dbutils/types";
 import { useSnackbar } from "../../../../SnackbarProvider";
 import { Box, Paper, Typography } from "@mui/material";
+import { GridView } from "@mui/icons-material";
 
 interface FileSystemProps {
   path: String;
@@ -40,6 +41,10 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
           borderLeft: "4px solid #ab47bc",
         }}
       >
+        <Box display="flex" alignItems="center" mb={1}>
+          <GridView color="secondary" sx={{ mr: 1 }} />
+          <Typography variant="subtitle1">FileSystem</Typography>
+        </Box>
         <Typography variant="body2">
           <strong>Type:</strong> {fsInfo.filesystem_type}
         </Typography>

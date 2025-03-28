@@ -5,7 +5,7 @@ import { MBRPartitionEntry } from "../../../dbutils/types";
 
 interface PartitionProps {
   partition: MBRPartitionEntry;
-  index: number;
+  index: number | null;
 }
 
 const Partition: React.FC<PartitionProps> = ({ partition, index }) => {
@@ -21,7 +21,11 @@ const Partition: React.FC<PartitionProps> = ({ partition, index }) => {
     >
       <Box display="flex" alignItems="center" mb={1}>
         <StorageIcon color="primary" sx={{ mr: 1 }} />
-        <Typography variant="subtitle1">Partition #{index + 1}</Typography>
+        {index ? (
+          <Typography variant="subtitle1">Partition #{index + 1}</Typography>
+        ) : (
+          <Typography variant="subtitle1">Partition</Typography>
+        )}
         {isBootable && (
           <Chip
             label="Bootable"

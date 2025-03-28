@@ -44,7 +44,6 @@ export async function getMBRCompatibleModules(
     const compatibleModules: Module[] = await db.select(
       "SELECT * FROM modules WHERE os = 'Linux'",
     );
-    console.log(compatibleModules);
     return compatibleModules;
   }
   return [];
@@ -54,7 +53,8 @@ export async function createCaseAndEvidence(
   caseData: Case,
   evidenceList: Evidence[],
   db: Database | null,
-): Promise<void> {
+): Promise<number> {
+  // Change the Promise return type to 'number'
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -93,6 +93,8 @@ export async function createCaseAndEvidence(
       ],
     );
   }
+
+  return caseId;
 }
 
 export async function getCases(db: Database | null) {
@@ -424,6 +426,7 @@ export async function getEvidencesStatus(
 export async function getFilesByEvidenceAndParent(
   db: Database | null,
   evidenceId: number,
+  partitionId: number,
   parentDirectory: string,
 ): Promise<LinuxFile[]> {
   if (!db) {
@@ -432,22 +435,12 @@ export async function getFilesByEvidenceAndParent(
 
   const files: LinuxFile[] = await db.select(
     `
-    SELECT
-      id,
-      evidence_id,
-      absolute_path,
-      filename,
-      parent_directory,
-      CASE
-        WHEN file_type = 'dir' THEN 'Directory'
-        ELSE 'File'
-      END AS file_type,
-      size_bytes
-    FROM linux_files
-    WHERE evidence_id = $1 AND parent_directory = $2
-    ORDER BY file_type DESC, filename ASC
-    `,
-    [evidenceId, parentDirectory],
+     SELECT *
+     FROM linux_files
+     WHERE evidence_id = $1 AND partition_id = $2 AND parent_directory = $3
+     ORDER BY file_type DESC, filename ASC
+     `,
+    [evidenceId, partitionId, parentDirectory],
   );
 
   return files;
@@ -486,4 +479,64 @@ export async function getPartitionById(
     first_byte_addr: row.first_byte_address,
     description: row.description,
   };
+}
+
+export async function getFileByEvidenceAndAbsolutePath(
+  db: Database | null,
+  evidenceId: number,
+  partitionId: number,
+  absolutePath: string,
+): Promise<LinuxFile | null> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+
+  const rows: LinuxFile[] = await db.select(
+    `
+      SELECT *
+      FROM linux_files
+      WHERE evidence_id = $1
+        AND partition_id = $2
+        AND absolute_path = $3
+      LIMIT 1
+    `,
+    [evidenceId, partitionId, absolutePath],
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return rows[0];
+}
+
+/**
+ * Searches for LinuxFiles using a SQL LIKE query.
+ * @param db - The Database instance (if null, a new connection is loaded).
+ * @param evidenceId - The evidence ID.
+ * @param partitionId - The partition ID.
+ * @param pattern - The search pattern (e.g. '%term%').
+ * @returns An array of matching LinuxFile objects.
+ */
+export async function searchLinuxFiles(
+  db: Database | null,
+  evidenceId: number,
+  partitionId: number,
+  pattern: string,
+): Promise<LinuxFile[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+  const query = `
+    SELECT * FROM linux_files
+    WHERE evidence_id = $1 AND partition_id = $2
+      AND (filename LIKE $3 OR absolute_path LIKE $3)
+    ORDER BY file_type DESC, filename ASC
+  `;
+  const files: LinuxFile[] = await db.select(query, [
+    evidenceId,
+    partitionId,
+    pattern,
+  ]);
+  return files;
 }

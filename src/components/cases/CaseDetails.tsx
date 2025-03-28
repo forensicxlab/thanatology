@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router";
+import NewEvidenceDialog from "../evidences/dialogs/NewEvidenceDialog";
 import {
   Typography,
   Button,
@@ -43,6 +44,19 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const [evidences, setEvidences] = useState<Evidence[]>([]);
   const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<number[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
+  const [openNewEvidenceDialog, setOpenNewEvidenceDialog] =
+    useState<boolean>(false);
+
+  const fetchCaseData = async () => {
+    try {
+      const { case: fetchedCase, evidences: fetchedEvidences } =
+        await getCaseWithEvidences(database, id);
+      setCaseDetails(fetchedCase);
+      setEvidences(fetchedEvidences);
+    } catch (error) {
+      console.error("Error fetching case details:", error);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -72,7 +86,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   };
 
   const handleAddEvidence = () => {
-    console.log("Navigate to add evidence page");
+    setOpenNewEvidenceDialog(true);
   };
 
   return (
@@ -127,6 +141,16 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
           </Fab>
         )}
       </Box>
+
+      {caseDetails && (
+        <NewEvidenceDialog
+          open={openNewEvidenceDialog}
+          onClose={() => setOpenNewEvidenceDialog(false)}
+          caseId={caseDetails.id}
+          database={database}
+          onEvidenceCreated={fetchCaseData}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog

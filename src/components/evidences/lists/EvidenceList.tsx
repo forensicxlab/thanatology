@@ -180,7 +180,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
                 icon={<Visibility />}
                 label="Check the evidence analysis status."
                 onClick={() => {
-                  navigate(`/evidences/review/${params.id}`);
+                  navigate(`/evidences/process/${params.id}`);
                 }}
               />
             </Tooltip>,

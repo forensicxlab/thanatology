@@ -1,27 +1,36 @@
+import React, { useState, useEffect } from "react";
 import { ReactTerminal } from "react-terminal";
-
-import React, { useState } from "react";
 import Drawer from "@mui/material/Drawer";
 import { Box, Fab } from "@mui/material";
 import { TerminalContextProvider } from "react-terminal";
 import { TerminalOutlined } from "@mui/icons-material";
 import { Evidence } from "./evidences/lists/EvidenceList";
+import { commands, setTerminalContext, getCwd } from "../commands/main";
 
 interface TerminalProps {
   evidence: Evidence;
+  partitionId: number;
 }
 
-const Terminal: React.FC<TerminalProps> = ({ evidence }) => {
-  const commands = {
-    whoami: "jackharper",
-    cd: (directory: any) => `changed path to ${directory}`,
-  };
-
+const Terminal: React.FC<TerminalProps> = ({ evidence, partitionId }) => {
   const [open, setOpen] = useState(false);
+  const [prompt, setPrompt] = useState("/");
 
-  const toggleDrawer = () => {
-    setOpen((prev) => !prev);
-  };
+  const toggleDrawer = () => setOpen((prev) => !prev);
+
+  // Set the terminal context when the component mounts or context changes.
+  useEffect(() => {
+    setTerminalContext(evidence.id, partitionId);
+    setPrompt(getCwd());
+  }, [evidence.id, partitionId]);
+
+  // Update the prompt every 500ms to reflect the current working directory.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPrompt(getCwd());
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <>
@@ -33,24 +42,15 @@ const Terminal: React.FC<TerminalProps> = ({ evidence }) => {
       >
         <TerminalOutlined />
       </Fab>
-
       <Drawer anchor="bottom" open={open} onClose={toggleDrawer}>
-        {/* You can tweak the height and other styling here */}
-        <Box sx={{ height: "40vh", p: 2 }}>
+        <Box sx={{ height: "70vh", p: 2 }}>
           <TerminalContextProvider>
             <ReactTerminal
               commands={commands}
-              themes={{
-                thanatology: {
-                  themeBGColor: "#121212",
-                  themeToolbarColor: "#121212",
-                  themeColor: "#FFFFFF",
-                  themePromptColor: "#a917a8",
-                },
-              }}
               showControlBar={false}
-              prompt="/"
-              theme="thanatology"
+              prompt={prompt}
+              theme="material-dark"
+              errorMessage="command not found"
               welcomeMessage={evidence.name}
             />
           </TerminalContextProvider>

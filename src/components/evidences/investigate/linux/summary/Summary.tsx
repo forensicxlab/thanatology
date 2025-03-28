@@ -35,26 +35,10 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
     evidence && (
       <Grid container spacing={2}>
         <Grid size={6}>
-          <Card variant="outlined">
-            <CardContent>
-              <Typography variant="h6" component="div" sx={{ mb: 1 }}>
-                Partition
-              </Typography>
-              <Divider sx={{ mb: 1 }} />
-              <Partition partition={partition} index={partition_id - 1} />
-            </CardContent>
-          </Card>
+          <Partition partition={partition} index={0} />
         </Grid>
         <Grid size={6}>
-          <Card variant="outlined">
-            <CardContent>
-              <Typography variant="h6" component="div" sx={{ mb: 1 }}>
-                FileSystem
-              </Typography>
-              <Divider sx={{ mb: 1 }} />
-              <FileSystem path={evidence.path} partition={partition} />
-            </CardContent>
-          </Card>
+          <FileSystem path={evidence.path} partition={partition} />
         </Grid>
 
         <Grid size={12}>

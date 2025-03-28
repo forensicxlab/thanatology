@@ -120,15 +120,14 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
         evidences,
         database,
       )
-        .then(() => {
-          setCreatedCaseId(result);
+        .then((result) => {
+          setCreatedCaseId(result.toString());
           setActiveStep(steps.length);
         })
         .catch((error: any) => {
           console.log(error);
           // display_message("warning", error);
         });
-      let result = "1";
     } catch (error) {
       console.error("Error creating case:", error);
       // TODO add error handling (e.g. display a message to the user).
