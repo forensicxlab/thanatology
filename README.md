@@ -20,6 +20,7 @@ This roadmap is dynamic, consider all of the alpha tagged release as not product
 ## v0.1.0-alpha-Release (Q4 of 2025)
 
 - [x] Case and Evidence management.
+- [x] Sqlite Support
 - [x] DiskImage Layout Analysis.
 - [ ] ExtFS Artefact extraction for Linux Analysis.
 - [ ] ProcMon Artefacts Vizualisation for Malware Analysis.
@@ -31,6 +32,7 @@ This roadmap is dynamic, consider all of the alpha tagged release as not product
 - [ ] exFAT Artefact extraction for Analysis
 - [ ] FAT16/32 Artefact extraction for Analysis
 - [ ] Embeded Hexadecimal Editor for Malware Analysis
+- [ ] PostGreSQL support
 
 # Join the community
 
