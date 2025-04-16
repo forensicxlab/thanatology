@@ -21,8 +21,44 @@ export interface FsInfo {
   metadata: Object;
 }
 
-export interface Partition {
-  //TODO Take the fields from the exhume module
+export interface Partitions {
+  mbr: MBR;
+  ebr: MBRPartitionEntry[];
+  gpt: GPT;
+}
+
+export interface GPT {
+  header: GPTHeader;
+  partition_entries: GPTPartitionEntry[];
+}
+
+export interface GPTHeader {
+  signature: number[];
+  revision: number;
+  header_size: number;
+  crc32: number;
+  reserved: number;
+  current_lba: number;
+  backup_lba: number;
+  first_usable_lba: number;
+  last_usable_lba: number;
+  disk_guid: number[];
+  partition_entry_lba: number;
+  num_partition_entries: number;
+  partition_entry_size: number;
+  partition_array_crc32: number;
+}
+
+export interface GPTPartitionEntry {
+  partition_guid: number[];
+  partition_guid_string: string;
+  partition_type_guid: number[];
+  partition_type_guid_string: string;
+  starting_lba: number;
+  ending_lba: number;
+  attributes: number;
+  description: string;
+  partition_name: string;
 }
 
 export interface Module {
@@ -40,7 +76,7 @@ export interface ProcessDiskImage {
   evidence: Evidence;
   imageFormat: string; // RAW, EWF, ...
   isFormatCompatible: boolean;
-  partitions: Partition[];
+  partitions: Partitions;
   compatibleModules: Module[]; // Fetch this from our database
   selectedModules: Module[];
   status: string;
@@ -52,6 +88,7 @@ export interface ProcessedEvidenceMetadata {
   evidenceData: Evidence;
   diskImageFormat: string;
   selectedMbrPartitions: MBRPartitionEntry[];
+  selectedGptPartitions: GPTPartitionEntry[];
   extractionModules: Module[];
 }
 
@@ -78,12 +115,6 @@ export interface MBR {
   ]; // Partition table (max 4 entries)
   boot_signature: number;
   bootloader_disam: String;
-}
-
-export interface Partitions {
-  mbr: MBR;
-  ebr: MBRPartitionEntry[];
-  //Todo: Add GPT
 }
 
 // Define the LinuxFile interface

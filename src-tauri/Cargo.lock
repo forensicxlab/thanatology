@@ -1201,6 +1201,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1323,9 +1332,12 @@ dependencies = [
 
 [[package]]
 name = "exhume_body"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd696553b7206975b68a9cd0a9ea33abfbdc65eca0b496ee27c80318c38eae73"
 dependencies = [
  "clap",
+ "clap-num",
  "env_logger 0.11.6",
  "flate2",
  "glob",
@@ -1341,8 +1353,7 @@ dependencies = [
  "clap-num",
  "env_logger 0.11.6",
  "exhume_body",
- "exhume_lvm",
- "exhume_partitions",
+ "exhume_partitions 0.1.0",
  "log",
  "prettytable-rs",
  "serde",
@@ -1356,7 +1367,7 @@ dependencies = [
  "chrono",
  "exhume_body",
  "exhume_extfs",
- "exhume_lvm",
+ "exhume_lvm 0.1.0",
  "serde",
  "serde_json",
 ]
@@ -1400,8 +1411,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "exhume_lvm"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a162de8fdbebb155144d4ec6db3183aca4f008afc47f5e75947b359099dd19"
+dependencies = [
+ "acid_io",
+ "byteorder",
+ "clap",
+ "clap-num",
+ "env_logger 0.11.6",
+ "exhume_body",
+ "log",
+ "nom",
+ "prettytable-rs",
+ "serde",
+ "snafu",
+ "tracing",
+]
+
+[[package]]
 name = "exhume_partitions"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a0a476c3c97c6a48902886388aa8e87799904b61589addf8e47c2b791bc0066"
 dependencies = [
  "byteorder",
  "capstone",
@@ -1414,6 +1447,25 @@ dependencies = [
  "serde",
  "serde_json",
  "uguid",
+]
+
+[[package]]
+name = "exhume_partitions"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea4be640f5e203413795546d7d864d5946f86859c19afd456b13df72aaefe519"
+dependencies = [
+ "byteorder",
+ "capstone",
+ "clap",
+ "env_logger 0.11.6",
+ "exhume_body",
+ "glob",
+ "log",
+ "prettytable-rs",
+ "serde",
+ "serde_json",
+ "serde_with",
 ]
 
 [[package]]
@@ -3201,6 +3253,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "os_pipe"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ffd2b0a5634335b135d5728d84c5e0fd726954b87111f7506a61c502280d982"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4096,9 +4158,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.11.0"
+version = "3.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28bdad6db2b8340e449f7108f020b3b092e8583a9e3fb82713e1d4e71fe817"
+checksum = "d6b6f7f2fcb69f747921f79f3926bd1e203fce4fef62c268dd3abfb6d86029aa"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4114,9 +4176,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.11.0"
+version = "3.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d846214a9854ef724f3da161b426242d8de7c1fc7de2f89bb1efcb154dca79d"
+checksum = "8d00caa5193a3c8362ac2b73be6b9e768aa5a4b2f721d8f4b339600c3cb51f8e"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -4176,6 +4238,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "shared_child"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09fa9338aed9a1df411814a5b2252f7cd206c55ae9bf2fa763f8de84603aa60c"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4925,6 +4997,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-shell"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb2c50a63e60fb8925956cc5b7569f4b750ac197a4d39f13b8dd46ea8e2bad79"
+dependencies = [
+ "encoding_rs",
+ "log",
+ "open",
+ "os_pipe",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shared_child",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.8",
+ "tokio",
+]
+
+[[package]]
 name = "tauri-plugin-sql"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5085,11 +5178,10 @@ version = "0.1.0"
 dependencies = [
  "env_logger 0.10.2",
  "exhume_body",
- "exhume_extfs",
  "exhume_filesystem",
  "exhume_ldfi",
- "exhume_lvm",
- "exhume_partitions",
+ "exhume_lvm 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "exhume_partitions 0.2.2",
  "exhume_progress",
  "log",
  "serde",
@@ -5099,6 +5191,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tauri-plugin-shell",
  "tauri-plugin-sql",
  "tokio",
 ]

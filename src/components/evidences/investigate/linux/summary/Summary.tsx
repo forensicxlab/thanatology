@@ -4,7 +4,7 @@ import { useSnackbar } from "../../../../SnackbarProvider";
 import Grid from "@mui/material/Grid2";
 import { getPartitionById } from "../../../../../dbutils/sqlite";
 import { Evidence, MBRPartitionEntry } from "../../../../../dbutils/types";
-import Partition from "../../../processing/Partition";
+import MBRPartition from "../../../processing/MBRPartition";
 import FileSystem from "./FileSystem";
 interface SummaryProps {
   evidence: Evidence;
@@ -35,13 +35,13 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
     evidence && (
       <Grid container spacing={2}>
         <Grid size={6}>
-          <Partition partition={partition} index={0} />
+          <MBRPartition mbrPartition={partition} index={0} />
         </Grid>
         <Grid size={6}>
           <FileSystem path={evidence.path} partition={partition} />
         </Grid>
 
-        <Grid size={12}>
+        {/* <Grid size={12}>
           <Card variant="outlined">
             <CardContent>
               <Typography variant="h5" component="div" sx={{ mb: 1 }}>
@@ -51,7 +51,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
               blabla
             </CardContent>
           </Card>
-        </Grid>
+        </Grid> */}
       </Grid>
     )
   );

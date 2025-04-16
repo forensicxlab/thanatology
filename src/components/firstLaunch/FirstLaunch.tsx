@@ -92,7 +92,7 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
       >
         {/* Logo Placeholder */}
         <Box mb={3}>
-          <img src="/Thanatology.svg" alt="Logo" width={500} />
+          <img src="/ThanatologyFull.svg" alt="Logo" width={500} />
         </Box>
 
         <Typography variant="h4" gutterBottom>

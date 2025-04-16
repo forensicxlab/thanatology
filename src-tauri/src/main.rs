@@ -95,7 +95,7 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
-        // Migration 6: Create MBR partition entries referencing evidence (with CASCADE).
+        // Migration 6: Create MBR/GPT partition entries referencing evidence.
         Migration {
             version: 6,
             description: "create_mbr_partition_entries_table",
@@ -114,6 +114,20 @@ fn main() {
                     sector_size        INTEGER NOT NULL,
                     first_byte_address INTEGER NOT NULL,
                     description        TEXT NOT NULL,
+                    selected           BOOLEAN NOT NULL,
+                    FOREIGN KEY (evidence_id)
+                        REFERENCES evidence(id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS gpt_partition_entries (
+                    evidence_id        INTEGER PRIMARY KEY,
+                    partition_guid     TEXT NOT NULL,
+                    partition_type_guid TEXT NOT NULL,
+                    starting_lba       INTEGER NOT NULL,
+                    ending_lba         INTEGER NOT NULL,
+                    attributes         INTEGER NOT NULL,
+                    partition_name     TEXT NOT NULL,
+                    description        TEXT NOT NULL,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
@@ -124,7 +138,7 @@ fn main() {
         // Migration 7: Create evidence preprocessing metadata & related tables (with CASCADE).
         Migration {
             version: 7,
-            description: "create_preprocessing_evidence_metadata_tables",
+            description: "create_preprocessing_evidence_metadata_table",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS evidence_preprocessing_metadata (
                     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,27 +146,6 @@ fn main() {
                     disk_image_format TEXT NOT NULL,
                     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
                     FOREIGN KEY(evidence_id)
-                        REFERENCES evidence(id)
-                        ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS evidence_preprocessing_selected_partitions (
-                    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_id               INTEGER NOT NULL,
-                    partition_type            INTEGER NOT NULL,
-                    boot_indicator            INTEGER,
-                    start_chs_1              INTEGER,
-                    start_chs_2              INTEGER,
-                    start_chs_3              INTEGER,
-                    end_chs_1                INTEGER,
-                    end_chs_2                INTEGER,
-                    end_chs_3                INTEGER,
-                    start_lba                INTEGER,
-                    size_sectors             INTEGER,
-                    sector_size              INTEGER,
-                    first_byte_address       INTEGER,
-                    description              TEXT,
-                    FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
                 );

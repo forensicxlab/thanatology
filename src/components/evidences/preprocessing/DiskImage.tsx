@@ -26,14 +26,12 @@ import {
   Module,
   Partitions,
   MBRPartitionEntry,
+  GPTPartitionEntry,
 } from "../../../dbutils/types";
 import { useSnackbar } from "../../SnackbarProvider";
 
-import MBRPartitionComponent from "./MBRPartitionComponent";
-import {
-  getMBRCompatibleModules,
-  savePreprocessingMetadata,
-} from "../../../dbutils/sqlite";
+import PartitionComponent from "./PartitionsComponent";
+import { savePreprocessingMetadata } from "../../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
 
 interface DiskImageProps {
@@ -61,7 +59,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
     "Autocheck Disk Image Format",
     "Partition Discovery & Selection",
     "Read Partition(s)",
-    "Finalize Metadata",
   ];
 
   // Tracks which step is visible
@@ -74,8 +71,12 @@ const DiskImage: React.FC<DiskImageProps> = ({
   const [partitions, setPartitions] = useState<Partitions | undefined>(
     undefined,
   );
+  // MBR + GPT
   const [selectedMbrPartitions, setSelectedMbrPartitions] = useState<
     MBRPartitionEntry[]
+  >([]);
+  const [selectedGptPartitions, setSelectedGptPartitions] = useState<
+    GPTPartitionEntry[]
   >([]);
   const [partitionsLocked, setPartitionsLocked] = useState<boolean>(false);
 
@@ -84,7 +85,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
     PartitionReadResult[]
   >([]);
 
-  // Extraction modules
   const [extractionModules, setExtractionModules] = useState<Module[]>([]);
   const [selectedExtractionModules, setSelectedExtractionModules] = useState<
     string[]
@@ -102,16 +102,12 @@ const DiskImage: React.FC<DiskImageProps> = ({
   // Partition selection callback
   // -------------------------------
   const handleSelectPartitions = useCallback(
-    (selected: MBRPartitionEntry[]) => {
-      setSelectedMbrPartitions((prev) => {
-        if (prev.length === selected.length) {
-          const allSame = prev.every((item, idx) => item === selected[idx]);
-          if (allSame) {
-            return prev;
-          }
-        }
-        return selected;
-      });
+    (
+      mbrPartitions: MBRPartitionEntry[],
+      gptPartitions: GPTPartitionEntry[],
+    ) => {
+      setSelectedMbrPartitions(mbrPartitions);
+      setSelectedGptPartitions(gptPartitions);
     },
     [],
   );
@@ -179,16 +175,23 @@ const DiskImage: React.FC<DiskImageProps> = ({
   }, [activeStep, partitions, evidenceData.path]);
 
   // -------------------------------
-  // Step 3: Read Selected Partitions
+  // Step 3: Read Selected Partitions (MBR + GPT)
   // -------------------------------
   useEffect(() => {
-    if (
-      activeStep === 3 &&
-      partitionReadResults.length === 0 &&
-      selectedMbrPartitions.length > 0
-    ) {
+    if (activeStep === 3 && partitionReadResults.length === 0) {
+      // If user hasn't selected anything, bail
+      if (
+        selectedMbrPartitions.length === 0 &&
+        selectedGptPartitions.length === 0
+      ) {
+        setCurrentError("No partition selected.");
+        return;
+      }
+
       const readPartitions = async () => {
         const results: PartitionReadResult[] = [];
+
+        // 1) Read MBR
         for (let i = 0; i < selectedMbrPartitions.length; i++) {
           const partition = selectedMbrPartitions[i];
           try {
@@ -198,26 +201,59 @@ const DiskImage: React.FC<DiskImageProps> = ({
             });
             if (res === true) {
               results.push({
-                partitionLabel: `Partition ${i + 1} (${partition.description})`,
+                partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
                 success: true,
                 message: "Success",
               });
             } else {
               results.push({
-                partitionLabel: `Partition ${i + 1} (${partition.description})`,
+                partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
                 success: false,
                 message: String(res),
               });
             }
           } catch (error: any) {
             results.push({
-              partitionLabel: `Partition ${i + 1} (${partition.description})`,
+              partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
               success: false,
               message: error.toString(),
             });
           }
         }
+
+        // 2) Read GPT
+        for (let i = 0; i < selectedGptPartitions.length; i++) {
+          const partition = selectedGptPartitions[i];
+          try {
+            const res = await invoke("read_gpt_partition", {
+              partition,
+              path: evidenceData.path,
+            });
+            if (res === true) {
+              results.push({
+                partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
+                success: true,
+                message: "Success",
+              });
+            } else {
+              results.push({
+                partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
+                success: false,
+                message: String(res),
+              });
+            }
+          } catch (error: any) {
+            results.push({
+              partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
+              success: false,
+              message: error.toString(),
+            });
+          }
+        }
+
         setPartitionReadResults(results);
+
+        // If none succeeded, set an error
         if (!results.some((r) => r.success)) {
           setCurrentError(
             "None of the selected partitions were successfully read.",
@@ -231,6 +267,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
   }, [
     activeStep,
     selectedMbrPartitions,
+    selectedGptPartitions,
     partitionReadResults.length,
     evidenceData.path,
   ]);
@@ -243,7 +280,10 @@ const DiskImage: React.FC<DiskImageProps> = ({
 
     // Validate current step
     if (activeStep === 2) {
-      if (selectedMbrPartitions.length === 0) {
+      if (
+        selectedMbrPartitions.length === 0 &&
+        selectedGptPartitions.length === 0
+      ) {
         setCurrentError("No partition selected.");
         return;
       }
@@ -278,39 +318,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
   };
 
   // -------------------------------
-  // Step 4: Fetch Modules
-  // -------------------------------
-  useEffect(() => {
-    if (activeStep === 4 && selectedMbrPartitions.length > 0) {
-      const fetchModules = async () => {
-        try {
-          const modulesPromises = selectedMbrPartitions.map((partition) =>
-            getMBRCompatibleModules(partition, database)
-              .then((modules) => modules || [])
-              .catch((error: any) => {
-                console.error(error);
-                display_message("warning", String(error));
-                return [];
-              }),
-          );
-          const modulesArrays = await Promise.all(modulesPromises);
-          const combinedModules = modulesArrays.flat();
-          // Remove duplicates by ID
-          const uniqueModules = Array.from(
-            new Map(combinedModules.map((mod) => [mod.id, mod])).values(),
-          );
-          setExtractionModules(uniqueModules);
-          setSelectedExtractionModules(uniqueModules.map((mod) => mod.id));
-        } catch (error) {
-          console.error("Error fetching extraction modules:", error);
-          setCurrentError("Error fetching extraction modules.");
-        }
-      };
-      fetchModules();
-    }
-  }, [activeStep, selectedMbrPartitions, database, display_message]);
-
-  // -------------------------------
   // Final step: handle "Finish"
   // -------------------------------
   const handleFinish = async () => {
@@ -321,6 +328,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
       evidenceData,
       diskImageFormat,
       selectedMbrPartitions,
+      selectedGptPartitions, // ← Include the GPT selection here
       extractionModules: extractionModules.filter((mod) =>
         selectedExtractionModules.includes(mod.id),
       ),
@@ -380,7 +388,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
   // Step Content
   // -------------------------------
   const allPartitionsCount = partitions
-    ? partitions.mbr.partition_table.length + partitions.ebr.length
+    ? partitions.mbr.partition_table.length +
+      partitions.ebr.length +
+      (partitions.gpt?.partition_entries?.length || 0)
     : 0;
 
   const getStepContent = (step: number) => {
@@ -411,9 +421,10 @@ const DiskImage: React.FC<DiskImageProps> = ({
                 {!partitionsLocked ? (
                   <>
                     <Typography variant="body2">
-                      Please select the partition(s) to analyze.
+                      Please select the partition(s) to analyze (MBR and/or
+                      GPT).
                     </Typography>
-                    <MBRPartitionComponent
+                    <PartitionComponent
                       partitions={partitions}
                       locked={partitionsLocked}
                       onSelectPartitions={handleSelectPartitions}
@@ -421,12 +432,20 @@ const DiskImage: React.FC<DiskImageProps> = ({
                   </>
                 ) : (
                   <Typography variant="body2">
-                    Partition selection completed. Selected partition(s):{" "}
+                    Partition selection completed. MBR: [
                     {selectedMbrPartitions
                       .map(
                         (part, i) => `Partition ${i + 1} (${part.description})`,
                       )
                       .join(", ")}
+                    ] GPT: [
+                    {selectedGptPartitions
+                      .map(
+                        (part, i) =>
+                          `Partition ${i + 1} (${part.partition_name})`,
+                      )
+                      .join(", ")}
+                    ]
                   </Typography>
                 )}
               </>
@@ -463,32 +482,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
                   </Typography>
                 ))}
               </Box>
-            )}
-          </Box>
-        );
-      case 4:
-        // Show modules for final review
-        const modulesByParent = extractionModules.reduce(
-          (acc, mod) => {
-            const key = (mod.parent_id ?? 0).toString();
-            if (!acc[key]) {
-              acc[key] = [];
-            }
-            acc[key].push(mod);
-            return acc;
-          },
-          {} as Record<string, Module[]>,
-        );
-
-        return (
-          <Box>
-            <Typography variant="body1">
-              Artifact extraction modules for the chosen partition(s):
-            </Typography>
-            {extractionModules.length === 0 ? (
-              <Typography variant="body2">Loading modules...</Typography>
-            ) : (
-              renderModuleList(modulesByParent)
             )}
           </Box>
         );
@@ -611,13 +604,15 @@ const DiskImage: React.FC<DiskImageProps> = ({
         </Button>
       )}
 
-      {activeStep >= 2 && activeStep < steps.length - 1 && (
+      {activeStep >= 2 && activeStep < steps.length && (
         <Button
           variant="contained"
           color="primary"
           onClick={handleNext}
           disabled={
-            (activeStep === 2 && selectedMbrPartitions.length === 0) ||
+            (activeStep === 2 &&
+              selectedMbrPartitions.length === 0 &&
+              selectedGptPartitions.length === 0) ||
             (activeStep === 2 && currentError !== null)
           }
         >
@@ -625,8 +620,8 @@ const DiskImage: React.FC<DiskImageProps> = ({
         </Button>
       )}
 
-      {/* Show "Finish" only on last step (4) */}
-      {activeStep === steps.length - 1 && (
+      {/* Keep "Finish" button */}
+      {activeStep === steps.length && (
         <Button variant="contained" color="primary" onClick={handleFinish}>
           Finish
         </Button>

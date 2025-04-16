@@ -8,10 +8,13 @@ import Grid from "@mui/material/Grid2";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import {
   Evidence,
+  GPTPartitionEntry,
   MBRPartitionEntry,
   ProcessedEvidenceMetadata,
 } from "../../../dbutils/types";
-import Partition from "./Partition";
+import MBRPartition from "./MBRPartition";
+import GPTPartition from "./GPTPartition";
+
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -32,7 +35,9 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 }) => {
   const { display_message } = useSnackbar();
 
-  const [partitions, setPartitions] = useState<MBRPartitionEntry[]>([]);
+  const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
+  const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
+
   const [mainProgress, setMainProgress] = useState<string>("");
   const [mainProgressColor, setMainProgressColor] = useState<string>("info");
   const [moduleProgress, setModuleProgress] = useState<string>("");
@@ -48,7 +53,8 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
           evidence.id,
           null,
         );
-        setPartitions(fetchedPartitions);
+        setMbrPartitions(fetchedPartitions.mbrRows);
+        setGptPartitions(fetchedPartitions.gptRows);
 
         const appLocalDataDirPath = await appLocalDataDir();
         setDbPath(`${appLocalDataDirPath}/thanatology.db`);
@@ -152,7 +158,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       return;
     }
 
-    if (partitions.length === 0) {
+    if (mbrPartitions.length === 0) {
       display_message("info", "No partitions selected for processing.");
       return;
     }
@@ -161,7 +167,8 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     const metadata: ProcessedEvidenceMetadata = {
       evidenceData: evidence,
       diskImageFormat: "", // This could be set via check_disk_image_format if needed.
-      selectedMbrPartitions: partitions,
+      selectedMbrPartitions: mbrPartitions,
+      selectedGptPartitions: gptPartitions,
       extractionModules: [], // No modules since we're not iterating anymore
     };
 
@@ -185,7 +192,8 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     try {
       await invoke("process_linux_partitions", {
         evidenceId: evidence.id,
-        partitions: partitions,
+        mbrPartitions: mbrPartitions,
+        gptPartitions: gptPartitions,
         diskImagePath: evidence.path,
         dbPath: dbPath,
       });
@@ -218,20 +226,36 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
   return (
     <Box sx={{ flexGrow: 1, p: 2 }}>
-      {partitions && partitions.length > 0 && (
+      {mbrPartitions && mbrPartitions.length > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
             Selected Partitions
           </Typography>
           <Grid container spacing={1}>
-            {partitions.map((p, index) => (
+            {mbrPartitions.map((p, index) => (
               <Grid size={4} key={index}>
-                <Partition partition={p} index={index} />
+                <MBRPartition mbrPartition={p} index={index} />
               </Grid>
             ))}
           </Grid>
         </Paper>
       )}
+
+      {gptPartitions && gptPartitions.length > 0 && (
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Selected Partitions
+          </Typography>
+          <Grid container spacing={1}>
+            {gptPartitions.map((p, index) => (
+              <Grid size={4} key={index}>
+                <GPTPartition gptPartition={p} index={index} />
+              </Grid>
+            ))}
+          </Grid>
+        </Paper>
+      )}
+
       {evidence.status === 2 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
@@ -252,7 +276,10 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
           variant="contained"
           color="primary"
           onClick={handleStartProcessing}
-          disabled={processing || partitions.length === 0}
+          disabled={
+            processing ||
+            (mbrPartitions.length === 0 && gptPartitions.length === 0)
+          }
         >
           {processing ? "Processing..." : "Start Processing"}
         </Button>

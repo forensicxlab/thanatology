@@ -7,6 +7,7 @@ import {
 import { LinuxFile } from "../dbutils/types";
 import { system } from "./system";
 import { network } from "./network";
+import { Command } from "@tauri-apps/plugin-shell";
 
 // The terminal state holds the context for file operations.
 interface TerminalState {
@@ -27,6 +28,16 @@ let terminalState: TerminalState = {
  */
 export function setTerminalContext(evidenceId: number, partitionId: number) {
   terminalState = { evidenceId, partitionId, cwd: "/" };
+}
+
+export async function exec(command: string): Promise<JSX.Element> {
+  let result = await Command.create("exec-sh", ["-c", command]).execute();
+  return (
+    <pre>
+      {result.stdout}
+      {result.stderr}
+    </pre>
+  );
 }
 
 /**
@@ -432,6 +443,7 @@ export const commands = {
   cd: cd,
   ls: ls,
   pwd: pwd,
+  exec: exec,
   system: async () => {
     return system(terminalState.evidenceId, terminalState.partitionId);
   },

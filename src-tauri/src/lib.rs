@@ -1,17 +1,12 @@
 mod modules;
 use env_logger;
-use exhume_body::{Body, BodySlice};
-use exhume_extfs::ExtFS;
-use exhume_filesystem::detected_fs::{self, detect_filesystem};
-use exhume_filesystem::filesystem::{Filesystem, FsInfo};
-use exhume_lvm::Lvm2;
-use exhume_partitions::{mbr::MBRPartitionEntry, Partitions};
+use exhume_body::Body;
+use exhume_filesystem::detected_fs::detect_filesystem;
+use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
-use log::{debug, info};
 use modules::th_filesystem::get_fs_info;
 use modules::th_ldfi::process_ldfi;
 use serde::{Deserialize, Serialize};
-use sqlx::query;
 use sqlx::sqlite::SqlitePool;
 use std::path::Path;
 use tauri::AppHandle;
@@ -70,8 +65,6 @@ fn discover_partitions(path: String) -> Result<Partitions, String> {
 
 /// Attempt to read the selected partition from the disk image.
 /// Here we try to read the selected partitions.
-/// TODO: We have to try to create all of the filesystem objects without checking the type except for LVM.
-/// If LVM we try LVM first before the creation of all of the other underlying filesystems.
 #[tauri::command]
 fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool, String> {
     let mut body: Body = Body::new(path.to_string(), "auto");
@@ -96,9 +89,40 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
 }
 
 #[tauri::command]
+fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool, String> {
+    let mut body: Body = Body::new(path.to_string(), "auto");
+    let partition_size_result = (partition.ending_lba - partition.starting_lba + 1)
+        .checked_mul(body.get_sector_size() as u64);
+    let partition_first_byte_addr = partition
+        .starting_lba
+        .checked_mul(body.get_sector_size() as u64);
+    let partition_size = match partition_size_result {
+        Some(size) => size,
+        None => return Err("Error: Overflow occurred when calculating partition size".to_string()),
+    };
+
+    let partition_start = match partition_first_byte_addr {
+        Some(offset) => offset,
+        None => return Err("Error: Overflow occurred when calculating partition size".to_string()),
+    };
+
+    let fs = match detect_filesystem(&mut body, partition_start, partition_size) {
+        Ok(_) => true,
+        Err(err) => {
+            return Err(format!(
+                "Error detecting the filesystem: {}",
+                err.to_string()
+            ))
+        }
+    };
+    Ok(fs)
+}
+
+#[tauri::command]
 fn process_linux_partitions(
     evidence_id: i64,
-    partitions: Vec<MBRPartitionEntry>,
+    mbr_partitions: Vec<MBRPartitionEntry>,
+    gpt_partitions: Vec<GPTPartitionEntry>,
     disk_image_path: String,
     db_path: String,
     app: AppHandle,
@@ -119,9 +143,9 @@ fn process_linux_partitions(
             }
         };
 
-        let total_partitions = partitions.len() as u64;
+        let total_partitions = mbr_partitions.len() as u64 + gpt_partitions.len() as u64;
 
-        for (index, partition) in partitions.into_iter().enumerate() {
+        for (index, partition) in mbr_partitions.into_iter().enumerate() {
             // Emit phase message
             emit_progress_event(
                 &evidence_id,
@@ -199,7 +223,7 @@ async fn process_linux_partition(
 fn new_whiteboard(app: AppHandle) {
     tauri::WebviewWindowBuilder::new(
         &app,
-        "drawer",
+        "whiteboard",
         tauri::WebviewUrl::App("escalidraw.html".into()),
     )
     .title("Whiteboard")
@@ -208,12 +232,22 @@ fn new_whiteboard(app: AppHandle) {
     .unwrap();
 }
 
+#[tauri::command]
+fn new_shell(app: AppHandle) {
+    tauri::WebviewWindowBuilder::new(&app, "shell", tauri::WebviewUrl::App("shell.html".into()))
+        .title("Shell")
+        .maximized(true)
+        .build()
+        .unwrap();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .init();
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::new()
@@ -226,9 +260,11 @@ pub fn run(init_migrations: Vec<Migration>) {
             check_disk_image_format,
             discover_partitions,
             read_mbr_partition,
+            read_gpt_partition,
             process_linux_partitions,
             get_fs_info,
             new_whiteboard,
+            new_shell,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

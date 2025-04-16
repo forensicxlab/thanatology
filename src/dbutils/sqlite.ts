@@ -6,6 +6,7 @@ import {
   Evidence,
   ProcessedEvidenceMetadata,
   LinuxFile,
+  GPTPartitionEntry,
 } from "./types";
 
 export async function createUser(username: string, db: Database | null) {
@@ -26,27 +27,6 @@ export async function createUser(username: string, db: Database | null) {
   }
 
   return await db.execute("INSERT INTO users (name) VALUES ($1)", [username]);
-}
-
-// Fetch compatible modules given a partition
-export async function getMBRCompatibleModules(
-  mbr_parition: MBRPartitionEntry,
-  db: Database | null,
-) {
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
-
-  if (
-    mbr_parition.partition_type === 0x83 ||
-    mbr_parition.partition_type === 0x8e
-  ) {
-    const compatibleModules: Module[] = await db.select(
-      "SELECT * FROM modules WHERE os = 'Linux'",
-    );
-    return compatibleModules;
-  }
-  return [];
 }
 
 export async function createCaseAndEvidence(
@@ -276,7 +256,7 @@ export async function savePreprocessingMetadata(
   for (const partition of metadata.selectedMbrPartitions) {
     await db.execute(
       `
-        INSERT INTO evidence_preprocessing_selected_partitions (
+        INSERT INTO mbr_partition_entries (
           evidence_id,
           partition_type,
           boot_indicator,
@@ -312,6 +292,33 @@ export async function savePreprocessingMetadata(
     );
   }
 
+  for (const partition of metadata.selectedGptPartitions) {
+    await db.execute(
+      `
+        INSERT INTO gpt_partition_entries (
+          evidence_id,
+          partition_guid,
+          partition_type_guid,
+          starting_lba,
+          ending_lba,
+          attributes,
+          partition_name,
+          description
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `,
+      [
+        metadata.evidenceData.id,
+        partition.partition_guid_string,
+        partition.partition_type_guid_string,
+        partition.starting_lba,
+        partition.ending_lba,
+        partition.attributes,
+        partition.partition_name,
+        partition.description,
+      ],
+    );
+  }
+
   // 4) Update status
   await db.execute(
     `UPDATE evidence
@@ -326,27 +333,21 @@ export async function savePreprocessingMetadata(
 export async function getSelectedPartitions(
   evidenceId: number,
   db: Database | null,
-): Promise<MBRPartitionEntry[]> {
+): Promise<{ mbrRows: MBRPartitionEntry[]; gptRows: GPTPartitionEntry[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
-  const rows: any[] = await db.select(
-    "SELECT * FROM evidence_preprocessing_selected_partitions WHERE evidence_id = $1",
+  const mbrRows: MBRPartitionEntry[] = await db.select(
+    "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
     [evidenceId],
   );
-  // Map raw DB rows into complete MBRPartitionEntry objects
-  return rows.map((row) => ({
-    id: row.id,
-    boot_indicator: row.boot_indicator,
-    start_chs: [row.start_chs_1, row.start_chs_2, row.start_chs_3],
-    partition_type: row.partition_type,
-    end_chs: [row.end_chs_1, row.end_chs_2, row.end_chs_3],
-    start_lba: row.start_lba,
-    size_sectors: row.size_sectors,
-    sector_size: row.sector_size,
-    first_byte_addr: row.first_byte_address,
-    description: row.description,
-  }));
+
+  const gptRows: GPTPartitionEntry[] = await db.select(
+    "SELECT * FROM gpt_partition_entries WHERE evidence_id = $1",
+    [evidenceId],
+  );
+
+  return { mbrRows, gptRows };
 }
 
 // Fetch modules for processing.

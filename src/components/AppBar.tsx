@@ -1,9 +1,6 @@
-import * as React from "react";
-import { useNavigate } from "react-router";
 import AppBar from "@mui/material/AppBar";
 import Box from "@mui/material/Box";
 import Toolbar from "@mui/material/Toolbar";
-import { Typography } from "@mui/material";
 function ResponsiveAppBar() {
   return (
     <AppBar position="fixed">
@@ -24,10 +21,7 @@ function ResponsiveAppBar() {
             alignItems: "center",
           }}
         >
-          <img src="/Thanatology.svg" alt="Logo" width={70} />
-          <Typography variant="h6" noWrap component="div">
-            Thanatology
-          </Typography>
+          <img src="/Thanatology.svg" alt="Logo" width={150} />
         </Box>
       </Toolbar>
     </AppBar>

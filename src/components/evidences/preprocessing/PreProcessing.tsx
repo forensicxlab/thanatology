@@ -81,9 +81,7 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
                   component="button"
                   color="textPrimary"
                   onClick={() => {
-                    console.log("HJAHA");
                     location.replace(`/cases/${evidence.case_id}`);
-                    //navigate(`/cases/${evidence.case_id}`);
                   }}
                 >
                   CASE-{evidence.case_id}

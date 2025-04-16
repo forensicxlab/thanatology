@@ -20,12 +20,15 @@ import CaseDetails from "./components/cases/CaseDetails";
 import PreProcessing from "./components/evidences/preprocessing/Preprocessing";
 import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/linux/Main";
+import { LicenseInfo } from "@mui/x-license";
 
 const darkTheme = createTheme({
   palette: {
     mode: "dark",
   },
 });
+
+LicenseInfo.setLicenseKey("LICENCE_KEY_HERE");
 
 const App: React.FC = () => {
   const [database, setDatabase] = React.useState<Database | null>(null);
