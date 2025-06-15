@@ -328,7 +328,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
       evidenceData,
       diskImageFormat,
       selectedMbrPartitions,
-      selectedGptPartitions, // ← Include the GPT selection here
+      selectedGptPartitions,
       extractionModules: extractionModules.filter((mod) =>
         selectedExtractionModules.includes(mod.id),
       ),
@@ -341,7 +341,7 @@ const DiskImage: React.FC<DiskImageProps> = ({
       })
       .catch((err: any) => {
         console.error("Error saving preprocessing metadata:", err);
-        display_message("error", `Error saving metadata: ${err.message}`);
+        display_message("error", `Error saving metadata: ${err}`);
         setFinalInsertStatus("error");
       });
   };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router";
-import Grid from "@mui/material/Grid2";
+import Grid from "@mui/material/Grid";
 import { start_processing } from "../processing/utils/diskimage";
 import {
   Box,

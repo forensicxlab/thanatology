@@ -50,6 +50,7 @@ export interface GPTHeader {
 }
 
 export interface GPTPartitionEntry {
+  id: number;
   partition_guid: number[];
   partition_guid_string: string;
   partition_type_guid: number[];
@@ -117,26 +118,13 @@ export interface MBR {
   bootloader_disam: String;
 }
 
-// Define the LinuxFile interface
-export interface LinuxFile {
+// Define the File interface
+export interface File {
   id: number;
-  evidence_id: number;
-  absolute_path: string;
-  filename: string;
-  parent_directory: string;
-  inode_number: number;
-  file_type: string;
-  size_bytes: number;
-  owner_uid: number;
-  group_gid: number;
-  permissions_mode: number;
-  hard_link_count: number;
-  access_time: string;
-  modification_time: string;
-  change_time: string;
-  creation_time: string;
-  extended_attributes: string;
-  symlink_target: string;
-  mount_point: string;
-  filesystem_type: string;
+  identifier: number; // Unique file identifier (inode, record number, etc.)
+  absolute_path: string; // Full path to the file
+  name: string; // File name
+  ftype: string; // File type
+  size: number; // File size in bytes
+  metadata: string; // Arbitrary metadata as key-value pairs
 }

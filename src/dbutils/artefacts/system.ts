@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
-import { LinuxFile } from "../types";
+import { File } from "../types";
 
 /**
  * Fetch OS Release Files
@@ -9,7 +9,7 @@ export async function getOsReleaseFiles(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -30,7 +30,7 @@ export async function getOsReleaseFiles(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -38,7 +38,7 @@ export async function getOsReleaseFiles(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Operating System Information",
@@ -54,7 +54,7 @@ export async function getBootConfiguration(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -62,7 +62,7 @@ export async function getBootConfiguration(
   // For demonstration, searching for "grub.cfg" or files beginning with "config-" in /boot
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
@@ -72,7 +72,7 @@ export async function getBootConfiguration(
       )
     ORDER BY absolute_path
   `;
-  const files: LinuxFile[] = await db.select(query, [evidenceId, partitionId]);
+  const files: File[] = await db.select(query, [evidenceId, partitionId]);
 
   return {
     category: "Boot Configuration",
@@ -88,7 +88,7 @@ export async function getContainerVirtualizationConfig(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -105,19 +105,16 @@ export async function getContainerVirtualizationConfig(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
-      AND (
-        parent_directory IN (${placeholders})
-        OR absolute_path IN (${placeholders})
-      )
+      AND absolute_path IN (${placeholders})
     ORDER BY absolute_path
   `;
   // We list them twice (once for parent_directory, once for absolute_path).
   const params = [evidenceId, partitionId, ...candidates, ...candidates];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Container/Virtualization",
@@ -133,7 +130,7 @@ export async function getSystemLogs(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -149,7 +146,7 @@ export async function getSystemLogs(
   const placeholders = candidateLogs.map((_) => "?").join(", ");
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -157,7 +154,7 @@ export async function getSystemLogs(
   `;
   const params = [evidenceId, partitionId, ...candidateLogs];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "System Logging",
@@ -173,7 +170,7 @@ export async function getTimezoneAndLocaltime(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -183,7 +180,7 @@ export async function getTimezoneAndLocaltime(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -191,7 +188,7 @@ export async function getTimezoneAndLocaltime(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Timezone/Localtime",
@@ -207,7 +204,7 @@ export async function getLocalizationSettings(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -221,7 +218,7 @@ export async function getLocalizationSettings(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -229,7 +226,7 @@ export async function getLocalizationSettings(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Localization Settings",
@@ -245,7 +242,7 @@ export async function getSystemServicesAndDaemons(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -261,15 +258,15 @@ export async function getSystemServicesAndDaemons(
   // Searching by parent_directory
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
-      AND parent_directory IN (${placeholders})
+      AND absolute_path IN (${placeholders})
     ORDER BY absolute_path
   `;
   const params = [evidenceId, partitionId, ...candidateDirs];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "System Services And Daemons",
@@ -285,7 +282,7 @@ export async function getKernelModules(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -297,12 +294,11 @@ export async function getKernelModules(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -314,7 +310,7 @@ export async function getKernelModules(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Kernel Modules",
@@ -330,7 +326,7 @@ export async function getSystemArchitectureHardware(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -345,7 +341,7 @@ export async function getSystemArchitectureHardware(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -353,7 +349,7 @@ export async function getSystemArchitectureHardware(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "System Architecture Hardware",
@@ -369,7 +365,7 @@ export async function getKernelVersionAndBootloader(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -377,7 +373,7 @@ export async function getKernelVersionAndBootloader(
   // Searching /proc/version plus any files that match /boot/vmlinuz* or /boot/initrd*
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
@@ -387,7 +383,7 @@ export async function getKernelVersionAndBootloader(
       )
     ORDER BY absolute_path
   `;
-  const files: LinuxFile[] = await db.select(query, [evidenceId, partitionId]);
+  const files: File[] = await db.select(query, [evidenceId, partitionId]);
 
   return {
     category: "Kernel Version Bootloader",

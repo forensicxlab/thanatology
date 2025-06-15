@@ -1,59 +1,81 @@
-import React, { useState, useEffect } from "react";
-import { Card, Box, Typography, CardContent, Divider } from "@mui/material";
+import React, { useEffect, useState } from "react";
+import Grid from "@mui/material/Grid";
 import { useSnackbar } from "../../../../SnackbarProvider";
-import Grid from "@mui/material/Grid2";
-import { getPartitionById } from "../../../../../dbutils/sqlite";
-import { Evidence, MBRPartitionEntry } from "../../../../../dbutils/types";
+import {
+  Evidence,
+  MBRPartitionEntry,
+  GPTPartitionEntry,
+} from "../../../../../dbutils/types";
+import { getSelectedPartitions } from "../../../../../dbutils/sqlite";
+
 import MBRPartition from "../../../processing/MBRPartition";
+import GPTPartition from "../../../processing/GPTPartition";
 import FileSystem from "./FileSystem";
+
 interface SummaryProps {
   evidence: Evidence;
-  partition_id: number;
+  partitionId: number | null;
 }
 
-const Summary: React.FC<SummaryProps> = ({ evidence, partition_id }) => {
-  const [partition, setPartition] = useState<MBRPartitionEntry | null>(null);
+type PartitionEntry = MBRPartitionEntry | GPTPartitionEntry;
+
+const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
+  const [partition, setPartition] = useState<PartitionEntry | null>(null);
+  const [isMbr, setIsMbr] = useState<boolean>(true);
   const { display_message } = useSnackbar();
 
   useEffect(() => {
-    if (!partition_id) return;
+    if (!partitionId) {
+      setPartition(null);
+      return;
+    }
 
     const fetchPartition = async () => {
       try {
-        const p = await getPartitionById(null, partition_id);
-        setPartition(p);
-      } catch (error: any) {
-        display_message("error", error.message);
+        /* The helper always returns both kinds in separate arrays      *
+         * so we just pick the first match for the requested type.      */
+        const { mbrRows, gptRows } = await getSelectedPartitions(
+          partitionId,
+          null,
+        );
+
+        if (mbrRows.length > 0) {
+          setPartition(mbrRows?.[0] ?? null);
+        } else {
+          setPartition(gptRows?.[0] ?? null);
+          setIsMbr(false);
+        }
+      } catch (err: any) {
+        console.error(err);
+        display_message("error", err.message ?? "Failed to load partition");
       }
     };
 
     fetchPartition();
-  }, [partition_id, display_message]);
+  }, [partitionId, display_message]);
+
+  if (!partition || !evidence) return null;
 
   return (
-    partition &&
-    evidence && (
-      <Grid container spacing={2}>
-        <Grid size={6}>
-          <MBRPartition mbrPartition={partition} index={0} />
-        </Grid>
-        <Grid size={6}>
-          <FileSystem path={evidence.path} partition={partition} />
-        </Grid>
-
-        {/* <Grid size={12}>
-          <Card variant="outlined">
-            <CardContent>
-              <Typography variant="h5" component="div" sx={{ mb: 1 }}>
-                Module(s) Metadata
-              </Typography>
-              <Divider sx={{ mb: 1 }} />
-              blabla
-            </CardContent>
-          </Card>
-        </Grid> */}
+    <Grid container spacing={2}>
+      <Grid size={{ xs: 12, md: 6 }}>
+        {isMbr ? (
+          <MBRPartition
+            mbrPartition={partition as MBRPartitionEntry}
+            index={0}
+          />
+        ) : (
+          <GPTPartition
+            gptPartition={partition as GPTPartitionEntry}
+            index={0}
+          />
+        )}
       </Grid>
-    )
+
+      <Grid size={{ xs: 12, md: 6 }}>
+        {/* <FileSystem path={evidence.path} partition={partition} /> */}
+      </Grid>
+    </Grid>
   );
 };
 

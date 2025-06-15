@@ -24,7 +24,6 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
           size: partition.sector_size * partition.size_sectors,
         });
         setFsInfo(info);
-        console.log(info);
       } catch (error) {
         console.error("Error checking evidence existence:", error);
       }

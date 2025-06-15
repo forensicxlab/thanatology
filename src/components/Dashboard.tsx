@@ -5,13 +5,14 @@ import {
   CardContent,
   Typography,
 } from "@mui/material";
-import Grid from "@mui/material/Grid2";
+import Grid from "@mui/material/Grid";
 import NoteAddIcon from "@mui/icons-material/NoteAdd";
 import { invoke } from "@tauri-apps/api/core";
 
 import {
   CenterFocusWeak,
   DeveloperBoard,
+  Pageview,
   ShapeLine,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router";
@@ -39,6 +40,19 @@ const Dashboard = () => {
           await invoke("new_whiteboard");
         } catch (error) {
           console.error("Error opening the whiteboard:", error);
+        }
+      },
+    },
+    {
+      title: "FileViewer",
+      subtitle: "Open the advanced file viewer",
+      icon: <Pageview sx={{ fontSize: 50, mb: 1 }} />,
+      enabled: true,
+      onClick: async () => {
+        try {
+          await invoke("new_fileviewer");
+        } catch (error) {
+          console.error("Error opening the file viewer:", error);
         }
       },
     },

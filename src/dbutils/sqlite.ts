@@ -5,7 +5,7 @@ import {
   Case,
   Evidence,
   ProcessedEvidenceMetadata,
-  LinuxFile,
+  File,
   GPTPartitionEntry,
 } from "./types";
 
@@ -254,35 +254,28 @@ export async function savePreprocessingMetadata(
 
   // 2) Insert each selected MBR partition
   for (const partition of metadata.selectedMbrPartitions) {
+    console.log(partition);
     await db.execute(
       `
         INSERT INTO mbr_partition_entries (
           evidence_id,
           partition_type,
           boot_indicator,
-          start_chs_1,
-          start_chs_2,
-          start_chs_3,
-          end_chs_1,
-          end_chs_2,
-          end_chs_3,
+          start_chs,
+          end_chs,
           start_lba,
           size_sectors,
           sector_size,
           first_byte_address,
           description
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         metadata.evidenceData.id,
         partition.partition_type,
         partition.boot_indicator,
-        partition.start_chs[0],
-        partition.start_chs[1],
-        partition.start_chs[2],
-        partition.end_chs[0],
-        partition.end_chs[1],
-        partition.end_chs[2],
+        partition.start_chs,
+        partition.end_chs,
         partition.start_lba,
         partition.size_sectors,
         partition.sector_size,
@@ -422,22 +415,22 @@ export async function getEvidencesStatus(
  * @param db - The Database instance. If null, a new connection is established.
  * @param evidenceId - The ID of the evidence.
  * @param parentDirectory - The parent directory path.
- * @returns An array of LinuxFile objects.
+ * @returns An array of File objects.
  */
 export async function getFilesByEvidenceAndParent(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
   parentDirectory: string,
-): Promise<LinuxFile[]> {
+): Promise<File[]> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
 
-  const files: LinuxFile[] = await db.select(
+  const files: File[] = await db.select(
     `
      SELECT *
-     FROM linux_files
+     FROM system_files
      WHERE evidence_id = $1 AND partition_id = $2 AND parent_directory = $3
      ORDER BY file_type DESC, filename ASC
      `,
@@ -447,55 +440,20 @@ export async function getFilesByEvidenceAndParent(
   return files;
 }
 
-/**
- * Fetch a single partition entry by ID.
- */
-export async function getPartitionById(
-  db: Database | null,
-  partitionId: number,
-): Promise<MBRPartitionEntry> {
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
-
-  const rows: any[] = await db.select(
-    "SELECT * FROM evidence_preprocessing_selected_partitions WHERE id = ?",
-    [partitionId],
-  );
-
-  if (rows.length === 0) {
-    throw new Error(`Partition with ID ${partitionId} not found.`);
-  }
-
-  const row = rows[0];
-  return {
-    id: row.id,
-    boot_indicator: row.boot_indicator,
-    start_chs: [row.start_chs_1, row.start_chs_2, row.start_chs_3],
-    partition_type: row.partition_type,
-    end_chs: [row.end_chs_1, row.end_chs_2, row.end_chs_3],
-    start_lba: row.start_lba,
-    size_sectors: row.size_sectors,
-    sector_size: row.sector_size,
-    first_byte_addr: row.first_byte_address,
-    description: row.description,
-  };
-}
-
 export async function getFileByEvidenceAndAbsolutePath(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
   absolutePath: string,
-): Promise<LinuxFile | null> {
+): Promise<File | null> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
 
-  const rows: LinuxFile[] = await db.select(
+  const rows: File[] = await db.select(
     `
       SELECT *
-      FROM linux_files
+      FROM system_files
       WHERE evidence_id = $1
         AND partition_id = $2
         AND absolute_path = $3
@@ -512,29 +470,29 @@ export async function getFileByEvidenceAndAbsolutePath(
 }
 
 /**
- * Searches for LinuxFiles using a SQL LIKE query.
+ * Searches for Files using a SQL LIKE query.
  * @param db - The Database instance (if null, a new connection is loaded).
  * @param evidenceId - The evidence ID.
  * @param partitionId - The partition ID.
  * @param pattern - The search pattern (e.g. '%term%').
- * @returns An array of matching LinuxFile objects.
+ * @returns An array of matching File objects.
  */
-export async function searchLinuxFiles(
+export async function searchFiles(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
   pattern: string,
-): Promise<LinuxFile[]> {
+): Promise<File[]> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
   const query = `
-    SELECT * FROM linux_files
+    SELECT * FROM system_files
     WHERE evidence_id = $1 AND partition_id = $2
       AND (filename LIKE $3 OR absolute_path LIKE $3)
     ORDER BY file_type DESC, filename ASC
   `;
-  const files: LinuxFile[] = await db.select(query, [
+  const files: File[] = await db.select(query, [
     evidenceId,
     partitionId,
     pattern,

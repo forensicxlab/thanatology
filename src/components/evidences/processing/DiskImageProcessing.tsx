@@ -4,7 +4,7 @@ import Typography from "@mui/material/Typography";
 import Paper from "@mui/material/Paper";
 import Button from "@mui/material/Button";
 import { getEvidence } from "../../../dbutils/sqlite";
-import Grid from "@mui/material/Grid2";
+import Grid from "@mui/material/Grid";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import {
   Evidence,
@@ -53,9 +53,25 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
           evidence.id,
           null,
         );
-        setMbrPartitions(fetchedPartitions.mbrRows);
-        setGptPartitions(fetchedPartitions.gptRows);
 
+        const mbrRows: MBRPartitionEntry[] = fetchedPartitions.mbrRows.map(
+          (row: any) => ({
+            id: row.evidence_id,
+            boot_indicator: row.boot_indicator,
+            start_chs: JSON.parse(row.start_chs),
+            end_chs: JSON.parse(row.end_chs),
+            partition_type: row.partition_type,
+            start_lba: row.start_lba,
+            size_sectors: row.size_sectors,
+            sector_size: row.sector_size,
+            first_byte_addr: row.first_byte_address,
+            description: row.description,
+          }),
+        );
+
+        setMbrPartitions(mbrRows);
+        setGptPartitions(fetchedPartitions.gptRows);
+        console.log(mbrRows);
         const appLocalDataDirPath = await appLocalDataDir();
         setDbPath(`${appLocalDataDirPath}/thanatology.db`);
       } catch (error) {
@@ -190,7 +206,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     display_message("info", "Processing Started");
 
     try {
-      await invoke("process_linux_partitions", {
+      await invoke("process_partitions", {
         evidenceId: evidence.id,
         mbrPartitions: mbrPartitions,
         gptPartitions: gptPartitions,
@@ -198,7 +214,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
         dbPath: dbPath,
       });
     } catch (err) {
-      console.error("Error invoking process_linux_partitions", err);
+      console.error("Error invoking process_partitions", err);
       display_message(
         "error",
         "An error occurred while starting the processing task.",

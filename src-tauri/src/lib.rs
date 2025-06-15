@@ -4,11 +4,16 @@ use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+use modules::th_dfi::process_filesystem;
 use modules::th_filesystem::get_fs_info;
-use modules::th_ldfi::process_ldfi;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
-use std::path::Path;
+use std::{
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+    path::PathBuf,
+};
 use tauri::AppHandle;
 use tauri_plugin_sql::Migration;
 
@@ -119,7 +124,7 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
 }
 
 #[tauri::command]
-fn process_linux_partitions(
+fn process_partitions(
     evidence_id: i64,
     mbr_partitions: Vec<MBRPartitionEntry>,
     gpt_partitions: Vec<GPTPartitionEntry>,
@@ -156,7 +161,7 @@ fn process_linux_partitions(
             );
 
             // Process the partition
-            process_linux_partition(
+            process_partition(
                 evidence_id,
                 partition,
                 disk_image_path.clone(),
@@ -187,7 +192,7 @@ fn process_linux_partitions(
     });
 }
 
-async fn process_linux_partition(
+async fn process_partition(
     evidence_id: i64,
     partition: MBRPartitionEntry,
     disk_image_path: String,
@@ -216,7 +221,51 @@ async fn process_linux_partition(
         }
     };
 
-    process_ldfi(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
+    process_filesystem(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
+}
+
+#[tauri::command]
+async fn read_chunk(path: String, offset: u64, length: u32) -> Result<Vec<u8>, String> {
+    if length == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Own the path so we can move it safely into the thread-pool task.
+    let path = PathBuf::from(path);
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        if !path.exists() {
+            return Err("File does not exist".into());
+        }
+
+        let mut file = File::open(&path).map_err(|e| e.to_string())?;
+        let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+
+        if offset >= file_len {
+            return Ok(Vec::new());
+        }
+
+        let to_read = std::cmp::min(length as u64, file_len - offset) as usize;
+        let mut buf = vec![0u8; to_read];
+
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| e.to_string())?;
+        let read_bytes = file.read(&mut buf).map_err(|e| e.to_string())?;
+        buf.truncate(read_bytes);
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Return the file length in bytes (`u64`), or an error message.
+///
+/// This is cheap enough to run directly on the async runtime thread.
+#[tauri::command]
+async fn file_size(path: String) -> Result<u64, String> {
+    std::fs::metadata(&path)
+        .map(|m| m.len())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -227,6 +276,19 @@ fn new_whiteboard(app: AppHandle) {
         tauri::WebviewUrl::App("escalidraw.html".into()),
     )
     .title("Whiteboard")
+    .maximized(true)
+    .build()
+    .unwrap();
+}
+
+#[tauri::command]
+fn new_fileviewer(app: AppHandle) {
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        "fileviewer",
+        tauri::WebviewUrl::App("fileviewer.html".into()),
+    )
+    .title("Advanced File Viewer")
     .maximized(true)
     .build()
     .unwrap();
@@ -261,10 +323,13 @@ pub fn run(init_migrations: Vec<Migration>) {
             discover_partitions,
             read_mbr_partition,
             read_gpt_partition,
-            process_linux_partitions,
+            process_partitions,
             get_fs_info,
             new_whiteboard,
+            new_fileviewer,
             new_shell,
+            read_chunk,
+            file_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

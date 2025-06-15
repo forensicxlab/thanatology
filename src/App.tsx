@@ -17,7 +17,7 @@ import FirstLaunch from "./components/firstLaunch/FirstLaunch";
 import { SnackbarProvider } from "./components/SnackbarProvider";
 import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper";
 import CaseDetails from "./components/cases/CaseDetails";
-import PreProcessing from "./components/evidences/preprocessing/Preprocessing";
+import PreProcessing from "./components/evidences/preprocessing/PreProcessing";
 import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/linux/Main";
 import { LicenseInfo } from "@mui/x-license";

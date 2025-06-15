@@ -5,7 +5,6 @@ import {
   GridRowSelectionModel,
   GridActionsCellItem,
   GridRenderCellParams,
-  GridToolbar,
 } from "@mui/x-data-grid-pro";
 import {
   Box,
@@ -35,9 +34,10 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
   const navigate = useNavigate();
 
   // Store selection (array of ids)
-  const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>(
-    [],
-  );
+  const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>({
+    type: "include",
+    ids: new Set(),
+  });
   // Control the delete confirmation dialog
   const [openConfirm, setOpenConfirm] = useState(false);
 
@@ -49,8 +49,12 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
   // Call the passed-in delete handler with the current selection model
   const handleConfirmDelete = () => {
     console.log("Deleting cases:", selectionModel);
-    onDeleteCases(selectionModel as number[]);
-    setSelectionModel([]);
+    const selectedIds: number[] = [...selectionModel.ids] as number[];
+    onDeleteCases(selectedIds);
+    setSelectionModel({
+      type: "include",
+      ids: new Set(),
+    });
     setOpenConfirm(false);
   };
 
@@ -109,9 +113,9 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
           <GridActionsCellItem
             icon={<EditIcon />}
             label="Edit"
-            sx={{
-              color: "primary.main",
-            }}
+            // sx={{
+            //   color: "primary.main",
+            // }}
             onClick={() => console.log("Editing case:", params.id)}
           />
         </Tooltip>,
@@ -130,7 +134,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
         onRowSelectionModelChange={(newSelection) =>
           setSelectionModel(newSelection)
         }
-        slots={{ toolbar: GridToolbar }}
+        showToolbar={true}
         rowSelectionModel={selectionModel}
         disableRowSelectionOnClick
         autoPageSize
@@ -154,7 +158,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
         >
           <AddIcon />
         </Fab>
-        {selectionModel.length > 0 && (
+        {selectionModel.ids.size > 0 && (
           <Fab
             color="secondary"
             aria-label="delete"

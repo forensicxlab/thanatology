@@ -12,7 +12,7 @@ fn main() {
             description: "create_users_table",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS users (
-                    id   INTEGER PRIMARY KEY,
+                    id   INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL CHECK (LENGTH(name) > 2)
                 );
             "#,
@@ -24,12 +24,12 @@ fn main() {
             description: "create_modules_table",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS modules (
-                    id         INTEGER PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name       TEXT NOT NULL,
                     category   TEXT NOT NULL,
                     version    TEXT NOT NULL,
                     description TEXT NOT NULL,
-                    os         TEXT NOT NULL CHECK (os IN ('Linux', 'Windows', 'MacOs')),
+                    os         TEXT NOT NULL CHECK (os IN ('Linux', 'Windows', 'MacOs', 'Any')),
                     parent_id  INTEGER,
                     FOREIGN KEY (parent_id) REFERENCES modules(id)
                 );
@@ -41,12 +41,12 @@ fn main() {
             version: 3,
             description: "insert_default_modules",
             sql: r#"
-                -- Insert the root module LDFI (no parent)
+                -- Insert the root module DFI (no parent)
                 INSERT INTO modules (name, category, version, description, os, parent_id)
-                SELECT 'LDFI', 'Filesystem', '1.0',
-                       'Linux Directory and File Indexing: Parse a Linux filesystem to extract files and directories',
-                       'Linux', NULL
-                WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'LDFI');
+                SELECT 'DFI', 'Filesystem', '1.0',
+                       'Directory and File Indexing: Parse a filesystem to extract files and directories',
+                       'Any', NULL
+                WHERE NOT EXISTS (SELECT 1 FROM modules WHERE name = 'DFI');
             "#,
             kind: MigrationKind::Up,
         },
@@ -56,7 +56,7 @@ fn main() {
             description: "create_cases_and_collaborators",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS cases (
-                    id          INTEGER PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT NOT NULL,
                     description TEXT NOT NULL
                 );
@@ -81,7 +81,7 @@ fn main() {
             description: "create_evidence_table",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS evidence (
-                    id          INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     case_id     INTEGER NOT NULL,
                     name        TEXT NOT NULL,
                     type        TEXT NOT NULL CHECK (type IN ('Disk image', 'Memory Image', 'Procmon dump')),
@@ -101,26 +101,24 @@ fn main() {
             description: "create_mbr_partition_entries_table",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS mbr_partition_entries (
-                    evidence_id        INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id        INTEGER NOT NULL,
                     boot_indicator     INTEGER NOT NULL,
-                    start_chs_1        INTEGER NOT NULL,
-                    start_chs_2        INTEGER NOT NULL,
-                    start_chs_3        INTEGER NOT NULL,
-                    end_chs_1          INTEGER NOT NULL,
-                    end_chs_2          INTEGER NOT NULL,
-                    end_chs_3          INTEGER NOT NULL,
+                    start_chs          BLOB NOT NULL,
+                    end_chs            BLOB NOT NULL,
                     start_lba          INTEGER NOT NULL,
+                    partition_type     INTEGER NOT NULL,
                     size_sectors       INTEGER NOT NULL,
                     sector_size        INTEGER NOT NULL,
                     first_byte_address INTEGER NOT NULL,
                     description        TEXT NOT NULL,
-                    selected           BOOLEAN NOT NULL,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS gpt_partition_entries (
-                    evidence_id        INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id        INTEGER NOT NULL,
                     partition_guid     TEXT NOT NULL,
                     partition_type_guid TEXT NOT NULL,
                     starting_lba       INTEGER NOT NULL,
@@ -154,35 +152,20 @@ fn main() {
         },
         Migration {
             version: 8,
-            description: "evidence_linux_file",
+            description: "evidence_system_file",
             sql: r#"
-                CREATE TABLE IF NOT EXISTS linux_files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_id INTEGER NOT NULL,
-                    partition_id INTEGER NOT NULL,
-                    absolute_path TEXT,
-                    filename TEXT,
-                    parent_directory TEXT,
-                    inode_number INTEGER,
-                    file_type TEXT,
-                    size_bytes INTEGER,
-                    owner_uid INTEGER,
-                    group_gid INTEGER,
-                    permissions_mode INTEGER,
-                    hard_link_count INTEGER,
-                    access_time TEXT,
-                    modification_time TEXT,
-                    change_time TEXT,
-                    creation_time TEXT,
-                    extended_attributes TEXT,
-                    symlink_target TEXT,
-                    mount_point TEXT,
-                    filesystem_type TEXT,
+                CREATE TABLE IF NOT EXISTS system_files (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id     INTEGER NOT NULL,
+                    partition_id    INTEGER NOT NULL,
+                    identifier      INTEGER NOT NULL,
+                    absolute_path   TEXT    NOT NULL,
+                    name            TEXT    NOT NULL,
+                    ftype           TEXT    NOT NULL,
+                    size            INTEGER NOT NULL,
+                    metadata        JSON    NOT NULL,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
-                        ON DELETE CASCADE
-                    FOREIGN KEY (partition_id)
-                        REFERENCES evidence_preprocessing_selected_partitions(id)
                         ON DELETE CASCADE
                 );
             "#,

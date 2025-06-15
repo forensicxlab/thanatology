@@ -3,7 +3,7 @@
  */
 
 import Database from "@tauri-apps/plugin-sql";
-import { LinuxFile } from "../types";
+import { File } from "../types";
 
 /**
  * Fetch Interfaces / Network Scripts
@@ -17,7 +17,7 @@ export async function getNetworkInterfacesAndScripts(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -35,12 +35,11 @@ export async function getNetworkInterfacesAndScripts(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -51,7 +50,7 @@ export async function getNetworkInterfacesAndScripts(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Network Interfaces / Scripts",
@@ -71,7 +70,7 @@ export async function getDNSAndNameResolution(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -86,7 +85,7 @@ export async function getDNSAndNameResolution(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -94,7 +93,7 @@ export async function getDNSAndNameResolution(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "DNS / Name Resolution",
@@ -115,7 +114,7 @@ export async function getFirewallConfig(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -131,12 +130,11 @@ export async function getFirewallConfig(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -147,7 +145,7 @@ export async function getFirewallConfig(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Firewall / Packet Filtering",
@@ -167,7 +165,7 @@ export async function getRoutingAndARP(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -182,12 +180,11 @@ export async function getRoutingAndARP(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -198,7 +195,7 @@ export async function getRoutingAndARP(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Routing and ARP",
@@ -218,7 +215,7 @@ export async function getProxyAndAdditionalNetworkConfig(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -234,12 +231,11 @@ export async function getProxyAndAdditionalNetworkConfig(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -250,7 +246,7 @@ export async function getProxyAndAdditionalNetworkConfig(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "Proxy / Additional Network Config",
@@ -269,7 +265,7 @@ export async function getNetworkManagerConfig(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -283,12 +279,11 @@ export async function getNetworkManagerConfig(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND (
         absolute_path IN (${placeholders})
-        OR parent_directory IN (${placeholders})
       )
     ORDER BY absolute_path
   `;
@@ -300,7 +295,7 @@ export async function getNetworkManagerConfig(
     ...candidatePaths,
   ];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "NetworkManager",
@@ -319,7 +314,7 @@ export async function getSSHConfig(
   db: Database | null,
   evidenceId: number,
   partitionId: number,
-): Promise<{ category: string; files: LinuxFile[] }> {
+): Promise<{ category: string; files: File[] }> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
@@ -333,7 +328,7 @@ export async function getSSHConfig(
 
   const query = `
     SELECT *
-    FROM linux_files
+    FROM system_files
     WHERE evidence_id = ?
       AND partition_id = ?
       AND absolute_path IN (${placeholders})
@@ -341,7 +336,7 @@ export async function getSSHConfig(
   `;
   const params = [evidenceId, partitionId, ...candidatePaths];
 
-  const files: LinuxFile[] = await db.select(query, params);
+  const files: File[] = await db.select(query, params);
 
   return {
     category: "SSH Configuration",

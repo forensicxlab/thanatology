@@ -26,11 +26,10 @@ const GPTPartition: React.FC<GPTPartitionProps> = ({ gptPartition, index }) => {
         )}
       </Box>
       <Typography variant="body2">
-        <strong>GUID:</strong> {`${gptPartition.partition_guid_string}`}
+        <strong>GUID:</strong> {`${gptPartition.partition_guid}`}
       </Typography>
       <Typography variant="body2">
-        <strong>Type GUID:</strong>{" "}
-        {`${gptPartition.partition_type_guid_string}`}
+        <strong>Type GUID:</strong> {`${gptPartition.partition_type_guid}`}
       </Typography>
       <Typography variant="body2">
         <strong>Description:</strong> {gptPartition.description}

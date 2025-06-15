@@ -2,9 +2,9 @@ import React from "react";
 import {
   getFileByEvidenceAndAbsolutePath,
   getFilesByEvidenceAndParent,
-  searchLinuxFiles,
+  searchFiles,
 } from "../dbutils/sqlite";
-import { LinuxFile } from "../dbutils/types";
+import { File } from "../dbutils/types";
 import { system } from "./system";
 import { network } from "./network";
 import { Command } from "@tauri-apps/plugin-shell";
@@ -90,7 +90,7 @@ export async function cd(directory: string): Promise<string> {
     if (!file) {
       return `Directory "${directory}" not found.`;
     }
-    if (file.file_type !== "dir") {
+    if (file.ftype !== "dir") {
       return `"${directory}" is not a directory.`;
     }
     // If it’s valid, set the new CWD
@@ -108,7 +108,7 @@ export async function cd(directory: string): Promise<string> {
     );
 
     const target = files.find(
-      (file) => file.filename === directory && file.file_type === "dir",
+      (file) => file.name === directory && file.ftype === "dir",
     );
 
     if (!target) {
@@ -149,10 +149,11 @@ function formatPermissions(mode: number): string {
 /**
  * Helper: Format a file (or directory) to include type, permissions, size, and filename.
  */
-function formatFile(file: LinuxFile): string {
+function formatFile(file: File): string {
   // Use "d" for directories and "-" for regular files.
-  const permissions = formatPermissions(file.permissions_mode);
-  return `: ${permissions} ${file.owner_uid} ${file.group_gid} ${file.modification_time} ${file.size_bytes} `;
+  // const permissions = formatPermissions(file.permissions_mode);
+  // return `: ${permissions} ${file.owner_uid} ${file.group_gid} ${file.modification_time} ${file.size_bytes} `;
+  return "temp";
 }
 
 /**
@@ -163,7 +164,7 @@ function formatFile(file: LinuxFile): string {
  *
  * Returns HTML with <br/> tags for line breaks.
  */
-export async function ls(arg?: string): Promise<JSX.Element> {
+export async function ls(arg?: string): Promise<Element> {
   try {
     // If no argument, list contents of current working directory
     if (!arg || arg.trim() === "") {
@@ -213,7 +214,7 @@ export async function ls(arg?: string): Promise<JSX.Element> {
       }
 
       // If it’s a directory, list its contents
-      if (target.file_type === "dir") {
+      if (target.ftype === "dir") {
         const subfiles = await getFilesByEvidenceAndParent(
           null,
           terminalState.evidenceId,
@@ -228,31 +229,31 @@ export async function ls(arg?: string): Promise<JSX.Element> {
         // It’s a single file
         return (
           <>
-            <span style={{ color: "green" }}>{target.inode_number}</span>/
+            <span style={{ color: "green" }}>{target.identifier}</span>/
             <span
               style={{
                 color:
-                  target.file_type === "dir"
+                  target.ftype === "dir"
                     ? "#42a5f5"
-                    : target.file_type === "file"
+                    : target.ftype === "file"
                       ? "#ba68c8"
                       : "#ff5722",
               }}
             >
-              {target.file_type}
+              {target.ftype}
             </span>
             {formatFile(target)}
             <span
               style={{
                 color:
-                  target.file_type === "dir"
+                  target.ftype === "dir"
                     ? "#42a5f5"
-                    : target.file_type === "file"
+                    : target.ftype === "file"
                       ? "#ba68c8"
                       : "#ff5722",
               }}
             >
-              {target.filename}
+              {target.name}
             </span>
             <br />
           </>
@@ -268,7 +269,7 @@ export async function ls(arg?: string): Promise<JSX.Element> {
       terminalState.partitionId,
       terminalState.cwd,
     );
-    const target = files.find((file) => file.filename === arg);
+    const target = files.find((file) => file.name === arg);
     if (!target) {
       return (
         <>
@@ -277,7 +278,7 @@ export async function ls(arg?: string): Promise<JSX.Element> {
       );
     }
     // If directory, list contents
-    if (target.file_type === "dir") {
+    if (target.ftype === "dir") {
       const path =
         terminalState.cwd === "/" ? `/${arg}` : `${terminalState.cwd}/${arg}`;
       const subfiles = await getFilesByEvidenceAndParent(
@@ -294,31 +295,31 @@ export async function ls(arg?: string): Promise<JSX.Element> {
       // It’s a single file
       return (
         <>
-          <span style={{ color: "green" }}>{target.inode_number}</span>/
+          <span style={{ color: "green" }}>{target.identifier}</span>/
           <span
             style={{
               color:
-                target.file_type === "dir"
+                target.ftype === "dir"
                   ? "#42a5f5"
-                  : target.file_type === "file"
+                  : target.ftype === "file"
                     ? "#ba68c8"
                     : "#ff5722",
             }}
           >
-            {target.file_type}
+            {target.ftype}
           </span>
           {formatFile(target)}
           <span
             style={{
               color:
-                target.file_type === "dir"
+                target.ftype === "dir"
                   ? "#42a5f5"
-                  : target.file_type === "file"
+                  : target.ftype === "file"
                     ? "#ba68c8"
                     : "#ff5722",
             }}
           >
-            {target.filename}
+            {target.name}
           </span>
           <br />
         </>
@@ -330,39 +331,39 @@ export async function ls(arg?: string): Promise<JSX.Element> {
 }
 
 /**
- * Helper: takes an array of LinuxFiles, returns a React fragment
+ * Helper: takes an array of Files, returns a React fragment
  * that lists them.
  */
-function formatListing(files: LinuxFile[]): JSX.Element {
+function formatListing(files: File[]): Element {
   return (
     <>
       {files.map((file, index) => (
         <span key={index}>
-          <span style={{ color: "green" }}>{file.inode_number}</span>/
+          <span style={{ color: "green" }}>{file.identifier}</span>/
           <span
             style={{
               color:
-                file.file_type === "dir"
+                file.ftype === "dir"
                   ? "#42a5f5"
-                  : file.file_type === "file"
+                  : file.ftype === "file"
                     ? "#ba68c8"
                     : "#ff5722",
             }}
           >
-            {file.file_type}
+            {file.ftype}
           </span>
           {formatFile(file)}
           <span
             style={{
               color:
-                file.file_type === "dir"
+                file.ftype === "dir"
                   ? "#42a5f5"
-                  : file.file_type === "file"
+                  : file.ftype === "file"
                     ? "#ba68c8"
                     : "#ff5722",
             }}
           >
-            {file.filename}
+            {file.name}
           </span>
           <br />
         </span>
@@ -372,26 +373,26 @@ function formatListing(files: LinuxFile[]): JSX.Element {
 }
 
 /**
- * Helper: takes an array of LinuxFiles, returns a React fragment
+ * Helper: takes an array of Files, returns a React fragment
  * that lists the full path.
  */
-function formatPaths(files: LinuxFile[]): JSX.Element {
+function formatPaths(files: File[]): JSX.Element {
   return (
     <>
       {files.map((file, index) => (
         <span key={index}>
-          <span style={{ color: "green" }}>{file.inode_number}</span>/
+          <span style={{ color: "green" }}>{file.identifier}</span>/
           <span
             style={{
               color:
-                file.file_type === "dir"
+                file.ftype === "dir"
                   ? "#42a5f5"
-                  : file.file_type === "file"
+                  : file.ftype === "file"
                     ? "#ba68c8"
                     : "#ff5722",
             }}
           >
-            {file.file_type}
+            {file.ftype}
           </span>
           <span> {file.absolute_path}</span>
           <br />
@@ -420,10 +421,10 @@ export async function search(searchTerm: string): Promise<JSX.Element> {
     return <>Please provide a search term.</>;
   }
   searchTerm = searchTerm.trim();
-  let files: LinuxFile[] = [];
+  let files: File[] = [];
   // Otherwise, perform SQL search using LIKE.
   const pattern = `%${searchTerm}%`;
-  files = await searchLinuxFiles(
+  files = await searchFiles(
     null,
     terminalState.evidenceId,
     terminalState.partitionId,
