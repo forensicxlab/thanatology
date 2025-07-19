@@ -10,22 +10,24 @@ import {
 } from "@mui/x-data-grid-pro";
 import {
   Partitions,
+  MBR,
   MBRPartitionEntry,
   GPTPartitionEntry,
 } from "../../../dbutils/types";
 
+/* -------------------------------------------------------------------- */
+/*  Row helpers – we add a couple of virtual properties                 */
+/* -------------------------------------------------------------------- */
 interface MBRRow extends MBRPartitionEntry {
-  id: number;
+  /** Marks the slot that chains to EBRs                                 */
   isExtended: boolean;
+  /** Unused / empty primary slot                                        */
   isUnused: boolean;
 }
-interface EBRRow extends MBRPartitionEntry {
-  id: number;
-}
-interface GPTRow extends GPTPartitionEntry {
-  id: number;
-}
+interface EBRRow extends MBRPartitionEntry {} // no extras needed
+interface GPTRow extends GPTPartitionEntry {} // no extras needed
 
+/* -------------------------------------------------------------------- */
 interface PartitionsComponentProps {
   partitions: Partitions;
   locked: boolean;
@@ -35,12 +37,15 @@ interface PartitionsComponentProps {
   ) => void;
 }
 
-/* Helpers */
+/* -------------------------------------------------------------------- */
+/*  Helper – empty selection object for DataGridPro (v7)                */
+/* -------------------------------------------------------------------- */
 const emptySelection = (): GridRowSelectionModel => ({
   type: "include",
   ids: new Set<GridRowId>(),
 });
 
+/* ==================================================================== */
 const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
   partitions,
   locked,
@@ -48,15 +53,20 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
 }) => {
   const apiRef = useGridApiRef();
 
-  const mbrRows = useMemo<MBRRow[]>(
-    () =>
-      partitions.mbr.partition_table.map((p) => ({
-        ...p,
-        isExtended: p.partition_type === 0x05 || p.partition_type === 0x0f,
-        isUnused: p.partition_type === 0 || p.partition_type === 0xee,
-      })),
-    [partitions.mbr.partition_table],
-  );
+  /* ------------------------------------------------------------------ */
+  /*  Primary-MBR rows                                                  */
+  /* ------------------------------------------------------------------ */
+  const mbrRows = useMemo<MBRRow[]>(() => {
+    const primaries = partitions.mbr?.partition_table ?? [];
+    return primaries.map((p) => ({
+      ...p,
+      isExtended:
+        p.partition_type === 0x05 ||
+        p.partition_type === 0x0f ||
+        p.partition_type === 0x85,
+      isUnused: p.partition_type === 0x00 || p.partition_type === 0xee,
+    }));
+  }, [partitions.mbr]);
 
   const mbrColumns: GridColDef[] = useMemo(
     () => [
@@ -86,13 +96,17 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
     [],
   );
 
-  const ebrRowsAll = useMemo<EBRRow[]>(
-    () =>
-      partitions.ebr.map((entry) => ({
-        ...entry,
-      })),
-    [partitions.ebr],
-  );
+  /* ------------------------------------------------------------------ */
+  /*  EBR rows – flatten every extended partition’s table               */
+  /* ------------------------------------------------------------------ */
+  const ebrRowsAll = useMemo<EBRRow[]>(() => {
+    if (!partitions.ebr) return [];
+    const rows: EBRRow[] = [];
+    partitions.ebr.forEach((ebrRec: MBR) =>
+      rows.push(...ebrRec.partition_table),
+    );
+    return rows;
+  }, [partitions.ebr]);
 
   const ebrColumns: GridColDef[] = useMemo(
     () => [
@@ -119,11 +133,11 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
     [],
   );
 
+  /* ------------------------------------------------------------------ */
+  /*  GPT rows                                                          */
+  /* ------------------------------------------------------------------ */
   const gptRows = useMemo<GPTRow[]>(
-    () =>
-      (partitions.gpt?.partition_entries ?? []).map((e) => ({
-        ...e,
-      })),
+    () => partitions.gpt?.partition_entries ?? [],
     [partitions.gpt],
   );
 
@@ -153,10 +167,14 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
     [],
   );
 
+  /* ------------------------------------------------------------------ */
+  /*  Row-selection state                                               */
+  /* ------------------------------------------------------------------ */
   const [mbrSel, setMbrSel] = useState<GridRowSelectionModel>(emptySelection);
   const [ebrSel, setEbrSel] = useState<GridRowSelectionModel>(emptySelection);
   const [gptSel, setGptSel] = useState<GridRowSelectionModel>(emptySelection);
 
+  /* Whenever selection changes, inform parent                           */
   useEffect(() => {
     const mbrArr = mbrRows.filter((r) => mbrSel.ids.has(r.id));
     const ebrArr = ebrRowsAll.filter((r) => ebrSel.ids.has(r.id));
@@ -172,7 +190,9 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
     onSelectPartitions,
   ]);
 
-  /* ————————————————— Detail-panel (EBR) ————————————————— */
+  /* ------------------------------------------------------------------ */
+  /*  EBR detail-panel renderer                                         */
+  /* ------------------------------------------------------------------ */
   const getDetailPanelContent = useCallback(
     (params: GridRowParams) =>
       !params.row.isExtended ? null : (
@@ -197,12 +217,14 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
 
   const getDetailPanelHeight = useCallback(() => 200, []);
 
-  /* ————————————————— Render ————————————————— */
+  /* ------------------------------------------------------------------ */
+  /*  Render                                                            */
+  /* ------------------------------------------------------------------ */
   return (
     <Box
       sx={{ width: "100%", display: "flex", flexDirection: "column", gap: 2 }}
     >
-      {/* ---------- MBR + EBR ---------- */}
+      {/* -------------  MBR (primary) + EBR detail-panel  ------------- */}
       <DataGridPro
         apiRef={apiRef}
         rows={mbrRows}
@@ -227,7 +249,7 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
         }}
       />
 
-      {/* ---------- GPT ---------- */}
+      {/* -------------------  GPT table (if any)  -------------------- */}
       {gptRows.length > 0 && (
         <DataGridPro
           apiRef={apiRef}

@@ -10,7 +10,7 @@
 
 Thanatology is a project built using the Tauri framework to deliver a cross-platform digital forensics desktop application. It leverages the power of the [Exhume toolkit](https://www.forensicxlab.com/docs/exhume) as a core library and uses React with MUI to showcase how a modern application **tailored for law enforcement** can be developed. The goal of Thanatology is to provite an all in one Framework to perform Post-Mortem Analysis, Malware Analysis and Memory Analysis. The project is also meant to include helpfull judicial tools for a court acceptable digital forensics report.
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > This project is in active developpement and is has not yet released.
 
 # Our Roadmap
@@ -22,13 +22,13 @@ This roadmap is dynamic, consider all of the alpha tagged release as not product
 - [x] Case and Evidence management.
 - [x] Sqlite Support
 - [x] DiskImage Layout Analysis.
-- [ ] ExtFS Artefact extraction for Linux Analysis.
+- [ ] FileSystem Artefact extraction using YAML configuration files
+- [ ] Advanced File Viewer with window communication.
 - [ ] ProcMon Artefacts Vizualisation for Malware Analysis.
-- [ ] MemProcFS Artefact extraction for Memory Analysis.
-- [ ] Whiteboard components interaction.
+- [x] Terminal Intergration: (Bash, ZSH, Powershell).
+- [] File Signature Analysis
 
 ## v0.2.0-alpha
-- [ ] NTFS Artefact extraction for Windows Analysis.
 - [ ] exFAT Artefact extraction for Analysis
 - [ ] FAT16/32 Artefact extraction for Analysis
 - [ ] Embeded Hexadecimal Editor for Malware Analysis

@@ -1,0 +1,16 @@
+artifacts:
+  - name: "System Logs"
+    description: "System log files containing syslog messages"
+    paths:
+      - "/bin/log/syslog"
+      - "/var/log/messages"
+    parser: "syslog"
+    tag: "logs"
+    category: "system"
+
+  - name: "Browser History"
+    description: "Firefox browsing history database"
+    paths:
+      - "/home/.*/.mozilla/firefox/.*/places.sqlite"
+    tag: "history"
+    category: "application"

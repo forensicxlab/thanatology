@@ -3,12 +3,11 @@ use exhume_filesystem::{File, Filesystem};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 use log::{error, info};
-use serde_json::Value;
-use sqlx::sqlite::{Sqlite, SqlitePool};
+use sqlx::sqlite::Sqlite;
 use sqlx::types::Json;
 use sqlx::Pool;
 use std::collections::{HashSet, VecDeque};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 fn collect_files<T: Filesystem>(
     fs: &mut T,

@@ -204,7 +204,6 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
   return (
     <div style={{ height: 400, width: "100%" }}>
       <DataGridPro
-        apiRef={apiRef}
         rows={evidences}
         columns={columns}
         checkboxSelection
@@ -213,11 +212,6 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
         }}
         autosizeOnMount
         disableRowSelectionOnClick
-        autosizeOptions={{
-          columns: ["id", "name", "type", "description", "status"],
-          includeOutliers: true,
-          includeHeaders: true,
-        }}
       />
     </div>
   );

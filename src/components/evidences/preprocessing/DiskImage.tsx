@@ -27,6 +27,7 @@ import {
   Partitions,
   MBRPartitionEntry,
   GPTPartitionEntry,
+  MBR,
 } from "../../../dbutils/types";
 import { useSnackbar } from "../../SnackbarProvider";
 
@@ -34,9 +35,11 @@ import PartitionComponent from "./PartitionsComponent";
 import { savePreprocessingMetadata } from "../../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
 
+/* ------------------------------------------------------------------ */
+
 interface DiskImageProps {
   database: Database | null;
-  evidenceData: Evidence; // MUST have an 'id' that exists in DB
+  evidenceData: Evidence;
   onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
 
@@ -45,6 +48,8 @@ interface PartitionReadResult {
   success: boolean;
   message: string;
 }
+
+/* ------------------------------------------------------------------ */
 
 const DiskImage: React.FC<DiskImageProps> = ({
   database,
@@ -61,17 +66,17 @@ const DiskImage: React.FC<DiskImageProps> = ({
     "Read Partition(s)",
   ];
 
-  // Tracks which step is visible
+  /* ---------------------------------------------------------------
+   *  Local state
+   * ------------------------------------------------------------- */
   const [activeStep, setActiveStep] = useState<number>(0);
 
-  // Disk image info
   const [diskImageFormat, setDiskImageFormat] = useState<string>("");
 
-  // Partition selection
   const [partitions, setPartitions] = useState<Partitions | undefined>(
     undefined,
   );
-  // MBR + GPT
+
   const [selectedMbrPartitions, setSelectedMbrPartitions] = useState<
     MBRPartitionEntry[]
   >([]);
@@ -80,7 +85,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
   >([]);
   const [partitionsLocked, setPartitionsLocked] = useState<boolean>(false);
 
-  // Partition read results
   const [partitionReadResults, setPartitionReadResults] = useState<
     PartitionReadResult[]
   >([]);
@@ -90,17 +94,15 @@ const DiskImage: React.FC<DiskImageProps> = ({
     string[]
   >([]);
 
-  // Tracks general error states during steps
   const [currentError, setCurrentError] = useState<string | null>(null);
 
-  // Tracks final insertion state: idle, loading, success, or error
   const [finalInsertStatus, setFinalInsertStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
 
-  // -------------------------------
-  // Partition selection callback
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Partition selection callback
+   * ------------------------------------------------------------- */
   const handleSelectPartitions = useCallback(
     (
       mbrPartitions: MBRPartitionEntry[],
@@ -112,9 +114,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
     [],
   );
 
-  // -------------------------------
-  // Step 0 & 1 (Auto): Check existence & Format
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Step 0 & 1 – auto run
+   * ------------------------------------------------------------- */
   const runAutoStep = async (step: number) => {
     if (step === 0) {
       try {
@@ -147,18 +149,16 @@ const DiskImage: React.FC<DiskImageProps> = ({
   };
 
   useEffect(() => {
-    if (activeStep < 2) {
-      runAutoStep(activeStep);
-    }
+    if (activeStep < 2) runAutoStep(activeStep);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStep]);
 
-  // -------------------------------
-  // Step 2: Partition Discovery
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Step 2 – partition discovery
+   * ------------------------------------------------------------- */
   useEffect(() => {
     if (activeStep === 2 && !partitions) {
-      const discover = async () => {
+      (async () => {
         try {
           const discovered: Partitions = await invoke("discover_partitions", {
             path: evidenceData.path,
@@ -169,101 +169,80 @@ const DiskImage: React.FC<DiskImageProps> = ({
           console.error("Error during partition discovery:", error);
           setCurrentError(`An error during partition discovery: ${error}`);
         }
-      };
-      discover();
+      })();
     }
   }, [activeStep, partitions, evidenceData.path]);
 
-  // -------------------------------
-  // Step 3: Read Selected Partitions (MBR + GPT)
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Step 3 – read selected partitions
+   * ------------------------------------------------------------- */
   useEffect(() => {
-    if (activeStep === 3 && partitionReadResults.length === 0) {
-      // If user hasn't selected anything, bail
-      if (
-        selectedMbrPartitions.length === 0 &&
-        selectedGptPartitions.length === 0
-      ) {
-        setCurrentError("No partition selected.");
-        return;
+    if (activeStep !== 3 || partitionReadResults.length !== 0) return;
+
+    if (
+      selectedMbrPartitions.length === 0 &&
+      selectedGptPartitions.length === 0
+    ) {
+      setCurrentError("No partition selected.");
+      return;
+    }
+
+    (async () => {
+      const results: PartitionReadResult[] = [];
+
+      /* ---- MBR / EBR ---- */
+      for (let i = 0; i < selectedMbrPartitions.length; i++) {
+        const partition = selectedMbrPartitions[i];
+        try {
+          const res = await invoke("read_mbr_partition", {
+            partition,
+            path: evidenceData.path,
+          });
+          results.push({
+            partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
+            success: res === true,
+            message: res === true ? "Success" : String(res),
+          });
+        } catch (error: any) {
+          results.push({
+            partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
+            success: false,
+            message: error.toString(),
+          });
+        }
       }
 
-      const readPartitions = async () => {
-        const results: PartitionReadResult[] = [];
-
-        // 1) Read MBR
-        for (let i = 0; i < selectedMbrPartitions.length; i++) {
-          const partition = selectedMbrPartitions[i];
-          try {
-            const res = await invoke("read_mbr_partition", {
-              partition,
-              path: evidenceData.path,
-            });
-            if (res === true) {
-              results.push({
-                partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
-                success: true,
-                message: "Success",
-              });
-            } else {
-              results.push({
-                partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
-                success: false,
-                message: String(res),
-              });
-            }
-          } catch (error: any) {
-            results.push({
-              partitionLabel: `MBR Partition ${i + 1} (${partition.description})`,
-              success: false,
-              message: error.toString(),
-            });
-          }
+      /* ---- GPT ---- */
+      for (let i = 0; i < selectedGptPartitions.length; i++) {
+        const partition = selectedGptPartitions[i];
+        try {
+          const res = await invoke("read_gpt_partition", {
+            partition,
+            path: evidenceData.path,
+          });
+          results.push({
+            partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
+            success: res === true,
+            message: res === true ? "Success" : String(res),
+          });
+        } catch (error: any) {
+          results.push({
+            partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
+            success: false,
+            message: error.toString(),
+          });
         }
+      }
 
-        // 2) Read GPT
-        for (let i = 0; i < selectedGptPartitions.length; i++) {
-          const partition = selectedGptPartitions[i];
-          try {
-            const res = await invoke("read_gpt_partition", {
-              partition,
-              path: evidenceData.path,
-            });
-            if (res === true) {
-              results.push({
-                partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
-                success: true,
-                message: "Success",
-              });
-            } else {
-              results.push({
-                partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
-                success: false,
-                message: String(res),
-              });
-            }
-          } catch (error: any) {
-            results.push({
-              partitionLabel: `GPT Partition ${i + 1} (${partition.description})`,
-              success: false,
-              message: error.toString(),
-            });
-          }
-        }
-
-        setPartitionReadResults(results);
-
-        // If none succeeded, set an error
-        if (!results.some((r) => r.success)) {
-          setCurrentError(
-            "None of the selected partitions were successfully read.",
-          );
-        } else {
-          setCurrentError(null);
-        }
-      };
-      readPartitions();
-    }
+      setPartitionReadResults(results);
+      if (!results.some((r) => r.success)) {
+        setCurrentError(
+          "None of the selected partitions were successfully read.",
+        );
+      } else {
+        setCurrentError(null);
+      }
+    })();
   }, [
     activeStep,
     selectedMbrPartitions,
@@ -272,13 +251,13 @@ const DiskImage: React.FC<DiskImageProps> = ({
     evidenceData.path,
   ]);
 
-  // -------------------------------
-  // Step Navigation
-  // -------------------------------
-  const handleNext = async () => {
+  /* ---------------------------------------------------------------
+   *  Navigation buttons
+   * ------------------------------------------------------------- */
+  const handleNext = () => {
     setCurrentError(null);
 
-    // Validate current step
+    /* validate */
     if (activeStep === 2) {
       if (
         selectedMbrPartitions.length === 0 &&
@@ -287,11 +266,10 @@ const DiskImage: React.FC<DiskImageProps> = ({
         setCurrentError("No partition selected.");
         return;
       }
-      // Lock partitions before going forward
       setPartitionsLocked(true);
     } else if (activeStep === 3) {
       if (partitionReadResults.length === 0) {
-        setCurrentError("Still reading partitions, please wait...");
+        setCurrentError("Still reading partitions, please wait…");
         return;
       }
       if (!partitionReadResults.some((r) => r.success)) {
@@ -302,24 +280,21 @@ const DiskImage: React.FC<DiskImageProps> = ({
       }
     }
 
-    // Move to the next step
     setActiveStep((prev) => prev + 1);
   };
 
-  // Going backwards (allow re-selection, re-reading, etc.)
   const handleBack = () => {
     setCurrentError(null);
     if (activeStep === 3) {
-      // In case user wants to reselect partitions
       setPartitionReadResults([]);
       setPartitionsLocked(false);
     }
     setActiveStep((prev) => prev - 1);
   };
 
-  // -------------------------------
-  // Final step: handle "Finish"
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Finish – persist metadata
+   * ------------------------------------------------------------- */
   const handleFinish = async () => {
     setFinalInsertStatus("loading");
     setCurrentError(null);
@@ -329,16 +304,13 @@ const DiskImage: React.FC<DiskImageProps> = ({
       diskImageFormat,
       selectedMbrPartitions,
       selectedGptPartitions,
-      extractionModules: extractionModules.filter((mod) =>
-        selectedExtractionModules.includes(mod.id),
+      extractionModules: extractionModules.filter((m) =>
+        selectedExtractionModules.includes(m.id),
       ),
     };
 
-    // 1) Save metadata to DB
     savePreprocessingMetadata(metadata, database)
-      .then(() => {
-        setFinalInsertStatus("success");
-      })
+      .then(() => setFinalInsertStatus("success"))
       .catch((err: any) => {
         console.error("Error saving preprocessing metadata:", err);
         display_message("error", `Error saving metadata: ${err}`);
@@ -346,31 +318,27 @@ const DiskImage: React.FC<DiskImageProps> = ({
       });
   };
 
-  // -------------------------------
-  // Helpers for Nested List Rendering
-  // -------------------------------
-  const getModuleIcon = (os: string) => {
-    if (os.toLowerCase() === "linux") {
-      return <TerminalIcon sx={{ mr: 1 }} />;
-    }
-    return <ComputerIcon sx={{ mr: 1 }} />;
-  };
+  /* ---------------------------------------------------------------
+   *  Helpers
+   * ------------------------------------------------------------- */
+  const moduleIcon = (os: string) =>
+    os.toLowerCase() === "linux" ? (
+      <TerminalIcon sx={{ mr: 1 }} />
+    ) : (
+      <ComputerIcon sx={{ mr: 1 }} />
+    );
 
   const renderModuleList = (
     modulesByParent: Record<string, Module[]>,
     parentId: string = "0",
-  ) => {
-    if (!modulesByParent[parentId]) return null;
-    return (
+  ) =>
+    modulesByParent[parentId] ? (
       <List disablePadding>
         {modulesByParent[parentId].map((mod) => (
           <React.Fragment key={mod.id}>
             <ListItem disablePadding>
-              {getModuleIcon(mod.os)}
-              <ListItemText
-                primary={`${mod.name}`}
-                secondary={`${mod.description}`}
-              />
+              {moduleIcon(mod.os)}
+              <ListItemText primary={mod.name} secondary={mod.description} />
             </ListItem>
             <Divider component="li" />
             {modulesByParent[mod.id.toString()] && (
@@ -381,18 +349,23 @@ const DiskImage: React.FC<DiskImageProps> = ({
           </React.Fragment>
         ))}
       </List>
-    );
-  };
+    ) : null;
 
-  // -------------------------------
-  // Step Content
-  // -------------------------------
-  const allPartitionsCount = partitions
-    ? partitions.mbr.partition_table.length +
-      partitions.ebr.length +
-      (partitions.gpt?.partition_entries?.length || 0)
-    : 0;
+  /* ---------------------------------------------------------------
+   *  Partition counters (new safer logic)
+   * ------------------------------------------------------------- */
+  const mbrCount = partitions?.mbr?.partition_table.length ?? 0;
+  const ebrCount =
+    partitions?.ebr?.reduce(
+      (acc: number, ebr: MBR) => acc + ebr.partition_table.length,
+      0,
+    ) ?? 0;
+  const gptCount = partitions?.gpt?.partition_entries.length ?? 0;
+  const allPartitionsCount = mbrCount + ebrCount + gptCount;
 
+  /* ---------------------------------------------------------------
+   *  Step content renderer
+   * ------------------------------------------------------------- */
   const getStepContent = (step: number) => {
     switch (step) {
       case 0:
@@ -404,25 +377,26 @@ const DiskImage: React.FC<DiskImageProps> = ({
       case 1:
         return (
           <Typography variant="body1">
-            Disk image format: {diskImageFormat || "Checking..."}
+            Disk image format: {diskImageFormat || "Checking…"}
           </Typography>
         );
       case 2:
-        if (currentError) {
+        if (currentError)
           return <Typography variant="body1">{steps[2]}</Typography>;
-        }
+
         return (
           <Box>
             {partitions ? (
               <>
                 <Typography variant="body1">
-                  Partition discovery: Found {allPartitionsCount} partition(s).
+                  Partition discovery: found {allPartitionsCount} partition
+                  {allPartitionsCount !== 1 && "s"}.
                 </Typography>
+
                 {!partitionsLocked ? (
                   <>
-                    <Typography variant="body2">
-                      Please select the partition(s) to analyze (MBR and/or
-                      GPT).
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Select the partition(s) to analyse (MBR/EBR and/or GPT).
                     </Typography>
                     <PartitionComponent
                       partitions={partitions}
@@ -432,17 +406,15 @@ const DiskImage: React.FC<DiskImageProps> = ({
                   </>
                 ) : (
                   <Typography variant="body2">
-                    Partition selection completed. MBR: [
+                    Partition selection completed. MBR/EBR&nbsp;[
                     {selectedMbrPartitions
-                      .map(
-                        (part, i) => `Partition ${i + 1} (${part.description})`,
-                      )
+                      .map((p, i) => `Partition ${i + 1} (${p.description})`)
                       .join(", ")}
-                    ] GPT: [
+                    ] – GPT&nbsp;[
                     {selectedGptPartitions
                       .map(
-                        (part, i) =>
-                          `Partition ${i + 1} (${part.partition_name})`,
+                        (p, i) =>
+                          `Partition ${i + 1} (${p.partition_name || "Unnamed"})`,
                       )
                       .join(", ")}
                     ]
@@ -470,18 +442,15 @@ const DiskImage: React.FC<DiskImageProps> = ({
                 </Typography>
               </Box>
             ) : (
-              <Box>
-                {partitionReadResults.map((result, i) => (
-                  <Typography
-                    key={i}
-                    variant="body2"
-                    color={result.success ? "success.main" : "warning.main"}
-                  >
-                    {result.partitionLabel}:{" "}
-                    {result.success ? "Success" : result.message}
-                  </Typography>
-                ))}
-              </Box>
+              partitionReadResults.map((r, i) => (
+                <Typography
+                  key={i}
+                  variant="body2"
+                  color={r.success ? "success.main" : "warning.main"}
+                >
+                  {r.partitionLabel}: {r.success ? "Success" : r.message}
+                </Typography>
+              ))
             )}
           </Box>
         );
@@ -490,15 +459,15 @@ const DiskImage: React.FC<DiskImageProps> = ({
     }
   };
 
-  // -------------------------------
-  // Final status UI (overrides the stepper if not "idle")
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Final status UI
+   * ------------------------------------------------------------- */
   if (finalInsertStatus === "loading") {
     return (
       <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
         <CircularProgress size={40} />
         <Typography variant="body2" sx={{ mt: 1 }}>
-          Saving preprocessing metadata...
+          Saving preprocessing metadata…
         </Typography>
       </Box>
     );
@@ -514,20 +483,13 @@ const DiskImage: React.FC<DiskImageProps> = ({
         <Box mt={2}>
           <Button
             variant="contained"
-            onClick={() => {
-              navigate(`/evidences/process/${evidenceData.id}`);
-            }}
+            onClick={() => navigate(`/evidences/process/${evidenceData.id}`)}
             sx={{ mr: 2 }}
           >
             Launch Processing Action
           </Button>
-          <Button
-            variant="outlined"
-            onClick={() => {
-              navigate(`/cases/`);
-            }}
-          >
-            I will start processing the evidence later.
+          <Button variant="outlined" onClick={() => navigate("/cases/")}>
+            I will start processing later
           </Button>
         </Box>
       </Box>
@@ -556,9 +518,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
     );
   }
 
-  // -------------------------------
-  // If finalInsertStatus is "idle", show Stepper
-  // -------------------------------
+  /* ---------------------------------------------------------------
+   *  Main render (stepper)
+   * ------------------------------------------------------------- */
   return (
     <Box>
       <Stepper activeStep={activeStep} orientation="vertical">
@@ -593,13 +555,9 @@ const DiskImage: React.FC<DiskImageProps> = ({
         ))}
       </Stepper>
 
-      {/* Navigation Buttons */}
+      {/* Navigation */}
       {activeStep >= 3 && activeStep < steps.length && (
-        <Button
-          disabled={activeStep === 0}
-          onClick={handleBack}
-          style={{ marginRight: "10px" }}
-        >
+        <Button onClick={handleBack} sx={{ mr: 2 }}>
           Back
         </Button>
       )}
@@ -607,7 +565,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
       {activeStep >= 2 && activeStep < steps.length && (
         <Button
           variant="contained"
-          color="primary"
           onClick={handleNext}
           disabled={
             (activeStep === 2 &&
@@ -620,14 +577,13 @@ const DiskImage: React.FC<DiskImageProps> = ({
         </Button>
       )}
 
-      {/* Keep "Finish" button */}
       {activeStep === steps.length && (
-        <Button variant="contained" color="primary" onClick={handleFinish}>
+        <Button variant="contained" onClick={handleFinish}>
           Finish
         </Button>
       )}
 
-      {/* Auto-step circular progress if steps < 2 and no current error */}
+      {/* Auto-step spinner for the first two steps */}
       {activeStep < 2 && !currentError && (
         <Box sx={{ display: "flex", alignItems: "center", mt: 2 }}>
           <CircularProgress size={30} />

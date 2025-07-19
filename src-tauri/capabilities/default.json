@@ -9,21 +9,7 @@
     "sql:default",
     "sql:allow-execute",
     "dialog:default",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "exec-sh",
-          "cmd": "sh",
-          "args": [
-            "-c",
-            {
-              "validator": ".+"
-            }
-          ],
-          "sidecar": false
-        }
-      ]
-    }
+    "pty:allow-spawn",
+    "pty:default"
   ]
 }

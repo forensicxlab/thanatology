@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import Grid from "@mui/material/Grid";
-import { start_processing } from "../processing/utils/diskimage";
 import {
   Box,
   Typography,
@@ -10,14 +9,16 @@ import {
   CardContent,
   Divider,
   Chip,
+  Link,
 } from "@mui/material";
-import Link from "@mui/material/Link";
+import { useNavigate } from "react-router";
 
 import Database from "@tauri-apps/plugin-sql";
 import { Evidence } from "../../../dbutils/types";
 import { getEvidence } from "../../../dbutils/sqlite";
 import DiskImage from "./DiskImage";
-import { useNavigate } from "react-router";
+import LogicalImage from "./LogicalImage";
+import { start_processing } from "../processing/utils/diskimage";
 import { useSnackbar } from "../../SnackbarProvider";
 
 interface PreProcessingProps {
@@ -27,6 +28,7 @@ interface PreProcessingProps {
 const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
   const navigate = useNavigate();
   const { display_message } = useSnackbar();
+
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const { id } = useParams<{ id: string }>();
 
@@ -37,8 +39,9 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
       })
       .catch((error: any) => {
         console.error("Error fetching evidence:", error);
+        display_message("error", `Error fetching evidence: ${error}`);
       });
-  }, [database, id]);
+  }, [database, id, display_message]);
 
   if (!evidence) {
     return (
@@ -53,11 +56,36 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
     );
   }
 
+  /**
+   * Decide which preprocessing wizard to show depending on the evidence type.
+   */
+  const renderPreprocessingComponent = () => {
+    switch (evidence.type) {
+      case "Logical Disk image":
+        return (
+          <LogicalImage
+            database={database}
+            evidenceData={evidence}
+            onComplete={start_processing}
+          />
+        );
+      default:
+        // Fallback to DiskImage for physical/raw disk images, memory dumps, etc.
+        return (
+          <DiskImage
+            database={database}
+            evidenceData={evidence}
+            onComplete={start_processing}
+          />
+        );
+    }
+  };
+
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       <Grid container spacing={3}>
-        {/* Left: Evidence Metadata */}
-        <Grid size={12}>
+        {/* Metadata */}
+        <Grid sx={{ xs: 12 }}>
           <Card sx={{ p: 2, bgcolor: "background.paper", boxShadow: 3 }}>
             <CardContent>
               <Typography variant="h6" color="secondary">
@@ -80,16 +108,13 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
                 <Link
                   component="button"
                   color="textPrimary"
-                  onClick={() => {
-                    location.replace(`/cases/${evidence.case_id}`);
-                  }}
+                  onClick={() => navigate(`/cases/${evidence.case_id}`)}
                 >
                   CASE-{evidence.case_id}
                 </Link>
               </Typography>
               <Typography variant="body1">
-                <strong>Path:</strong>
-                {evidence.path}
+                <strong>Path:</strong> {evidence.path}
               </Typography>
               <Typography variant="body1">
                 <strong>Description:</strong> {evidence.description}
@@ -98,17 +123,13 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
           </Card>
         </Grid>
 
-        {/* Right: Disk Image Component */}
-        <Grid size={12}>
+        {/* Preprocessing wizard (DiskImage or LogicalImage) */}
+        <Grid sx={{ xs: 12 }}>
           <Typography variant="h6" color="secondary" gutterBottom>
             Preprocessing
           </Typography>
           <Divider sx={{ my: 2 }} />
-          <DiskImage
-            database={database}
-            evidenceData={evidence}
-            onComplete={start_processing}
-          />
+          {renderPreprocessingComponent()}
         </Grid>
       </Grid>
     </Box>

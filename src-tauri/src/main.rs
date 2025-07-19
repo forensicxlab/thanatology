@@ -84,7 +84,7 @@ fn main() {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     case_id     INTEGER NOT NULL,
                     name        TEXT NOT NULL,
-                    type        TEXT NOT NULL CHECK (type IN ('Disk image', 'Memory Image', 'Procmon dump')),
+                    type        TEXT NOT NULL CHECK (type IN ('Physical Disk image', 'Logical Disk image', 'Memory Image', 'Procmon dump')),
                     path        TEXT NOT NULL,
                     description TEXT NOT NULL,
                     status      INTEGER NOT NULL DEFAULT 0,
@@ -130,6 +130,15 @@ fn main() {
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS logical_partition_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id        INTEGER NOT NULL,
+                    size               INTEGER NOT NULL,
+                    FOREIGN KEY (evidence_id)
+                        REFERENCES evidence(id)
+                        ON DELETE CASCADE
+                );
             "#,
             kind: MigrationKind::Up,
         },
@@ -152,6 +161,26 @@ fn main() {
         },
         Migration {
             version: 8,
+            description: "evidence_artifacts",
+            sql: r#"
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                evidence_id     INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                paths JSON NOT NULL,
+                parser TEXT,
+                tag TEXT NOT NULL,
+                category TEXT NOT NULL,
+                FOREIGN KEY (evidence_id)
+                    REFERENCES evidence(id)
+                    ON DELETE CASCADE
+            );
+            "#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
             description: "evidence_system_file",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS system_files (

@@ -78,6 +78,19 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
         console.error("Error fetching processing data", error);
         display_message("error", "Error fetching processing data");
       }
+
+      try {
+        const format: string = await invoke("process_artifacts", {
+          evidenceId: evidence.id,
+          dbPath: dbPath,
+        });
+        console.log(format);
+      } catch (error) {
+        console.error(
+          "Error While trying to launch the parsin of artefacts:",
+          error,
+        );
+      }
     }
     fetchPartitions();
   }, [evidence, display_message]);

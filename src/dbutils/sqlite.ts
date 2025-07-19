@@ -72,6 +72,18 @@ export async function createCaseAndEvidence(
         evidence.description,
       ],
     );
+
+    if (evidence.type === "Logical Disk image") {
+      await db.execute(
+        `
+          INSERT INTO logical_partition_entries (
+            evidence_id,
+            size,
+          ) VALUES ($1, $2)
+        `,
+        [evidence.id, metadata.selectedLogicalPartition.size],
+      );
+    }
   }
 
   return caseId;

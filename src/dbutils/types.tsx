@@ -1,35 +1,60 @@
+/* =========================================================================
+ *  Global shared types – updated to match new Rust structs
+ * ========================================================================= */
+
 export interface Evidence {
   id: number;
   case_id: number;
   name: string;
-  type: "Disk image" | "Memory Image" | "Procmon dump";
+  type:
+    | "Physical Disk image"
+    | "Logical Disk image"
+    | "Memory Image"
+    | "Procmon dump";
   path: string;
   description: string;
   status: number;
 }
 
-export interface Case {
+/* -------------------------------------------------------------------------
+ *  Partition-related structures
+ * --------------------------------------------------------------------- */
+
+/** One entry in an MBR (primary or logical / EBR) */
+export interface MBRPartitionEntry {
   id: number;
-  name: string;
+  boot_indicator: number;
+  start_chs: [number, number, number];
+  partition_type: number;
+  end_chs: [number, number, number];
+  start_lba: number;
+  size_sectors: number;
+  sector_size: number;
+  first_byte_addr: number;
   description: string;
-  collaborators: number[]; // Array of user IDs for collaborators
 }
 
-export interface FsInfo {
-  block_size: number;
-  filesystem_type: string;
-  metadata: Object;
+/** Master Boot Record sector */
+export interface MBR {
+  bootloader: number[];
+  partition_table: MBRPartitionEntry[];
+  boot_signature: number;
+  bootloader_disam: string;
 }
 
-export interface Partitions {
-  mbr: MBR;
-  ebr: MBRPartitionEntry[];
-  gpt: GPT;
-}
+/* ---------------------------  GPT  ------------------------------------ */
 
-export interface GPT {
-  header: GPTHeader;
-  partition_entries: GPTPartitionEntry[];
+export interface GPTPartitionEntry {
+  id: number;
+  partition_guid: number[];
+  partition_guid_string: string;
+  partition_type_guid: number[];
+  partition_type_guid_string: string;
+  starting_lba: number;
+  ending_lba: number;
+  attributes: number;
+  description: string;
+  partition_name: string;
 }
 
 export interface GPTHeader {
@@ -49,18 +74,28 @@ export interface GPTHeader {
   partition_array_crc32: number;
 }
 
-export interface GPTPartitionEntry {
-  id: number;
-  partition_guid: number[];
-  partition_guid_string: string;
-  partition_type_guid: number[];
-  partition_type_guid_string: string;
-  starting_lba: number;
-  ending_lba: number;
-  attributes: number;
-  description: string;
-  partition_name: string;
+export interface GPT {
+  header: GPTHeader;
+  partition_entries: GPTPartitionEntry[];
 }
+
+/* -------------------------  Combined view  --------------------------- */
+
+export interface Partitions {
+  /** Primary MBR (null when not present) */
+  mbr?: MBR | null;
+
+  /**
+   * Every discovered EBR sector, each parsed exactly like an MBR.
+   * Empty or null when no extended chain exists.
+   */
+  ebr?: MBR[] | null;
+
+  /** GPT layout (null when absent) */
+  gpt?: GPT | null;
+}
+
+/* --------------------------------------------------------------------- */
 
 export interface Module {
   id: string;
@@ -73,58 +108,42 @@ export interface Module {
   parent_id: number;
 }
 
-export interface ProcessDiskImage {
-  evidence: Evidence;
-  imageFormat: string; // RAW, EWF, ...
-  isFormatCompatible: boolean;
-  partitions: Partitions;
-  compatibleModules: Module[]; // Fetch this from our database
-  selectedModules: Module[];
-  status: string;
-  startDate: Date;
-  endDate: Date;
+export interface LogicalPartition {
+  id: number;
+  size: number;
 }
+
+/* --------------------------------  Workflows  ------------------------ */
 
 export interface ProcessedEvidenceMetadata {
   evidenceData: Evidence;
   diskImageFormat: string;
   selectedMbrPartitions: MBRPartitionEntry[];
   selectedGptPartitions: GPTPartitionEntry[];
+  /* left nullable – may be filled in later stages */
+  selectedLogicalPartition?: LogicalPartition;
   extractionModules: Module[];
 }
 
-export interface MBRPartitionEntry {
+/* Other helper types (unchanged) … */
+
+export interface Case {
   id: number;
-  boot_indicator: number;
-  start_chs: [number, number, number];
-  partition_type: number;
-  end_chs: [number, number, number];
-  start_lba: number;
-  size_sectors: number;
-  sector_size: number;
-  first_byte_addr: number;
+  name: string;
   description: string;
+  collaborators: number[];
 }
-
-export interface MBR {
-  bootloader: number[];
-  partition_table: [
-    MBRPartitionEntry,
-    MBRPartitionEntry,
-    MBRPartitionEntry,
-    MBRPartitionEntry,
-  ]; // Partition table (max 4 entries)
-  boot_signature: number;
-  bootloader_disam: String;
+export interface FsInfo {
+  block_size: number;
+  filesystem_type: string;
+  metadata: Record<string, unknown>;
 }
-
-// Define the File interface
 export interface File {
   id: number;
-  identifier: number; // Unique file identifier (inode, record number, etc.)
-  absolute_path: string; // Full path to the file
-  name: string; // File name
-  ftype: string; // File type
-  size: number; // File size in bytes
-  metadata: string; // Arbitrary metadata as key-value pairs
+  identifier: number;
+  absolute_path: string;
+  name: string;
+  ftype: string;
+  size: number;
+  metadata: string;
 }

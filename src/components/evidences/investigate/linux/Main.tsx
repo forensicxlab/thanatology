@@ -3,7 +3,6 @@ import { Evidence } from "../../../../dbutils/types";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
 import { getEvidence } from "../../../../dbutils/sqlite";
 import { useSnackbar } from "../../../SnackbarProvider";
 import { useParams } from "react-router";
@@ -127,27 +126,9 @@ const InvestigateLinux: React.FC = () => {
         />
       </Box>
 
-      <Box
-        sx={{
-          flexGrow: 1,
-          bgcolor: "background.paper",
-          display: "flex",
-        }}
-      >
+      <Box>
         {selectedPartition ? (
           <>
-            <Box
-              sx={{
-                position: "absolute",
-                mb: 10,
-                mr: 1,
-                bottom: "0",
-                right: "0",
-                zIndex: 1,
-              }}
-            >
-              <Terminal evidence={evidence} partitionId={selectedPartition} />
-            </Box>
             <Tabs
               sx={{
                 "& .MuiTabs-indicator": {
@@ -156,14 +137,9 @@ const InvestigateLinux: React.FC = () => {
                 "& .MuiTab-root.Mui-selected": {
                   color: "inherit",
                 },
-                borderRight: 1,
-                borderColor: "divider",
-                height: "90vh",
               }}
-              orientation="vertical"
               value={value}
               onChange={handleChange}
-              aria-label="Vertical tabs example"
             >
               <Tab
                 icon={<Home />}

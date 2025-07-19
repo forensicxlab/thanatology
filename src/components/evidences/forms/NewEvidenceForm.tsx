@@ -13,13 +13,21 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 export interface NewEvidenceFormProps {
   evidenceName: string;
-  evidenceType: "Disk image" | "Memory Image" | "Procmon dump";
+  evidenceType:
+    | "Physical Disk image"
+    | "Logical Disk image"
+    | "Memory Image"
+    | "Procmon dump";
   evidenceLocation: string;
   evidenceDescription: string;
   // Handlers for controlled fields:
   onEvidenceNameChange: (value: string) => void;
   onEvidenceTypeChange: (
-    value: "Disk image" | "Memory Image" | "Procmon dump",
+    value:
+      | "Physical Disk image"
+      | "Logical Disk image"
+      | "Memory Image"
+      | "Procmon dump",
   ) => void;
   onEvidenceLocationChange: (value: string) => void;
   onEvidenceDescriptionChange: (value: string) => void;
@@ -87,11 +95,17 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
           label="Evidence Type"
           onChange={(e) =>
             onEvidenceTypeChange(
-              e.target.value as "Disk image" | "Memory Image" | "Procmon dump",
+              e.target.value as
+                | "Physical Disk image"
+                | "Logical Disk image"
+                | "Memory Image"
+                | "Procmon dump",
             )
           }
         >
-          <MenuItem value="Disk image">Disk image</MenuItem>
+          <MenuItem value="Physical Disk image">Physical Disk image</MenuItem>
+          <MenuItem value="Logical Disk image">Logical Disk image</MenuItem>
+
           <MenuItem value="Memory Image" disabled>
             Memory Image
           </MenuItem>

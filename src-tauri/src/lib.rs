@@ -4,10 +4,12 @@ use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+use modules::th_artifacts::process_artifacts;
 use modules::th_dfi::process_filesystem;
 use modules::th_filesystem::get_fs_info;
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
+use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
+
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -317,6 +319,8 @@ pub fn run(init_migrations: Vec<Migration>) {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_pty::init())
         .invoke_handler(tauri::generate_handler![
             check_evidence_exists,
             check_disk_image_format,
@@ -330,6 +334,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             new_shell,
             read_chunk,
             file_size,
+            process_artifacts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
