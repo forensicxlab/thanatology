@@ -1,9 +1,12 @@
+use exhume_body::Body;
+use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
 use exhume_filesystem::{File, Filesystem};
+use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
-
 use log::{error, info};
 use sqlx::sqlite::Sqlite;
+use sqlx::sqlite::SqlitePool;
 use sqlx::types::Json;
 use sqlx::Pool;
 use std::collections::{HashSet, VecDeque};
@@ -64,7 +67,7 @@ where
     Ok(files)
 }
 
-pub async fn process_filesystem<T: Filesystem>(
+async fn index_filesystem<T: Filesystem>(
     fs: &mut T,
     evidence_id: i64,
     partition_id: i64,
@@ -206,4 +209,36 @@ pub async fn process_filesystem<T: Filesystem>(
         format!("Successfully ingested {total} items into the database."),
         app,
     );
+}
+
+pub async fn index_partition(
+    evidence_id: i64,
+    partition: MBRPartitionEntry,
+    disk_image_path: String,
+    pool: SqlitePool,
+    app: &AppHandle,
+) {
+    let mut body = Body::new(disk_image_path, "auto");
+    let sector_size = body.get_sector_size();
+    let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
+
+    let mut fs = match detect_filesystem(
+        &mut body,
+        partition.first_byte_addr as u64,
+        partition_size_bytes,
+    ) {
+        Ok(fs) => fs,
+        Err(err) => {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Could not detect the filesystem: {}", err.to_string()),
+                &app,
+            );
+            return;
+        }
+    };
+
+    index_filesystem(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
 }

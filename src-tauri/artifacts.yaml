@@ -1,16 +1,312 @@
 artifacts:
-  - name: "System Logs"
-    description: "System log files containing syslog messages"
+  - name: "System Logs – Syslog/Kern/Daemon"
+    description: "Core syslog-based log files capturing kernel, daemon and general system messages (Debian/Ubuntu & RHEL/Fedora paths)"
     paths:
-      - "/bin/log/syslog"
+      - "/var/log/syslog"
       - "/var/log/messages"
+      - "/var/log/kern.log"
+      - "/var/log/daemon.log"
     parser: "syslog"
     tag: "logs"
     category: "system"
 
-  - name: "Browser History"
-    description: "Firefox browsing history database"
+  - name: "Systemd Journal"
+    description: "Binary journal files produced by systemd-journald"
     paths:
-      - "/home/.*/.mozilla/firefox/.*/places.sqlite"
+      - "/var/log/journal"
+      - "/run/log/journal"
+    parser: "systemd_journal"
+    tag: "logs"
+    category: "system"
+
+  - name: "Kernel Ring Buffer (dmesg)"
+    description: "Boot-time and runtime kernel messages captured by dmesg"
+    paths:
+      - "/var/log/dmesg"
+    parser: "kernel_ring_buffer"
+    tag: "logs"
+    category: "system"
+
+  - name: "Boot Log"
+    description: "Boot process messages"
+    paths:
+      - "/var/log/boot.log"
+    parser: "bootlog"
+    tag: "logs"
+    category: "system"
+
+  - name: "Grub Configuration"
+    description: "GRUB bootloader configuration"
+    paths:
+      - "/boot/grub/grub.cfg"
+      - "/boot/grub2/grub.cfg"
+    parser: "grub_cfg"
+    tag: "boot"
+    category: "system"
+
+  - name: "Fstab"
+    description: "Static filesystem mount definitions"
+    paths:
+      - "/etc/fstab"
+    parser: "fstab"
+    tag: "config"
+    category: "system"
+
+  - name: "Mounted Filesystems"
+    description: "Snapshot of current mounts"
+    paths:
+      - "/proc/mounts"
+    parser: "mounts"
+    tag: "state"
+    category: "system"
+
+  - name: "DPKG Log"
+    description: "Package operations performed with dpkg"
+    paths:
+      - "/var/log/dpkg.log"
+    parser: "dpkg_log"
+    tag: "packages"
+    category: "system"
+
+  - name: "APT History Log"
+    description: "Transactions carried out with apt/apt-get"
+    paths:
+      - "/var/log/apt/history.log"
+      - "/var/log/apt/term.log"
+    parser: "apt_history"
+    tag: "packages"
+    category: "system"
+
+  - name: "YUM Log"
+    description: "Package-manager transactions on RHEL-based systems"
+    paths:
+      - "/var/log/yum.log"
+    parser: "yum_log"
+    tag: "packages"
+    category: "system"
+
+  - name: "DNF Log"
+    description: "Package-manager transactions on modern Fedora/RHEL systems"
+    paths:
+      - "/var/log/dnf.log"
+    parser: "dnf_log"
+    tag: "packages"
+    category: "system"
+
+  - name: "Pacman Log"
+    description: "Arch-based package-manager transactions"
+    paths:
+      - "/var/log/pacman.log"
+    parser: "pacman_log"
+    tag: "packages"
+    category: "system"
+
+  - name: "UFW Firewall Log"
+    description: "Ubuntu Uncomplicated Firewall events"
+    paths:
+      - "/var/log/ufw.log"
+    parser: "ufw_log"
+    tag: "logs"
+    category: "network"
+
+  - name: "SSH Server Configuration"
+    description: "OpenSSH daemon configuration"
+    paths:
+      - "/etc/ssh/sshd_config"
+    parser: "ssh_config"
+    tag: "config"
+    category: "network"
+
+  - name: "SSH Client Configuration"
+    description: "System-wide OpenSSH client configuration"
+    paths:
+      - "/etc/ssh/ssh_config"
+    parser: "ssh_config"
+    tag: "config"
+    category: "network"
+
+  - name: "SSH Known Hosts (System-wide)"
+    description: "Known host fingerprints for automated trust decisions"
+    paths:
+      - "/etc/ssh/ssh_known_hosts"
+    parser: "ssh_known_hosts"
+    tag: "config"
+    category: "network"
+
+  - name: "Resolver Configuration"
+    description: "DNS resolver settings"
+    paths:
+      - "/etc/resolv.conf"
+    parser: "resolv_conf"
+    tag: "config"
+    category: "network"
+
+  - name: "Hosts File"
+    description: "Static hostname mappings"
+    paths:
+      - "/etc/hosts"
+    parser: "hosts_file"
+    tag: "config"
+    category: "network"
+
+  - name: "Network Interfaces (Debian-style)"
+    description: "Legacy Debian network-interfaces configuration"
+    paths:
+      - "/etc/network/interfaces"
+    parser: "interfaces_file"
+    tag: "config"
+    category: "network"
+
+  - name: "Network Interfaces (Red Hat-style)"
+    description: "Red Hat network-scripts interface configuration"
+    paths:
+      - "/etc/sysconfig/network-scripts/ifcfg-eth0"
+    parser: "interfaces_file"
+    tag: "config"
+    category: "network"
+
+  - name: "Netplan Configuration"
+    description: "Modern Ubuntu network configuration"
+    paths:
+      - "/etc/netplan"
+    parser: "netplan_yaml"
+    tag: "config"
+    category: "network"
+
+  - name: "Passwd File"
+    description: "Local user-account definitions"
+    paths:
+      - "/etc/passwd"
+    parser: "passwd"
+    tag: "accounts"
+    category: "users"
+
+  - name: "Shadow File"
+    description: "Password hashes and aging information"
+    paths:
+      - "/etc/shadow"
+    parser: "shadow"
+    tag: "accounts"
+    category: "users"
+
+  - name: "Group File"
+    description: "Local group definitions"
+    paths:
+      - "/etc/group"
+    parser: "group"
+    tag: "accounts"
+    category: "users"
+
+  - name: "GShadow File"
+    description: "Secure group-membership information"
+    paths:
+      - "/etc/gshadow"
+    parser: "gshadow"
+    tag: "accounts"
+    category: "users"
+
+  - name: "Sudoers File"
+    description: "Privilege-escalation configuration"
+    paths:
+      - "/etc/sudoers"
+    parser: "sudoers"
+    tag: "config"
+    category: "users"
+
+  - name: "Login Records (WTMP/BTMP/UTMP)"
+    description: "Binary records of successful, failed and current logins"
+    paths:
+      - "/var/log/wtmp"
+      - "/var/log/btmp"
+      - "/var/run/utmp"
+    parser: "wtmp_btmp_utmp"
+    tag: "logs"
+    category: "users"
+
+  - name: "Last Log"
+    description: "Binary record of the last login for each user"
+    paths:
+      - "/var/log/lastlog"
+    parser: "lastlog"
+    tag: "logs"
+    category: "users"
+
+  - name: "Root Bash History"
+    description: "Command history for the root account"
+    paths:
+      - "/root/.bash_history"
+    parser: "history_bash"
     tag: "history"
+    category: "users"
+
+  - name: "Root Zsh History"
+    description: "Z-shell command history for the root account"
+    paths:
+      - "/root/.zsh_history"
+    parser: "history_zsh"
+    tag: "history"
+    category: "users"
+
+  - name: "Cron System Crontab"
+    description: "Primary system-wide scheduled tasks"
+    paths:
+      - "/etc/crontab"
+    parser: "cron_tab"
+    tag: "jobs"
+    category: "system"
+
+  - name: "Apache Access Log (Debian)"
+    description: "Inbound HTTP requests to Apache HTTP Server"
+    paths:
+      - "/var/log/apache2/access.log"
+    parser: "apache_access"
+    tag: "logs"
+    category: "application"
+
+  - name: "Apache Error Log (Debian)"
+    description: "Error messages from Apache HTTP Server"
+    paths:
+      - "/var/log/apache2/error.log"
+    parser: "apache_error"
+    tag: "logs"
+    category: "application"
+
+  - name: "Apache Access Log (RHEL)"
+    description: "Inbound HTTP requests to Apache HTTP Server"
+    paths:
+      - "/etc/httpd/logs/access_log"
+    parser: "apache_access"
+    tag: "logs"
+    category: "application"
+
+  - name: "Apache Error Log (RHEL)"
+    description: "Error messages from Apache HTTP Server"
+    paths:
+      - "/etc/httpd/logs/error_log"
+    parser: "apache_error"
+    tag: "logs"
+    category: "application"
+
+  - name: "NGINX Access Log"
+    description: "Inbound HTTP requests handled by NGINX"
+    paths:
+      - "/var/log/nginx/access.log"
+    parser: "nginx_access"
+    tag: "logs"
+    category: "application"
+
+  - name: "NGINX Error Log"
+    description: "Error messages produced by NGINX"
+    paths:
+      - "/var/log/nginx/error.log"
+    parser: "nginx_error"
+    tag: "logs"
+    category: "application"
+
+  - name: "Docker Container JSON Logs"
+    description: "Default JSON logs emitted by Docker containers"
+    paths:
+      - "/var/lib/docker/containers"
+    parser: "docker_json_log"
+    tag: "logs"
     category: "application"

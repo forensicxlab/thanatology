@@ -1,14 +1,15 @@
-mod modules;
 use env_logger;
 use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
-use modules::th_artifacts::process_artifacts;
-use modules::th_dfi::process_filesystem;
-use modules::th_filesystem::get_fs_info;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
+use sqlx::sqlite::SqlitePool;
+pub mod modules;
+
+use modules::th_artifacts::process_artifacts;
+use modules::th_filesystem::get_fs_info;
+use modules::th_index::index_partition;
 
 use std::{
     fs::File,
@@ -151,19 +152,20 @@ fn process_partitions(
         };
 
         let total_partitions = mbr_partitions.len() as u64 + gpt_partitions.len() as u64;
-
-        for (index, partition) in mbr_partitions.into_iter().enumerate() {
+        // MODULE 0 - Indexation: Needs to be fast and dumm. Other modules will take their time to do the smart stuff later
+        // But we want the investigator to be able to jump into the analysis as soon as possible.
+        for (index, partition) in mbr_partitions.clone().into_iter().enumerate() {
             // Emit phase message
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Info,
-                format!("Processing partition {}/{}", index + 1, total_partitions),
+                format!("Indexing partition {}/{}", index + 1, total_partitions),
                 &app,
             );
 
             // Process the partition
-            process_partition(
+            index_partition(
                 evidence_id,
                 partition,
                 disk_image_path.clone(),
@@ -187,43 +189,30 @@ fn process_partitions(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Success,
-                "Succesfully parsed all of the partitions.",
+                "Succesfully indexed all of the partitions.",
                 &app,
             );
+        }
+
+        // Once the indexation part is finished the user will be able to review the evidence but
+        // in the background, we still execute the other parsing modules that are smarter (so a bit slower).
+        // We give information about the progress via the same emit channel.
+        // Thanatology will keep track of the executing tasks via the evidence id + status.
+
+        for (index, partition) in mbr_partitions.into_iter().enumerate() {
+            // Module 1 - Artifact Parsing => Should be fast. Once done, the status will be updated to 4.
+            process_artifacts(
+                evidence_id,
+                partition,
+                disk_image_path.clone(),
+                pool.clone(),
+                &app,
+            )
+            .await;
+            // Module 2 - File Identification => Will be slow. Once done the status will be updated to 5.
+            // Module 3 - TBD => We can add more status here.
         }
     });
-}
-
-async fn process_partition(
-    evidence_id: i64,
-    partition: MBRPartitionEntry,
-    disk_image_path: String,
-    pool: SqlitePool,
-    app: &AppHandle,
-) {
-    let mut body = Body::new(disk_image_path, "auto");
-    let sector_size = body.get_sector_size();
-    let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
-
-    let mut fs = match detect_filesystem(
-        &mut body,
-        partition.first_byte_addr as u64,
-        partition_size_bytes,
-    ) {
-        Ok(fs) => fs,
-        Err(err) => {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Could not detect the filesystem: {}", err.to_string()),
-                &app,
-            );
-            return;
-        }
-    };
-
-    process_filesystem(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
 }
 
 #[tauri::command]
@@ -334,7 +323,6 @@ pub fn run(init_migrations: Vec<Migration>) {
             new_shell,
             read_chunk,
             file_size,
-            process_artifacts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

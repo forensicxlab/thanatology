@@ -12,11 +12,10 @@ import {
   MBRPartitionEntry,
   ProcessedEvidenceMetadata,
 } from "../../../dbutils/types";
-import MBRPartition from "./MBRPartition";
-import GPTPartition from "./GPTPartition";
-
+import MBRPartition from "../common/MBRPartition";
+import GPTPartition from "../common/GPTPartition";
+import ProcessingTask from "./ProcessingTask";
 import { appLocalDataDir } from "@tauri-apps/api/path";
-import { listen } from "@tauri-apps/api/event";
 import {
   getSelectedPartitions,
   setProcessingInProgress,
@@ -37,12 +36,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
-
-  const [mainProgress, setMainProgress] = useState<string>("");
-  const [mainProgressColor, setMainProgressColor] = useState<string>("info");
-  const [moduleProgress, setModuleProgress] = useState<string>("");
-  const [moduleProgressColor, setModuleProgressColor] =
-    useState<string>("info");
   const [processing, setProcessing] = useState<boolean>(false);
   const [dbPath, setDbPath] = useState<string>("");
 
@@ -71,25 +64,11 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
         setMbrPartitions(mbrRows);
         setGptPartitions(fetchedPartitions.gptRows);
-        console.log(mbrRows);
         const appLocalDataDirPath = await appLocalDataDir();
         setDbPath(`${appLocalDataDirPath}/thanatology.db`);
       } catch (error) {
         console.error("Error fetching processing data", error);
         display_message("error", "Error fetching processing data");
-      }
-
-      try {
-        const format: string = await invoke("process_artifacts", {
-          evidenceId: evidence.id,
-          dbPath: dbPath,
-        });
-        console.log(format);
-      } catch (error) {
-        console.error(
-          "Error While trying to launch the parsin of artefacts:",
-          error,
-        );
       }
     }
     fetchPartitions();
@@ -115,70 +94,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       setProcessing(true);
     }
 
-    const main_progress_info_listener = listen<any>(
-      `main_progress_info_${evidence.id}`,
-      (event) => {
-        console.log("Main info:", event.payload);
-        setMainProgress(event.payload);
-        setMainProgressColor("secondary");
-      },
-    );
-
-    const main_progress_success_listener = listen<any>(
-      `main_progress_success_${evidence.id}`,
-      (event) => {
-        console.log("Main success:", event.payload);
-        setMainProgress(event.payload);
-        setMainProgressColor("green");
-        fetchEvidence();
-      },
-    );
-
-    const main_progress_error_listener = listen<any>(
-      `main_progress_error_${evidence.id}`,
-      (event) => {
-        console.log("Main error:", event.payload);
-        setMainProgress(event.payload);
-        setMainProgressColor("danger");
-      },
-    );
-
-    const module_progress_error_listener = listen<any>(
-      `module_progress_error_${evidence.id}`,
-      (event) => {
-        console.log("Module error:", event.payload);
-        setModuleProgress(event.payload);
-        setModuleProgressColor("danger");
-      },
-    );
-
-    const module_progress_info_listener = listen<any>(
-      `module_progress_info_${evidence.id}`,
-      (event) => {
-        console.log("Module info:", event.payload);
-        setModuleProgress(event.payload);
-        setModuleProgressColor("info");
-      },
-    );
-
-    // Listen to completion of progress
-    const module_progress_success_listener = listen<any>(
-      `module_progress_success_${evidence.id}`,
-      (event) => {
-        console.log("Module success:", event.payload);
-        setModuleProgress(event.payload);
-        setModuleProgressColor("green");
-      },
-    );
-
-    return () => {
-      main_progress_info_listener.then((unlisten) => unlisten());
-      main_progress_success_listener.then((unlisten) => unlisten());
-      main_progress_error_listener.then((unlisten) => unlisten());
-      module_progress_success_listener.then((unlisten) => unlisten());
-      module_progress_error_listener.then((unlisten) => unlisten());
-      module_progress_info_listener.then((unlisten) => unlisten());
-    };
+    return;
   }, [display_message]);
 
   const handleStartProcessing = async () => {
@@ -234,8 +150,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       );
       setProcessing(false);
     }
-
-    // Note: Success message and processing state are handled by event listeners
   };
 
   // If processing is complete, display a dedicated completion screen
@@ -244,10 +158,11 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       <Box sx={{ textAlign: "center", mt: 4 }}>
         <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
         <Typography variant="h5" gutterBottom>
-          Extraction Completed
+          Disk Indexing Completed
         </Typography>
         <Typography variant="body1">
-          The processing of the evidence is now completed.
+          The indexation process of the evidence is now completed. You can
+          already start your investigation while the other modules are running.
         </Typography>
       </Box>
     );
@@ -286,19 +201,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       )}
 
       {evidence.status === 2 && (
-        <Paper sx={{ p: 2, mb: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Module Execution
-          </Typography>
-          <Box sx={{ width: "100%", mt: 1 }}>
-            <Typography variant="subtitle1" color={mainProgressColor}>
-              {mainProgress}
-            </Typography>
-            <Typography variant="caption" color={moduleProgressColor}>
-              {moduleProgress}
-            </Typography>
-          </Box>
-        </Paper>
+        <ProcessingTask evidenceId={evidence.id} onComplete={fetchEvidence} />
       )}
       <Box sx={{ textAlign: "center", mt: 2 }}>
         <Button

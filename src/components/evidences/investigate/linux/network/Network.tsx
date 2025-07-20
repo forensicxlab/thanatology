@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo } from "react";
+import Artifacts from "../../Artifacts";
 
 interface NetworkProps {
   evidenceId: number;
@@ -6,7 +7,13 @@ interface NetworkProps {
 }
 
 const Network: React.FC<NetworkProps> = ({ evidenceId, partitionId }) => {
-  return <></>;
+  return (
+    <Artifacts
+      evidence_id={evidenceId}
+      partition_id={partitionId}
+      category="Network"
+    />
+  );
 };
 
 export default Network;

@@ -161,26 +161,6 @@ fn main() {
         },
         Migration {
             version: 8,
-            description: "evidence_artifacts",
-            sql: r#"
-            CREATE TABLE IF NOT EXISTS artifacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                evidence_id     INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL,
-                paths JSON NOT NULL,
-                parser TEXT,
-                tag TEXT NOT NULL,
-                category TEXT NOT NULL,
-                FOREIGN KEY (evidence_id)
-                    REFERENCES evidence(id)
-                    ON DELETE CASCADE
-            );
-            "#,
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 9,
             description: "evidence_system_file",
             sql: r#"
                 CREATE TABLE IF NOT EXISTS system_files (
@@ -197,6 +177,30 @@ fn main() {
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
                 );
+            "#,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "evidence_artifacts",
+            sql: r#"
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                evidence_id     INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                partition_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                parser TEXT,
+                tag TEXT NOT NULL,
+                category TEXT NOT NULL,
+                FOREIGN KEY (evidence_id)
+                    REFERENCES evidence(id)
+                    ON DELETE CASCADE
+                FOREIGN KEY (file_id)
+                    REFERENCES system_files(id)
+                    ON DELETE CASCADE
+            );
             "#,
             kind: MigrationKind::Up,
         },

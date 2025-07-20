@@ -30,7 +30,7 @@ export interface MBRPartitionEntry {
   start_lba: number;
   size_sectors: number;
   sector_size: number;
-  first_byte_addr: number;
+  first_byte_address: number;
   description: string;
 }
 

@@ -1,18 +1,19 @@
 import React, { useCallback, useMemo } from "react";
 import Artifacts from "../../Artifacts";
-interface SystemProps {
+
+interface UsersProps {
   evidenceId: number;
   partitionId: number;
 }
 
-const System: React.FC<SystemProps> = ({ evidenceId, partitionId }) => {
+const Users: React.FC<UsersProps> = ({ evidenceId, partitionId }) => {
   return (
     <Artifacts
       evidence_id={evidenceId}
       partition_id={partitionId}
-      category="System"
+      category="Users"
     />
   );
 };
 
-export default System;
+export default Users;

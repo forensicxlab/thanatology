@@ -291,7 +291,7 @@ export async function savePreprocessingMetadata(
         partition.start_lba,
         partition.size_sectors,
         partition.sector_size,
-        partition.first_byte_addr,
+        partition.first_byte_address,
         partition.description,
       ],
     );
@@ -510,4 +510,47 @@ export async function searchFiles(
     pattern,
   ]);
   return files;
+}
+
+export async function fetchArtifactsByCategory(
+  db: Database | null,
+  category: string,
+  evidenceId: number,
+  partitionId: number,
+): Promise<any[]> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+
+  const query = `
+    SELECT
+      artifacts.id AS artifact_id,
+      artifacts.name AS artifact_name,
+      artifacts.description,
+      artifacts.parser,
+      artifacts.tag,
+      artifacts.category,
+      system_files.id AS file_id,
+      system_files.identifier AS identifier,
+      system_files.absolute_path,
+      system_files.name AS file_name,
+      system_files.ftype,
+      system_files.size,
+      system_files.metadata
+    FROM
+      artifacts
+    INNER JOIN
+      system_files ON artifacts.file_id = system_files.id
+    WHERE
+      artifacts.category = $1 AND
+      artifacts.evidence_id = $2 AND
+      artifacts.partition_id = $3
+  `;
+
+  const rows = (await db.select(query, [
+    category,
+    evidenceId,
+    partitionId,
+  ])) as any[];
+  return rows;
 }

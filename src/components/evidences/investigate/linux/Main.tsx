@@ -21,6 +21,8 @@ import System from "./system/System";
 import Network from "./network/Network";
 import { PartitionSelection } from "../PartitionSelection";
 import Terminal from "../../../Terminal";
+import Users from "./users/Users";
+import Applications from "./applications/Applications";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -252,13 +254,19 @@ const InvestigateLinux: React.FC = () => {
                 />
               </TabPanel>
               <TabPanel value={value} index={3}>
-                {/* Users content */}
+                <Users
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
               </TabPanel>
               <TabPanel value={value} index={4}>
                 Multimedia content
               </TabPanel>
               <TabPanel value={value} index={5}>
-                Applications content
+                <Applications
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
               </TabPanel>
               <TabPanel value={value} index={6}>
                 Timeline content

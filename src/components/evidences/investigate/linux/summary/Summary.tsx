@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Grid from "@mui/material/Grid";
+import { Box } from "@mui/material";
 import { useSnackbar } from "../../../../SnackbarProvider";
 import {
   Evidence,
@@ -8,9 +9,10 @@ import {
 } from "../../../../../dbutils/types";
 import { getSelectedPartitions } from "../../../../../dbutils/sqlite";
 
-import MBRPartition from "../../../processing/MBRPartition";
-import GPTPartition from "../../../processing/GPTPartition";
-//import FileSystem from "./FileSystem"; // keep commented for now
+import MBRPartition from "../../../common/MBRPartition";
+import GPTPartition from "../../../common/GPTPartition";
+import ProcessingTask from "../../../processing/ProcessingTask";
+import FileSystem from "./FileSystem";
 
 /* ------------------------------------------------------------------ */
 interface SummaryProps {
@@ -28,7 +30,6 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
 
   /* --------------------------------------------------------------- */
   useEffect(() => {
-    /* no partition selected → clear state */
     if (partitionId === null) {
       setPartition(null);
       return;
@@ -36,13 +37,11 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
 
     const fetchPartition = async () => {
       try {
-        /* 1️⃣  Fetch **all** selected partitions for THIS evidence     */
         const { mbrRows, gptRows } = await getSelectedPartitions(
-          evidence.id, //  ⬅️  correct argument
+          evidence.id,
           null,
         );
 
-        /* 2️⃣  Find the specific row by ID                            */
         const mbrMatch = mbrRows.find((p) => p.id === partitionId);
         const gptMatch = gptRows.find((p) => p.id === partitionId);
 
@@ -69,24 +68,38 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
   if (!partition) return null;
 
   return (
-    <Grid container spacing={2}>
-      <Grid sx={{ xs: 12, md: 12, lg: 12 }}>
-        {isMbr ? (
-          <MBRPartition
-            mbrPartition={partition as MBRPartitionEntry}
-            index={0}
-          />
-        ) : (
-          <GPTPartition
-            gptPartition={partition as GPTPartitionEntry}
-            index={0}
-          />
-        )}
+    <Grid container spacing={1}>
+      <Grid size={{ lg: 6, md: 12, sm: 12, xs: 12 }}>
+        <Grid container spacing={2}>
+          <Grid size={12}>
+            {isMbr ? (
+              <MBRPartition
+                mbrPartition={partition as MBRPartitionEntry}
+                index={0}
+              />
+            ) : (
+              <GPTPartition
+                gptPartition={partition as GPTPartitionEntry}
+                index={0}
+              />
+            )}
+          </Grid>
+          <Grid size={12}>
+            <FileSystem
+              path={evidence.path}
+              partition={partition as MBRPartitionEntry}
+            />
+          </Grid>
+        </Grid>
       </Grid>
 
-      <Grid sx={{ xs: 12, md: 12, lg: 12 }}>
-        {/* <FileSystem path={evidence.path} partition={partition} /> */}
-      </Grid>
+      {evidence.status > 1 ? (
+        <Grid size={{ lg: 6, md: 12, sm: 12, xs: 12 }}>
+          <ProcessingTask evidenceId={evidence.id} />
+        </Grid>
+      ) : (
+        <></>
+      )}
     </Grid>
   );
 };

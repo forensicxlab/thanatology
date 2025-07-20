@@ -19,16 +19,7 @@ import {
 } from "@mui/icons-material";
 import Tooltip from "@mui/material/Tooltip";
 import { useNavigate } from "react-router";
-
-export type Evidence = {
-  id: number;
-  case_id: number;
-  name: string;
-  type: "Disk image" | "Memory Image" | "Procmon dump";
-  path: string;
-  description: string;
-  status: number; // Assuming status is either 0 or 1
-};
+import { Evidence } from "../../../dbutils/types";
 
 interface EvidenceListProps {
   evidences: Evidence[];
@@ -39,18 +30,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
   evidences,
   onSelectionChange,
 }) => {
-  const apiRef = useGridApiRef();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    if (apiRef.current) {
-      apiRef.current.autosizeColumns({
-        columns: ["id", "name", "type", "description", "status"],
-        includeOutliers: true,
-        includeHeaders: true,
-      });
-    }
-  }, [evidences, apiRef]);
 
   const columns: GridColDef[] = [
     {
@@ -207,10 +187,14 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
         rows={evidences}
         columns={columns}
         checkboxSelection
-        onRowSelectionModelChange={(newSelection: GridRowSelectionModel) => {
-          onSelectionChange(newSelection as number[]);
+        onRowSelectionModelChange={(newSelection) =>
+          onSelectionChange([...newSelection.ids] as number[])
+        }
+        autosizeOptions={{
+          columns: ["id", "name", "type", "description", "status", "actions"],
+          includeOutliers: true,
+          includeHeaders: true,
         }}
-        autosizeOnMount
         disableRowSelectionOnClick
       />
     </div>

@@ -47,6 +47,10 @@ const MBRPartition: React.FC<MBRPartitionProps> = ({ mbrPartition, index }) => {
         {`0x${mbrPartition.start_lba.toString(16).toUpperCase()}`}
       </Typography>
       <Typography variant="body2">
+        <strong>Start Offset:</strong>{" "}
+        {`0x${mbrPartition.first_byte_address.toString(16).toUpperCase()}`}
+      </Typography>
+      <Typography variant="body2">
         <strong>Size (sectors):</strong>{" "}
         {`0x${mbrPartition.size_sectors.toString(16).toUpperCase()}`}
       </Typography>

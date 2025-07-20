@@ -1,8 +1,15 @@
 use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
-use exhume_filesystem::filesystem::{Filesystem, FsInfo};
+use exhume_filesystem::filesystem::Filesystem;
 use serde::{Deserialize, Serialize};
-use serde_json;
+use serde_json::Value;
+
+#[derive(Serialize, Deserialize)]
+pub struct FsInfo {
+    pub filesystem_type: String,
+    pub block_size: u64,
+    pub metadata: Value,
+}
 
 #[tauri::command]
 pub fn get_fs_info(path: String, offset: u64, size: u64) -> Result<FsInfo, String> {
@@ -17,13 +24,13 @@ pub fn get_fs_info(path: String, offset: u64, size: u64) -> Result<FsInfo, Strin
         }
     };
 
-    let fs_type = fs.filesystem_type();
+    let filesystem_type = fs.filesystem_type();
     let block_size = fs.block_size();
-    //let metadata = fs.read_superblock();
+    let metadata = fs.get_metadata().unwrap();
     let info = FsInfo {
-        filesystem_type: fs_type,
-        block_size: block_size,
-        metadata: serde_json::Value::String("X".to_string()),
+        filesystem_type,
+        block_size,
+        metadata,
     };
 
     Ok(info)
