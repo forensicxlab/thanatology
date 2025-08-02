@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Grid from "@mui/material/Grid";
-import { Box } from "@mui/material";
+import { Box, Divider } from "@mui/material";
 import { useSnackbar } from "../../../../SnackbarProvider";
 import {
   Evidence,
@@ -95,7 +95,12 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
 
       {evidence.status > 1 ? (
         <Grid size={{ lg: 6, md: 12, sm: 12, xs: 12 }}>
-          <ProcessingTask evidenceId={evidence.id} />
+          <ProcessingTask
+            status={evidence.status}
+            evidenceName={evidence.name}
+            evidenceId={evidence.id}
+          />
+          <Divider />
         </Grid>
       ) : (
         <></>

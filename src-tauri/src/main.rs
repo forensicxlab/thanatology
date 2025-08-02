@@ -110,7 +110,7 @@ fn main() {
                     partition_type     INTEGER NOT NULL,
                     size_sectors       INTEGER NOT NULL,
                     sector_size        INTEGER NOT NULL,
-                    first_byte_address INTEGER NOT NULL,
+                    first_byte_addr INTEGER NOT NULL,
                     description        TEXT NOT NULL,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
@@ -172,6 +172,15 @@ fn main() {
                     name            TEXT    NOT NULL,
                     ftype           TEXT    NOT NULL,
                     size            INTEGER NOT NULL,
+                    created         INTEGER,
+                    modified        INTEGER,
+                    accessed        INTEGER,
+                    permissions     TEXT,
+                    owner           TEXT,
+                    "group"         TEXT,
+                    sig_name        TEXT,
+                    sig_mime TEXT,
+                    sig_exts TEXT,
                     metadata        JSON    NOT NULL,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)

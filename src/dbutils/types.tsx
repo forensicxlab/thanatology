@@ -30,7 +30,7 @@ export interface MBRPartitionEntry {
   start_lba: number;
   size_sectors: number;
   sector_size: number;
-  first_byte_address: number;
+  first_byte_addr: number;
   description: string;
 }
 
@@ -146,4 +146,29 @@ export interface File {
   ftype: string;
   size: number;
   metadata: string;
+}
+
+export interface ArtifactWithFile {
+  artifact_id: number;
+  artifact_name: string;
+  description: string;
+  parser: string | null;
+  tag: string;
+  category: string;
+  file_id: number;
+  identifer: number;
+  absolute_path: string;
+  file_name: string;
+  ftype: string;
+  size: number;
+  created: number;
+  modified: number;
+  accessed: number;
+  permissions: string;
+  owner: string;
+  group: string;
+  metadata: string;
+  sig_name: string;
+  sig_mime: string;
+  sig_exts: string;
 }

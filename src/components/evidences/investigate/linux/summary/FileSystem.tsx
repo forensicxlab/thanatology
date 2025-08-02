@@ -26,7 +26,7 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
       try {
         const info: FsInfo = await invoke("get_fs_info", {
           path: path,
-          offset: partition.first_byte_address,
+          offset: partition.first_byte_addr,
           size: partition.sector_size * partition.size_sectors,
         });
         setFsInfo(info);

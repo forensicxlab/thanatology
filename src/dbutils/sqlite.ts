@@ -278,7 +278,7 @@ export async function savePreprocessingMetadata(
           start_lba,
           size_sectors,
           sector_size,
-          first_byte_address,
+          first_byte_addr,
           description
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
@@ -291,7 +291,7 @@ export async function savePreprocessingMetadata(
         partition.start_lba,
         partition.size_sectors,
         partition.sector_size,
-        partition.first_byte_address,
+        partition.first_byte_addr,
         partition.description,
       ],
     );
@@ -536,6 +536,15 @@ export async function fetchArtifactsByCategory(
       system_files.name AS file_name,
       system_files.ftype,
       system_files.size,
+      system_files.created,
+      system_files.modified,
+      system_files.accessed,
+      system_files.permissions,
+      system_files."group",
+      system_files.owner,
+      system_files.sig_name,
+      system_files.sig_mime,
+      system_files.sig_exts,
       system_files.metadata
     FROM
       artifacts
@@ -552,5 +561,6 @@ export async function fetchArtifactsByCategory(
     evidenceId,
     partitionId,
   ])) as any[];
+  console.log(rows);
   return rows;
 }

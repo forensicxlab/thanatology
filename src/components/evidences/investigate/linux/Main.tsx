@@ -117,6 +117,7 @@ const InvestigateLinux: React.FC = () => {
         sx={{
           position: "absolute",
           mr: 1,
+          mb: 5,
           bottom: "0",
           right: "0",
           zIndex: 1,

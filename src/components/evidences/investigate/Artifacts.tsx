@@ -16,34 +16,15 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate } from "react-router";
 import Database from "@tauri-apps/plugin-sql";
-
+import UnixToUTC from "./linux/UnixToUTC";
 import { fetchArtifactsByCategory } from "../../../dbutils/sqlite";
 import * as ReactDOM from "react-dom";
-
+import { ArtifactWithFile } from "../../../dbutils/types";
 /* ------------------------------------------------------------------ */
 /* Utility                                                             */
 /* ------------------------------------------------------------------ */
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
-interface ArtifactWithFile {
-  artifact_id: number;
-  artifact_name: string;
-  description: string;
-  parser: string | null;
-  tag: string;
-  category: string;
-  file_id: number;
-  identifer: number;
-  absolute_path: string;
-  file_name: string;
-  ftype: string;
-  size: number;
-  metadata: string;
 }
 
 interface ArtifactsProps {
@@ -119,6 +100,8 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         partition_id,
       )) as ArtifactWithFile[];
 
+      console.log(data);
+
       /* Flush the row update synchronously so the DOM is updated immediately */
       ReactDOM.flushSync(() => {
         setLoading(false);
@@ -133,9 +116,16 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         columns: [
           "identifier",
           "tag",
+          "sig_mime",
           "artifact_name",
           "absolute_path",
           "size",
+          "created",
+          "modified",
+          "accessed",
+          "permissions",
+          "group",
+          "owner",
           "actions",
         ],
         includeOutliers: true,
@@ -144,6 +134,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
     } catch (err) {
       setLoading(false);
       setError((err as Error).message || "Unknown error");
+      console.log(error);
     }
   }, [apiRef, category, evidence_id, partition_id]);
 
@@ -156,7 +147,66 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   const columns: GridColDef[] = useMemo(
     () => [
       { field: "identifier", headerName: "File Identifier" },
-      { field: "absolute_path", headerName: "File" },
+
+      {
+        field: "sig_mime",
+        headerName: "MIME",
+        renderCell: (params: GridRenderCellParams) => (
+          <Chip
+            label={params.value}
+            size="small"
+            color="primary"
+            variant="outlined"
+          />
+        ),
+      },
+
+      {
+        field: "permissions",
+        headerName: "Permissions",
+      },
+
+      {
+        field: "group",
+        headerName: "Group",
+      },
+
+      {
+        field: "owner",
+        headerName: "Owner",
+      },
+
+      {
+        field: "created",
+        headerName: "Created",
+        renderCell: (params: GridRenderCellParams) => (
+          <UnixToUTC timestamp={params.value} />
+        ),
+      },
+
+      {
+        field: "modified",
+        headerName: "Modified",
+        renderCell: (params: GridRenderCellParams) => (
+          <UnixToUTC timestamp={params.value} />
+        ),
+      },
+
+      {
+        field: "accessed",
+        headerName: "Accessed",
+        renderCell: (params: GridRenderCellParams) => (
+          <UnixToUTC timestamp={params.value} />
+        ),
+      },
+
+      {
+        field: "absolute_path",
+        headerName: "File",
+        renderCell: (params: GridRenderCellParams) => (
+          <div style={{ color: "orange" }}>{params.value}</div>
+        ),
+      },
 
       {
         field: "tag",
@@ -210,29 +260,27 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   /* Render */
   return (
     <Box sx={{ width: "100%" }}>
-      <div style={{ width: "100%" }}>
-        <DataGridPro
-          apiRef={apiRef}
-          density="compact"
-          columns={columns}
-          rows={rows}
-          getRowId={(r) => r.artifact_id}
-          loading={loading}
-          rowHeight={50}
-          showToolbar
-          disableRowSelectionOnClick
-          getDetailPanelContent={getDetailPanelContent}
-          getDetailPanelHeight={getDetailPanelHeight}
-          initialState={{
-            pinnedColumns: { left: [GRID_DETAIL_PANEL_TOGGLE_FIELD] },
-          }}
-          sx={{
-            "& .MuiDataGrid-detailPanel": {
-              overflow: "visible",
-            },
-          }}
-        />
-      </div>
+      <DataGridPro
+        apiRef={apiRef}
+        density="compact"
+        columns={columns}
+        rows={rows}
+        getRowId={(r) => r.artifact_id}
+        loading={loading}
+        rowHeight={50}
+        showToolbar
+        disableRowSelectionOnClick
+        getDetailPanelContent={getDetailPanelContent}
+        getDetailPanelHeight={getDetailPanelHeight}
+        initialState={{
+          pinnedColumns: { left: [GRID_DETAIL_PANEL_TOGGLE_FIELD] },
+        }}
+        sx={{
+          "& .MuiDataGrid-detailPanel": {
+            overflow: "visible",
+          },
+        }}
+      />
     </Box>
   );
 };

@@ -20,7 +20,7 @@ import {
   Button,
   Stack,
 } from "@mui/material";
-import HexViewer, { HexViewerHandle } from "./HexViewer";
+import HexViewer, { ByteRange, HexViewerHandle } from "./HexViewer";
 
 /* ──────────────────── Helpers ──────────────────── */
 
@@ -35,6 +35,20 @@ const parseHexInput = (input: string): number | null => {
 /** Human-readable file-size (“12 345 678 bytes”) */
 const formatFileSize = (bytes: number) => `${bytes.toLocaleString()} bytes`;
 
+/* ──────────────────── Inspector helpers ──────────────────── */
+
+interface InspectorValues {
+  int8?: number;
+  int16?: number;
+  int24?: number;
+  int32?: number;
+  float32?: number;
+  int64?: bigint;
+}
+
+const toHex = (n: number | bigint | undefined) =>
+  n === undefined ? "-" : "0x" + n.toString(16).toUpperCase();
+
 /* ──────────────────── Constants ──────────────────── */
 
 const drawerWidthLeft = 260;
@@ -42,12 +56,12 @@ const drawerWidthRight = 300;
 
 /* ──────────────────── Component ──────────────────── */
 
-interface HexEditorProps {
+interface HexViewerWindowProps {
   /** Absolute or app-relative file path */
   path: string;
 }
 
-const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
+const HexViewerWindow = forwardRef<HexViewerHandle, HexViewerWindowProps>(
   ({ path }, ref) => {
     const viewerRef = useRef<HexViewerHandle>(null);
 
@@ -55,6 +69,10 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
     const [gotoOffset, setGotoOffset] = useState("");
     const [searchPattern, setSearchPattern] = useState("");
     const [fileSize, setFileSize] = useState<number | null>(null);
+
+    /* Selection & inspector */
+    const [selection, setSelection] = useState<ByteRange | null>(null);
+    const [inspector, setInspector] = useState<InspectorValues>({});
 
     /* ─────────────── File-size refresh ─────────────── */
     const refreshFileSize = useCallback(async () => {
@@ -107,6 +125,52 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
       if (pat.length) viewerRef.current?.search(pat, { backward: true });
     };
 
+    /* ─────────────── Selection → Inspector ─────────────── */
+    useEffect(() => {
+      let cancelled = false;
+
+      const computeInspector = async () => {
+        if (!selection) {
+          setInspector({});
+          return;
+        }
+        const length = selection.end - selection.start + 1;
+        const readLen = Math.min(8, length); // we never need more than 8 bytes
+        try {
+          const data: number[] = await invoke("read_chunk", {
+            path,
+            offset: selection.start,
+            length: readLen,
+          });
+          if (cancelled) return;
+          const buf = Uint8Array.from(data);
+          const dv = new DataView(buf.buffer);
+
+          const vals: InspectorValues = {};
+          if (buf.length >= 1) vals.int8 = dv.getUint8(0);
+          if (buf.length >= 2) vals.int16 = dv.getUint16(0, true);
+          if (buf.length >= 3)
+            vals.int24 =
+              dv.getUint8(0) | (dv.getUint8(1) << 8) | (dv.getUint8(2) << 16);
+          if (buf.length >= 4) {
+            vals.int32 = dv.getUint32(0, true);
+            vals.float32 = dv.getFloat32(0, true);
+          }
+          if (buf.length >= 8) vals.int64 = dv.getBigUint64(0, true);
+
+          setInspector(vals);
+        } catch (err) {
+          console.error("Failed to read selection bytes:", err);
+          setInspector({});
+        }
+      };
+
+      computeInspector();
+      return () => {
+        cancelled = true;
+      };
+    }, [selection, path]);
+
     /* ─────────────── render ─────────────── */
     return (
       <Box sx={{ display: "flex", height: "100vh", overflow: "hidden" }}>
@@ -148,21 +212,30 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
 
             <Divider sx={{ my: 2 }} />
 
-            {/* ───────────── Data Inspector (placeholder) ───────────── */}
+            {/* ───────────── Data Inspector ───────────── */}
             <Typography variant="subtitle1" gutterBottom>
               Data Inspector (Little-endian)
             </Typography>
             <List dense disablePadding>
               {[
-                "8-bit Integer",
-                "16-bit Integer",
-                "24-bit Integer",
-                "32-bit Integer",
-                "32-bit Float",
-                "64-bit Integer (+)",
-              ].map((label) => (
+                { label: "8-bit Integer", val: inspector.int8 },
+                { label: "16-bit Integer", val: inspector.int16 },
+                { label: "24-bit Integer", val: inspector.int24 },
+                { label: "32-bit Integer", val: inspector.int32 },
+                { label: "32-bit Float", val: inspector.float32 },
+                { label: "64-bit Integer (+)", val: inspector.int64 },
+              ].map(({ label, val }) => (
                 <ListItem key={label} sx={{ py: 0 }}>
-                  <ListItemText primary={label} secondary="0" />
+                  <ListItemText
+                    primary={label}
+                    secondary={
+                      val === undefined
+                        ? "–"
+                        : typeof val === "number"
+                          ? `${val} (${toHex(val)})`
+                          : `${val.toString()} (${toHex(val)})`
+                    }
+                  />
                 </ListItem>
               ))}
             </List>
@@ -176,6 +249,7 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
             ref={viewerRef}
             path={path}
             onFileChanged={refreshFileSize}
+            onSelectionChange={setSelection}
           />
         </Box>
 
@@ -218,7 +292,7 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
 
             <Divider sx={{ my: 2 }} />
 
-            {/* ───────────── Search (placeholder) ───────────── */}
+            {/* ───────────── Search ───────────── */}
             <Typography variant="subtitle1" gutterBottom>
               Search
             </Typography>
@@ -246,4 +320,4 @@ const HexEditor = forwardRef<HexViewerHandle, HexEditorProps>(
   },
 );
 
-export default HexEditor;
+export default HexViewerWindow;

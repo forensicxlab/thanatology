@@ -29,7 +29,7 @@ interface TermDescriptor {
 export default function BottomActionBar() {
   // ───────── Drawer state ─────────
   const [open, setOpen] = useState(false);
-  const [height, setHeight] = useState<number>(window.innerHeight * 0.3); // px
+  const [height, setHeight] = useState<number>(window.innerHeight * 0.5); // px
   const [full, setFull] = useState(false);
 
   // ───────── Terminal‑manager state ─────────

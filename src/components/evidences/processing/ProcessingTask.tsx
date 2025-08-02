@@ -1,18 +1,27 @@
 import React, { useEffect, useState } from "react";
-import Paper from "@mui/material/Paper";
-import Typography from "@mui/material/Typography";
-import Box from "@mui/material/Box";
+import ListItem from "@mui/material/ListItem";
+import ListItemText from "@mui/material/ListItemText";
+import ListItemAvatar from "@mui/material/ListItemAvatar";
 import { listen } from "@tauri-apps/api/event";
+import Avatar from "@mui/material/Avatar";
+import { CircularProgress } from "@mui/material";
+import IconButton from "@mui/material/IconButton";
+
+import { Check, Preview } from "@mui/icons-material";
 
 interface ProcessingTaskProps {
   /** The evidence ID you are currently processing */
   evidenceId: number;
+  evidenceName: string;
   /** Optional callback fired when `main_progress_success_*` arrives */
+  status: number;
   onComplete?: () => void;
 }
 
 const ProcessingTask: React.FC<ProcessingTaskProps> = ({
   evidenceId,
+  evidenceName,
+  status,
   onComplete,
 }) => {
   const [mainProgress, setMainProgress] = useState("");
@@ -69,22 +78,30 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
     };
   }, [evidenceId, onComplete]);
 
-  return (
-    <Paper sx={{ p: 2, mb: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        Module Execution
-      </Typography>
-
-      <Box sx={{ width: "100%", mt: 1 }}>
-        <Typography variant="subtitle1" color={mainColor}>
-          {mainProgress}
-        </Typography>
-
-        <Typography variant="caption" color={moduleColor}>
-          {moduleProgress}
-        </Typography>
-      </Box>
-    </Paper>
+  return status < 5 ? (
+    <ListItem>
+      <ListItemAvatar>
+        <Avatar sx={{ background: "transparent" }}>
+          <CircularProgress />
+        </Avatar>
+      </ListItemAvatar>
+      <ListItemText primary={mainProgress} secondary={moduleProgress} />
+    </ListItem>
+  ) : (
+    <ListItem
+      secondaryAction={
+        <IconButton edge="end" aria-label="delete">
+          <Preview />
+        </IconButton>
+      }
+    >
+      <ListItemAvatar>
+        <Avatar sx={{ background: "green" }}>
+          <Check />
+        </Avatar>
+      </ListItemAvatar>
+      <ListItemText primary={evidenceName} secondary="Finished" />
+    </ListItem>
   );
 };
 

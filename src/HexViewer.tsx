@@ -1,6 +1,7 @@
 import React, {
   CSSProperties,
   ForwardedRef,
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent,
   forwardRef,
   useCallback,
@@ -10,6 +11,7 @@ import React, {
   useReducer,
   useRef,
   useState,
+  memo,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FixedSizeList as List } from "react-window";
@@ -39,10 +41,15 @@ const BYTES_PER_ROW = 16;
 const CHUNK_SIZE = 64 * 1024;
 const CACHE_CAPACITY = 128;
 const ROW_HEIGHT = 20;
+
 const CURSOR_STYLE: CSSProperties = {
   outline: "2px solid #1976d2",
   outlineOffset: "-1px",
   borderRadius: "2px",
+};
+
+const SELECT_BG_STYLE: CSSProperties = {
+  backgroundColor: "#194a5c",
 };
 
 const hex = (n: number, len: number) =>
@@ -112,6 +119,16 @@ const selReducer = (state: SelState, action: SelAction): SelState => {
     }
   }
 };
+
+/* ───────────────────────────── Row types ─────────────────────────────────── */
+interface RowData {
+  getRowSlice: (row: number) => Promise<Uint8Array>;
+  selRange: ByteRange | null;
+  cursor: number | null;
+  onByteMouseDown: (e: MouseEvent, off: number) => void;
+  onByteMouseEnter: (e: MouseEvent, off: number) => void;
+  offsetDigits: number;
+}
 
 /* ───────────────────────────── Component ────────────────────────────────── */
 const HexViewer = forwardRef(
@@ -198,15 +215,18 @@ const HexViewer = forwardRef(
     const cursor =
       selState.range && selState.range.start === selState.range.end
         ? selState.range.start
-        : null;
+        : selState.range
+          ? selState.range.end
+          : null;
 
     useEffect(
       () => onSelectionChange?.(selState.range),
       [selState.range, onSelectionChange],
     );
 
-    /* ─────────────── mouse handler ─────────────── */
+    /* ─────────────── refs & helpers for focus/scroll ─────────────── */
     const listRef = useRef<List>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
     const focusRowRef = useRef(0);
     const ensureVisible = (row: number) =>
       listRef.current?.scrollToItem(
@@ -214,20 +234,91 @@ const HexViewer = forwardRef(
         "smart",
       );
 
-    /**
-     * Core click dispatcher – works for a single *byte* offset.
-     */
-    const handleByteClick = useCallback((e: MouseEvent, byteOffset: number) => {
-      const rowIdx = Math.floor(byteOffset / BYTES_PER_ROW);
-      focusRowRef.current = rowIdx;
+    /* ─────────────── mouse-drag selection ─────────────── */
+    const [dragging, setDragging] = useState(false);
+
+    // End drag on global mouse-up
+    useEffect(() => {
+      const endDrag = () => setDragging(false);
+      window.addEventListener("mouseup", endDrag);
+      return () => window.removeEventListener("mouseup", endDrag);
+    }, []);
+
+    const onByteMouseDown = useCallback((e: MouseEvent, byteOffset: number) => {
+      // Prevent the browser's native text-selection
+      e.preventDefault();
+      e.stopPropagation();
+
+      containerRef.current?.focus();
 
       dispatchSel({
         type: "click",
         offset: byteOffset,
         extend: e.shiftKey,
-        toggle: e.ctrlKey || e.metaKey,
+        toggle: e.ctrlKey || (e as unknown as KeyboardEvent).metaKey,
       });
+
+      // Start drag only for primary button
+      if (
+        e.button === 0 &&
+        !e.ctrlKey &&
+        !(e as unknown as KeyboardEvent).metaKey
+      )
+        setDragging(true);
     }, []);
+
+    const onByteMouseEnter = useCallback(
+      (_e: MouseEvent, byteOffset: number) => {
+        if (dragging) dispatchSel({ type: "extend", offset: byteOffset });
+      },
+      [dragging],
+    );
+
+    /* ─────────────── keyboard navigation ─────────────── */
+    const handleKeyDown = useCallback(
+      (e: ReactKeyboardEvent) => {
+        let delta: number | null = null;
+        switch (e.key) {
+          case "ArrowLeft":
+            delta = -1;
+            break;
+          case "ArrowRight":
+            delta = 1;
+            break;
+          case "ArrowUp":
+            delta = -BYTES_PER_ROW;
+            break;
+          case "ArrowDown":
+            delta = BYTES_PER_ROW;
+            break;
+          default:
+            return;
+        }
+
+        if (delta === null || cursor === null) return;
+        e.preventDefault();
+
+        let next = cursor + delta;
+        if (next < 0) next = 0;
+        if (next >= fileSize) next = fileSize - 1;
+
+        if (e.shiftKey) {
+          dispatchSel({ type: "extend", offset: next });
+        } else {
+          dispatchSel({
+            type: "click",
+            offset: next,
+            extend: false,
+            toggle: false,
+          });
+        }
+
+        const nextRow = Math.floor(next / BYTES_PER_ROW);
+        focusRowRef.current = nextRow;
+        ensureVisible(nextRow);
+      },
+      [cursor, fileSize],
+    );
 
     /* ─────────────── grid helpers ─────────────── */
     /** Root-row grid: Offset | Hex grid | ASCII  */
@@ -255,140 +346,163 @@ const HexViewer = forwardRef(
       fontFamily: FONT_STACK,
     };
 
-    /* ─────────────── Row renderer ─────────────── */
-    interface RowProps {
-      index: number;
-      style: CSSProperties;
-    }
+    /* ───────────────────── Row renderer (memoised) ──────────────────── */
+    const Row = memo(
+      ({
+        index,
+        style,
+        data,
+      }: {
+        index: number;
+        style: CSSProperties;
+        data: RowData;
+      }) => {
+        const {
+          getRowSlice,
+          selRange,
+          cursor,
+          onByteMouseDown,
+          onByteMouseEnter,
+          offsetDigits,
+        } = data;
 
-    const Row = ({ index, style }: RowProps) => {
-      const [bytes, setBytes] = useState<Uint8Array>();
-      useEffect(() => {
-        void getRowSlice(index).then(setBytes).catch(console.error);
-      }, [index]);
+        const [bytes, setBytes] = useState<Uint8Array>();
+        useEffect(() => {
+          void getRowSlice(index).then(setBytes).catch(console.error);
+        }, [index, getRowSlice]);
 
-      const rowOffset = index * BYTES_PER_ROW;
+        const rowOffset = index * BYTES_PER_ROW;
 
-      /* Row highlighted if ANY selection byte falls in this row */
-      const rowSelected =
-        selState.range &&
-        selState.range.start <= rowOffset + BYTES_PER_ROW - 1 &&
-        selState.range.end >= rowOffset;
+        const rowSx = {
+          ...style,
+          display: "grid",
+          gridTemplateColumns: `${offsetDigits}ch auto 1fr`,
+          alignItems: "center",
+          fontFamily: FONT_STACK,
+          paddingLeft: "0.5rem",
+          paddingRight: "0.5rem",
+          cursor: "default",
+        } as const;
 
-      const rowSx = {
-        ...style,
-        display: "grid",
-        gridTemplateColumns: rootTemplate,
-        alignItems: "center",
-        fontFamily: FONT_STACK,
-        px: "0.5rem",
-        cursor: "default",
-      } as const;
+        const byteSelected = (globalOffset: number) =>
+          selRange &&
+          globalOffset >= selRange.start &&
+          globalOffset <= selRange.end;
 
-      if (!bytes) {
+        if (!bytes) {
+          return (
+            <Box sx={rowSx} className="font-mono text-sm leading-5">
+              …
+            </Box>
+          );
+        }
+
         return (
-          <Box sx={rowSx} className="font-mono text-sm leading-5">
-            …
-          </Box>
-        );
-      }
-
-      return (
-        <Box
-          role="row"
-          aria-rowindex={index + 1}
-          sx={rowSx}
-          className={`font-mono text-sm leading-5 ${
-            rowSelected ? "bg-blue-100" : ""
-          }`}
-        >
-          {/* ───────── Offset column ───────── */}
-          <Box
-            display="flex"
-            alignItems="center"
-            gap={1}
-            onClick={(e) => handleByteClick(e, rowOffset)}
-            sx={{ cursor: "pointer" }}
-          >
-            <Typography
-              component="span"
-              color="text.secondary"
-              sx={{ fontSize: "0.75rem", pr: 1 }}
-            >
-              {hex(rowOffset, offsetDigits)}
-            </Typography>
-            <Divider orientation="vertical" flexItem />
-          </Box>
-
-          {/* ───────── Hexadecimal bytes ───────── */}
-          <Box className="select-none" sx={HEX_GRID_CSS}>
-            {Array.from(bytes).map((b, i) => {
-              const globalOffset = rowOffset + i;
-              const isCursor = cursor === globalOffset;
-              return (
-                <Box
-                  key={i}
-                  component="span"
-                  sx={{
-                    textAlign: "center",
-                    fontSize: "0.75rem",
-                    lineHeight: "1.25rem",
-                    display: "inline-block",
-                    width: "100%",
-                    ...(i === 7 ? { mr: "1ch" } : {}),
-                    ...(isCursor ? CURSOR_STYLE : {}),
-                  }}
-                  onClick={(e) => handleByteClick(e, globalOffset)}
-                  style={{ cursor: "pointer" }}
-                >
-                  {hex(b, 2)}
-                </Box>
-              );
-            })}
-          </Box>
-
-          {/* ───────── ASCII bytes ───────── */}
-          <Box display="flex" alignItems="center" gap={1}>
-            <Divider orientation="vertical" flexItem />
+          <Box role="row" aria-rowindex={index + 1} sx={rowSx}>
+            {/* ───────── Offset column ───────── */}
             <Box
-              className="select-none"
-              sx={{ ...ASCII_GRID_CSS }}
-              /* cursor for ASCII handled in inner map below */
+              display="flex"
+              alignItems="center"
+              gap={1}
+              onMouseDown={(e) => onByteMouseDown(e, rowOffset)}
+              onMouseEnter={(e) => onByteMouseEnter(e, rowOffset)}
+              sx={{
+                cursor: "pointer",
+              }}
             >
+              <Typography
+                component="span"
+                color="text.secondary"
+                sx={{ fontSize: "0.75rem", paddingRight: 1 }}
+              >
+                {hex(rowOffset, offsetDigits)}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+            </Box>
+
+            {/* ───────── Hexadecimal bytes ───────── */}
+            <Box className="select-none" sx={HEX_GRID_CSS}>
               {Array.from(bytes).map((b, i) => {
                 const globalOffset = rowOffset + i;
                 const isCursor = cursor === globalOffset;
+                const isSel = byteSelected(globalOffset);
                 return (
-                  <Typography
-                    component="span"
+                  <Box
                     key={i}
+                    component="span"
                     sx={{
                       textAlign: "center",
                       fontSize: "0.75rem",
                       lineHeight: "1.25rem",
                       display: "inline-block",
                       width: "100%",
-                      ...(i === 7 ? { mr: "1ch" } : {}),
+                      ...(i === 7 ? { marginRight: "1ch" } : {}),
+                      ...(isSel ? SELECT_BG_STYLE : {}),
                       ...(isCursor ? CURSOR_STYLE : {}),
                     }}
-                    onClick={(e) => handleByteClick(e, globalOffset)}
+                    onMouseDown={(e) => onByteMouseDown(e, globalOffset)}
+                    onMouseEnter={(e) => onByteMouseEnter(e, globalOffset)}
                     style={{ cursor: "pointer" }}
                   >
-                    {isPrintable(b) ? String.fromCharCode(b) : "."}
-                  </Typography>
+                    {hex(b, 2)}
+                  </Box>
                 );
               })}
             </Box>
+
+            {/* ───────── ASCII bytes ───────── */}
+            <Box display="flex" alignItems="center" gap={1}>
+              <Divider orientation="vertical" flexItem />
+              <Box className="select-none" sx={ASCII_GRID_CSS}>
+                {Array.from(bytes).map((b, i) => {
+                  const globalOffset = rowOffset + i;
+                  const isCursor = cursor === globalOffset;
+                  const isSel = byteSelected(globalOffset);
+                  return (
+                    <Typography
+                      component="span"
+                      key={i}
+                      sx={{
+                        textAlign: "center",
+                        fontSize: "0.75rem",
+                        lineHeight: "1.25rem",
+                        display: "inline-block",
+                        width: "100%",
+                        ...(i === 7 ? { marginRight: "1ch" } : {}),
+                        ...(isSel ? SELECT_BG_STYLE : {}),
+                        ...(isCursor ? CURSOR_STYLE : {}),
+                      }}
+                      onMouseDown={(e) => onByteMouseDown(e, globalOffset)}
+                      onMouseEnter={(e) => onByteMouseEnter(e, globalOffset)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      {isPrintable(b) ? String.fromCharCode(b) : "."}
+                    </Typography>
+                  );
+                })}
+              </Box>
+            </Box>
           </Box>
-        </Box>
-      );
-    };
+        );
+      },
+      (prev, next) => {
+        if (prev.index !== next.index) return false; // different row
+        if (prev.data.cursor !== next.data.cursor) return false; // cursor moved
+
+        const a = prev.data.selRange;
+        const b = next.data.selRange;
+
+        // Re-render iff the selection really changed
+        return a?.start === b?.start && a?.end === b?.end;
+      },
+    );
 
     /* ─────────────── imperative API ─────────────── */
     const gotoInternal = (offset: number) => {
       const row = Math.floor(offset / BYTES_PER_ROW);
       focusRowRef.current = row;
       ensureVisible(row);
+      containerRef.current?.focus();
       dispatchSel({ type: "click", offset, extend: false, toggle: false });
     };
 
@@ -443,17 +557,43 @@ const HexViewer = forwardRef(
       fontFamily: FONT_STACK,
     };
 
+    const itemData = useMemo<RowData>(
+      () => ({
+        getRowSlice,
+        selRange: selState.range,
+        cursor,
+        onByteMouseDown,
+        onByteMouseEnter,
+        offsetDigits,
+      }),
+      [
+        getRowSlice,
+        selState.range?.start,
+        selState.range?.end,
+        cursor,
+        onByteMouseDown,
+        onByteMouseEnter,
+        offsetDigits,
+      ],
+    );
+
     return (
-      <Box role="grid" className="select-none">
+      <Box
+        role="grid"
+        className="select-none"
+        tabIndex={0}
+        ref={containerRef}
+        onKeyDown={handleKeyDown}
+        sx={{ outline: "none", userSelect: "none", WebkitUserSelect: "none" }}
+      >
         {/* Header */}
         <Box
           sx={headerSx}
           className="text-xs text-gray-500 border-b border-slate-500/40 sticky top-0 bg-white/80 backdrop-blur"
         >
           <Box display="flex" alignItems="center" gap={1}>
-            <Typography component="span" sx={{ pr: 1 }} />
+            <Typography component="span" sx={{ paddingRight: 1 }} />
           </Box>
-
           {/* Hex header */}
           <Box sx={HEX_GRID_CSS}>
             {HEADER_HEX.map((h, i) => (
@@ -466,14 +606,13 @@ const HexViewer = forwardRef(
                   width: "100%",
                   fontSize: "0.75rem",
                   lineHeight: "1.25rem",
-                  ...(i === 7 ? { mr: "1ch" } : {}),
+                  ...(i === 7 ? { marginRight: "1ch" } : {}),
                 }}
               >
                 {h}
               </Typography>
             ))}
           </Box>
-
           <Box display="flex" alignItems="center" gap={1}>
             <Divider orientation="vertical" flexItem />
           </Box>
@@ -487,6 +626,7 @@ const HexViewer = forwardRef(
           itemCount={totalRows}
           itemSize={ROW_HEIGHT}
           ref={listRef}
+          itemData={itemData}
         >
           {Row}
         </List>

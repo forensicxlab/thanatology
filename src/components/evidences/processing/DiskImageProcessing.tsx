@@ -57,7 +57,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
             start_lba: row.start_lba,
             size_sectors: row.size_sectors,
             sector_size: row.sector_size,
-            first_byte_addr: row.first_byte_address,
+            first_byte_addr: row.first_byte_addr,
             description: row.description,
           }),
         );
@@ -201,7 +201,12 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       )}
 
       {evidence.status === 2 && (
-        <ProcessingTask evidenceId={evidence.id} onComplete={fetchEvidence} />
+        <ProcessingTask
+          status={evidence.status}
+          evidenceName={evidence.name}
+          evidenceId={evidence.id}
+          onComplete={fetchEvidence}
+        />
       )}
       <Box sx={{ textAlign: "center", mt: 2 }}>
         <Button

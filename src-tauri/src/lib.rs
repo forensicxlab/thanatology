@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 pub mod modules;
 
-use modules::th_artifacts::process_artifacts;
+use modules::th_artifacts::extract_artifacts;
 use modules::th_filesystem::get_fs_info;
+use modules::th_identifier::identify_file_types;
 use modules::th_index::index_partition;
 
 use std::{
@@ -175,7 +176,7 @@ fn process_partitions(
             .await;
         }
 
-        // Update the evidence status in the database to 3
+        // Update the evidence status in the database to 3 (Indexation Completed)
         if let Err(err) = update_evidence_status(&pool, evidence_id, 3).await {
             emit_progress_event(
                 &evidence_id,
@@ -199,17 +200,87 @@ fn process_partitions(
         // We give information about the progress via the same emit channel.
         // Thanatology will keep track of the executing tasks via the evidence id + status.
 
-        for (index, partition) in mbr_partitions.into_iter().enumerate() {
+        for (_index, partition) in mbr_partitions.into_iter().enumerate() {
+            let mut body = Body::new(disk_image_path.clone(), "auto");
+            let sector_size = body.get_sector_size();
+            let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
+
+            let mut fs = match detect_filesystem(
+                &mut body,
+                partition.first_byte_addr as u64,
+                partition_size_bytes,
+            ) {
+                Ok(fs) => fs,
+                Err(err) => {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        format!("Could not detect the filesystem: {}", err.to_string()),
+                        &app,
+                    );
+                    return;
+                }
+            };
+
             // Module 1 - Artifact Parsing => Should be fast. Once done, the status will be updated to 4.
-            process_artifacts(
+            extract_artifacts(
+                &mut fs,
                 evidence_id,
-                partition,
-                disk_image_path.clone(),
-                pool.clone(),
+                partition.id.unwrap(),
                 &app,
+                pool.clone(),
             )
             .await;
+
+            // Update the evidence status in the database to 4 (Indexation Completed)
+            if let Err(err) = update_evidence_status(&pool, evidence_id, 4).await {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to update evidence status: {err:?}"),
+                    &app,
+                );
+            } else {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Success,
+                    "Succesfully extracted artifacts",
+                    &app,
+                );
+            }
+
             // Module 2 - File Identification => Will be slow. Once done the status will be updated to 5.
+            identify_file_types(
+                &mut fs,
+                evidence_id,
+                partition.id.unwrap(),
+                &app,
+                pool.clone(),
+            )
+            .await;
+
+            // Update the evidence status in the database to 4 (Indexation Completed)
+            if let Err(err) = update_evidence_status(&pool, evidence_id, 5).await {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to update evidence status: {err:?}"),
+                    &app,
+                );
+            } else {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Success,
+                    "Succesfully finished file identification",
+                    &app,
+                );
+            }
+
             // Module 3 - TBD => We can add more status here.
         }
     });

@@ -68,7 +68,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
           <Description style={{ marginRight: 8 }} />
-          EV-{params.value}
+          {params.value ? params.value : "No description provided."}
         </div>
       ),
     },
@@ -93,13 +93,9 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
             statusColor = "orange";
             statusText = "Processing";
             break;
-          case 3:
+          default:
             statusColor = "green";
             statusText = "Ready";
-            break;
-          default:
-            statusColor = "grey";
-            statusText = "Unknown";
         }
 
         return (
@@ -165,7 +161,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               />
             </Tooltip>,
           ];
-        } else if (status === 3) {
+        } else if (status >= 3) {
           return [
             <Tooltip key="review" title="Investigate">
               <GridActionsCellItem

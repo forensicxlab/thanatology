@@ -14,7 +14,6 @@ const RenderJson = ({ data }: { data: any }) => {
             display: "flex",
             flexDirection: "column",
             alignItems: "flex-start",
-            paddingY: 0.5,
           }}
         >
           <Box sx={{ display: "flex", gap: 1 }}>

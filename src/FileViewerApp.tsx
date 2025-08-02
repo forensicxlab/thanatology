@@ -1,7 +1,7 @@
 // FileViewer.tsx
 import React, { useState, useRef } from "react";
 import { Box, Button } from "@mui/material";
-import HexEditor from "./HexEditor";
+import HexViewerWindow from "./HexViewerWindow";
 import { HexViewerHandle } from "./HexViewer";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -39,7 +39,7 @@ const FileViewer: React.FC = () => {
       <Box flexGrow={1} display="flex" overflow="hidden">
         <Box flex={1} overflow="hidden">
           {filePath ? (
-            <HexEditor ref={hexRef} path={filePath} />
+            <HexViewerWindow ref={hexRef} path={filePath} />
           ) : (
             <Box
               height="100%"

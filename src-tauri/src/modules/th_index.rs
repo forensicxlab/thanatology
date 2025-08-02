@@ -2,7 +2,7 @@ use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
 use exhume_filesystem::{File, Filesystem};
-use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
+use exhume_partitions::mbr::MBRPartitionEntry;
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{error, info};
 use sqlx::sqlite::Sqlite;
@@ -24,13 +24,7 @@ where
     let mut seen: HashSet<u64> = HashSet::new();
     let mut queue: VecDeque<(u64, String)> = VecDeque::new();
 
-    // crude but portable way of finding the root record:
-    // ext = 2, ntfs = 5 – fall back to 0 if neither works.
-    let root_id_candidates = [2u64, 5u64, 0u64];
-    let root_id = root_id_candidates
-        .into_iter()
-        .find(|id| fs.get_file(*id).is_ok())
-        .ok_or("Could not locate a valid root record")?;
+    let root_id = fs.get_root_file_id();
 
     queue.push_back((root_id, "/".to_owned()));
 
@@ -96,6 +90,8 @@ async fn index_filesystem<T: Filesystem>(
             format!("Could not prepare DB: {e:?}"),
             app,
         );
+        error!("Could not prepare DB: {e:?}");
+
         return;
     }
 
@@ -112,6 +108,8 @@ async fn index_filesystem<T: Filesystem>(
                 format!("Failed to walk filesystem: {e}"),
                 app,
             );
+            error!("Failed to walk filesystem: {e}");
+
             return;
         }
     };
@@ -140,6 +138,8 @@ async fn index_filesystem<T: Filesystem>(
                 format!("Could not open DB transaction: {e:?}"),
                 app,
             );
+            error!("Could not open DB transaction: {e:?}");
+
             return;
         }
     };
@@ -153,8 +153,14 @@ async fn index_filesystem<T: Filesystem>(
             name,
             ftype,
             size,
+            created,
+            modified,
+            accessed,
+            permissions,
+            owner,
+            "group",
             metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#;
 
     for f in &files {
@@ -166,6 +172,12 @@ async fn index_filesystem<T: Filesystem>(
             .bind(&f.name)
             .bind(&f.ftype)
             .bind(f.size as i64)
+            .bind(Some(f.created).unwrap())
+            .bind(Some(f.modified).unwrap())
+            .bind(Some(f.accessed).unwrap())
+            .bind(&f.permissions)
+            .bind(&f.owner)
+            .bind(&f.group)
             .bind(Json(&f.metadata))
             .execute(&mut *tx)
             .await
@@ -177,6 +189,7 @@ async fn index_filesystem<T: Filesystem>(
                 format!("Insert error: {e:?}"),
                 app,
             );
+            error!("Insert error: {e:?}");
         }
 
         inserted += 1;
@@ -199,6 +212,8 @@ async fn index_filesystem<T: Filesystem>(
             format!("Commit error: {e:?}"),
             app,
         );
+        error!("Commit error: {e:?}");
+
         return;
     }
 
