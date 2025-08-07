@@ -10,10 +10,8 @@ import IconButton from "@mui/material/IconButton";
 import { Check, Preview } from "@mui/icons-material";
 
 interface ProcessingTaskProps {
-  /** The evidence ID you are currently processing */
   evidenceId: number;
   evidenceName: string;
-  /** Optional callback fired when `main_progress_success_*` arrives */
   status: number;
   onComplete?: () => void;
 }
@@ -85,7 +83,18 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
           <CircularProgress />
         </Avatar>
       </ListItemAvatar>
-      <ListItemText primary={mainProgress} secondary={moduleProgress} />
+      <ListItemText
+        primary={mainProgress}
+        secondary={moduleProgress}
+        slotProps={{
+          primary: {
+            color: mainColor,
+          },
+          secondary: {
+            color: moduleColor,
+          },
+        }}
+      />
     </ListItem>
   ) : (
     <ListItem

@@ -89,11 +89,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
     PartitionReadResult[]
   >([]);
 
-  const [extractionModules, setExtractionModules] = useState<Module[]>([]);
-  const [selectedExtractionModules, setSelectedExtractionModules] = useState<
-    string[]
-  >([]);
-
   const [currentError, setCurrentError] = useState<string | null>(null);
 
   const [finalInsertStatus, setFinalInsertStatus] = useState<
@@ -304,9 +299,6 @@ const DiskImage: React.FC<DiskImageProps> = ({
       diskImageFormat,
       selectedMbrPartitions,
       selectedGptPartitions,
-      extractionModules: extractionModules.filter((m) =>
-        selectedExtractionModules.includes(m.id),
-      ),
     };
 
     savePreprocessingMetadata(metadata, database)

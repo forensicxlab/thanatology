@@ -144,7 +144,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       <Box
         sx={{
           position: "absolute",
-          bottom: 16,
+          bottom: 35,
           right: 16,
           display: "flex",
           flexDirection: "column",

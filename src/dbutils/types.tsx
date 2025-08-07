@@ -44,6 +44,8 @@ export interface MBR {
 
 /* ---------------------------  GPT  ------------------------------------ */
 
+export type PartitionEntry = MBRPartitionEntry | GPTPartitionEntry;
+
 export interface GPTPartitionEntry {
   id: number;
   partition_guid: number[];
@@ -52,6 +54,8 @@ export interface GPTPartitionEntry {
   partition_type_guid_string: string;
   starting_lba: number;
   ending_lba: number;
+  first_byte_addr: number;
+  size_sectors: number;
   attributes: number;
   description: string;
   partition_name: string;
@@ -118,11 +122,9 @@ export interface LogicalPartition {
 export interface ProcessedEvidenceMetadata {
   evidenceData: Evidence;
   diskImageFormat: string;
-  selectedMbrPartitions: MBRPartitionEntry[];
-  selectedGptPartitions: GPTPartitionEntry[];
-  /* left nullable – may be filled in later stages */
+  selectedMbrPartitions?: MBRPartitionEntry[];
+  selectedGptPartitions?: GPTPartitionEntry[];
   selectedLogicalPartition?: LogicalPartition;
-  extractionModules: Module[];
 }
 
 /* Other helper types (unchanged) … */

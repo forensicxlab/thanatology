@@ -1,18 +1,4 @@
-//! file_identifier.rs  – rev 3 (bind-friendly)
-//!
-//! Reads each regular file’s prefix with `read_file_prefix`, detects its
-//! format through the `file_type` crate, and stores the result in three
-//! dedicated DB columns (`sig_name`, `sig_mime`, `sig_exts`).
-//!
-//! ─────────────────────────────────────────────────────────────────────────
-//!   ALTER TABLE system_files
-//!     ADD COLUMN sig_name TEXT,
-//!     ADD COLUMN sig_mime TEXT,
-//!     ADD COLUMN sig_exts TEXT;
-//!   CREATE INDEX IF NOT EXISTS idx_files_sig_mime ON system_files(sig_mime);
-//! ─────────────────────────────────────────────────────────────────────────
-
-use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
+use exhume_filesystem::filesystem::DirectoryCommon;
 use exhume_filesystem::Filesystem;
 use file_type::FileType;
 use log::{error, info};

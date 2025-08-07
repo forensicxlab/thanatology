@@ -41,7 +41,7 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
   const defaultEmptyEvidence: Evidence = {
     id: 0,
     name: "",
-    type: "Disk image",
+    type: "Physical Disk image",
     path: "",
     description: "",
     case_id: 0,

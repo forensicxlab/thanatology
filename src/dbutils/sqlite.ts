@@ -72,18 +72,6 @@ export async function createCaseAndEvidence(
         evidence.description,
       ],
     );
-
-    if (evidence.type === "Logical Disk image") {
-      await db.execute(
-        `
-          INSERT INTO logical_partition_entries (
-            evidence_id,
-            size,
-          ) VALUES ($1, $2)
-        `,
-        [evidence.id, metadata.selectedLogicalPartition.size],
-      );
-    }
   }
 
   return caseId;
@@ -308,8 +296,10 @@ export async function savePreprocessingMetadata(
           ending_lba,
           attributes,
           partition_name,
-          description
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          description,
+          first_byte_addr,
+          size_sectors
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         metadata.evidenceData.id,
@@ -320,6 +310,8 @@ export async function savePreprocessingMetadata(
         partition.attributes,
         partition.partition_name,
         partition.description,
+        partition.first_byte_addr,
+        partition.size_sectors,
       ],
     );
   }

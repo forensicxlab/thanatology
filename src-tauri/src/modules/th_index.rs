@@ -2,13 +2,10 @@ use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
 use exhume_filesystem::{File, Filesystem};
-use exhume_partitions::mbr::MBRPartitionEntry;
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{error, info};
-use sqlx::sqlite::Sqlite;
 use sqlx::sqlite::SqlitePool;
 use sqlx::types::Json;
-use sqlx::Pool;
 use std::collections::{HashSet, VecDeque};
 use tauri::AppHandle;
 
@@ -26,7 +23,7 @@ where
 
     let root_id = fs.get_root_file_id();
 
-    queue.push_back((root_id, "/".to_owned()));
+    queue.push_back((root_id, fs.path_separator()));
 
     while let Some((record_id, path)) = queue.pop_front() {
         if !seen.insert(record_id) {
@@ -48,10 +45,10 @@ where
         if record.is_dir() {
             for entry in fs.list_dir(&record)? {
                 let child_id = entry.file_id();
-                let child_path = if path == "/" {
-                    format!("/{}", entry.name())
+                let child_path = if path == fs.path_separator() {
+                    format!("{}{}", fs.path_separator(), entry.name())
                 } else {
-                    format!("{}/{}", path, entry.name())
+                    format!("{}{}{}", path, fs.path_separator(), entry.name())
                 };
                 queue.push_back((child_id, child_path));
             }
@@ -66,7 +63,7 @@ async fn index_filesystem<T: Filesystem>(
     evidence_id: i64,
     partition_id: i64,
     app: &AppHandle,
-    pool: Pool<Sqlite>,
+    pool: &SqlitePool,
 ) where
     T::DirectoryType: DirectoryCommon,
 {
@@ -80,7 +77,7 @@ async fn index_filesystem<T: Filesystem>(
             ON system_files(evidence_id, absolute_path);
         "#,
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     {
         emit_progress_event(
@@ -91,7 +88,6 @@ async fn index_filesystem<T: Filesystem>(
             app,
         );
         error!("Could not prepare DB: {e:?}");
-
         return;
     }
 
@@ -109,7 +105,6 @@ async fn index_filesystem<T: Filesystem>(
                 app,
             );
             error!("Failed to walk filesystem: {e}");
-
             return;
         }
     };
@@ -213,7 +208,6 @@ async fn index_filesystem<T: Filesystem>(
             app,
         );
         error!("Commit error: {e:?}");
-
         return;
     }
 
@@ -228,20 +222,18 @@ async fn index_filesystem<T: Filesystem>(
 
 pub async fn index_partition(
     evidence_id: i64,
-    partition: MBRPartitionEntry,
+    partition_id: i64,
+    size_sectors: u64,
+    first_byte_addr: u64,
     disk_image_path: String,
-    pool: SqlitePool,
+    pool: &SqlitePool,
     app: &AppHandle,
 ) {
     let mut body = Body::new(disk_image_path, "auto");
-    let sector_size = body.get_sector_size();
-    let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
+    let sector_size = body.get_sector_size() as u64;
+    let partition_size_bytes = size_sectors * sector_size;
 
-    let mut fs = match detect_filesystem(
-        &mut body,
-        partition.first_byte_addr as u64,
-        partition_size_bytes,
-    ) {
+    let mut fs = match detect_filesystem(&mut body, first_byte_addr, partition_size_bytes) {
         Ok(fs) => fs,
         Err(err) => {
             emit_progress_event(
@@ -251,9 +243,10 @@ pub async fn index_partition(
                 format!("Could not detect the filesystem: {}", err.to_string()),
                 &app,
             );
+            error!("Could not detect the filesystem: {}", err.to_string());
             return;
         }
     };
 
-    index_filesystem(&mut fs, evidence_id, partition.id.unwrap(), app, pool).await
+    index_filesystem(&mut fs, evidence_id, partition_id, app, pool).await
 }

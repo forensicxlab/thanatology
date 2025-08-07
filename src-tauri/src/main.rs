@@ -123,6 +123,8 @@ fn main() {
                     partition_type_guid TEXT NOT NULL,
                     starting_lba       INTEGER NOT NULL,
                     ending_lba         INTEGER NOT NULL,
+                    first_byte_addr       INTEGER NOT NULL,
+                    size_sectors         INTEGER NOT NULL,
                     attributes         INTEGER NOT NULL,
                     partition_name     TEXT NOT NULL,
                     description        TEXT NOT NULL,

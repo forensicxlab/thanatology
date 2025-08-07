@@ -103,7 +103,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       return;
     }
 
-    if (mbrPartitions.length === 0) {
+    if (mbrPartitions.length === 0 && gptPartitions.length === 0) {
       display_message("info", "No partitions selected for processing.");
       return;
     }
@@ -114,7 +114,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       diskImageFormat: "", // This could be set via check_disk_image_format if needed.
       selectedMbrPartitions: mbrPartitions,
       selectedGptPartitions: gptPartitions,
-      extractionModules: [], // No modules since we're not iterating anymore
     };
 
     // Set processing status in the DB to "in progress"
@@ -136,11 +135,8 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
     try {
       await invoke("process_partitions", {
-        evidenceId: evidence.id,
-        mbrPartitions: mbrPartitions,
-        gptPartitions: gptPartitions,
-        diskImagePath: evidence.path,
         dbPath: dbPath,
+        evidenceId: evidence.id,
       });
     } catch (err) {
       console.error("Error invoking process_partitions", err);

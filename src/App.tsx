@@ -19,7 +19,7 @@ import CaseCreationStepper from "./components/cases/steppers/CaseCreationStepper
 import CaseDetails from "./components/cases/CaseDetails";
 import PreProcessing from "./components/evidences/preprocessing/PreProcessing";
 import Processing from "./components/evidences/processing/Processing";
-import LinuxInvestigation from "./components/evidences/investigate/linux/Main";
+import LinuxInvestigation from "./components/evidences/investigate/Main";
 import { LicenseInfo } from "@mui/x-license";
 
 const darkTheme = createTheme({

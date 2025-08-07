@@ -310,3 +310,279 @@ artifacts:
     parser: "docker_json_log"
     tag: "logs"
     category: "application"
+
+  # ---------------- Windows Artifacts ----------------
+
+  - name: "Windows Event Logs – Security/System/Application"
+    description: "Native Windows event channels recording authentication, privilege changes, service start/stop and general OS messages"
+    paths:
+      - '\Windows\System32\winevt\Logs\Security.evtx'
+      - '\Windows\System32\winevt\Logs\System.evtx'
+      - '\Windows\System32\winevt\Logs\Application.evtx'
+    parser: "evtx"
+    tag: "logs"
+    category: "system"
+
+  - name: "Windows Event Logs – DNS Client Operational"
+    description: "Per-host DNS-related activity useful for tracking name resolution on the endpoint"
+    paths:
+      - '\Windows\System32\winevt\Logs\Microsoft-Windows-DNS-Client%4Operational.evtx'
+    parser: "evtx"
+    tag: "network"
+    category: "network"
+
+  - name: "Windows Firewall Log"
+    description: "Packet-level inbound/outbound traffic allowed/blocked by the built-in firewall"
+    paths:
+      - '\Windows\System32\LogFiles\Firewall\pfirewall.log'
+    parser: "firewall_log"
+    tag: "network"
+    category: "network"
+
+  - name: "Prefetch Execution Cache"
+    description: "PF files evidencing program execution times and frequency"
+    paths:
+      - '\Windows\Prefetch\[^.]+\.pf'
+    parser: "prefetch"
+    tag: "execution"
+    category: "system"
+
+  - name: "Shimcache (AppCompatCache)"
+    description: "Application compatibility cache embedded in the SYSTEM hive; shows executable launch evidence"
+    paths:
+      - '\Windows\System32\config\SYSTEM'
+    parser: "shimcache"
+    tag: "registry"
+    category: "system"
+
+  - name: "Amcache Program Inventory"
+    description: "Comprehensive executed-file inventory stored by the Application Compatibility feature"
+    paths:
+      - '\Windows\AppCompat\Programs\Amcache.hve'
+    parser: "amcache"
+    tag: "registry"
+    category: "system"
+
+  - name: "SRUM Usage Database"
+    description: "System Resource Usage Monitor (SRUDB.dat) – per-app network & energy usage"
+    paths:
+      - '\Windows\System32\SRU\SRUDB.dat'
+    parser: "srum"
+    tag: "usage"
+    category: "network"
+
+  - name: "USN Journal"
+    description: "NTFS change journal recording file creation, deletion and modification events"
+    paths:
+      - '\$Extend\$UsnJrnl'
+    parser: "usnjrnl"
+    tag: "filesystem"
+    category: "system"
+
+  - name: "Master File Table (MFT)"
+    description: "Core NTFS metadata file containing every record for files and directories"
+    paths:
+      - '\$MFT'
+    parser: "mft"
+    tag: "filesystem"
+    category: "system"
+
+  - name: "Pagefile (Swap)"
+    description: "Volatile memory pages swapped to disk; useful for strings-of-interest carving"
+    paths:
+      - '\pagefile.sys'
+    parser: "memory_swap"
+    tag: "memory"
+    category: "system"
+
+  - name: "Hibernation File"
+    description: "Memory snapshot written on hibernate; contains entire physical memory image"
+    paths:
+      - '\hiberfil.sys'
+    parser: "hibernation"
+    tag: "memory"
+    category: "system"
+
+  - name: "NTUSER Registry Hive"
+    description: "Per-user registry hive containing Run keys, typed URLs, recent docs, etc."
+    paths:
+      - '\Users\[^\\]+\\NTUSER\.DAT'
+    parser: "registry_hive"
+    tag: "registry"
+    category: "users"
+
+  - name: "UsrClass Registry Hive"
+    description: "Per-user hive with ShellBags, JumpList destinations and other shell artefacts"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Local\\Microsoft\\Windows\\UsrClass\.dat'
+    parser: "registry_hive"
+    tag: "registry"
+    category: "users"
+
+  - name: "JumpLists – Automatic Destinations"
+    description: "Per-application automatic JumpLists showing recently accessed files"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\[^\\]+\.automaticDestinations-ms'
+    parser: "jumplist"
+    tag: "user_activity"
+    category: "users"
+
+  - name: "Recent LNK Shortcuts"
+    description: "Shortcut files revealing file launches/open operations"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Roaming\\Microsoft\\Windows\\Recent Items\\[^\\]+\.lnk'
+    parser: "lnk"
+    tag: "user_activity"
+    category: "users"
+
+  - name: "Chrome Browser History"
+    description: "SQLite database of visited URLs and download entries for Google Chrome"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History'
+    parser: "chrome_history"
+    tag: "browser"
+    category: "users"
+
+  - name: "Edge Browser History"
+    description: "Chromium-based Microsoft Edge visit history"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\History'
+    parser: "edge_history"
+    tag: "browser"
+    category: "users"
+
+  - name: "Firefox Places History"
+    description: "Visited pages and download data for Mozilla Firefox"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\[^\\]+\\places\.sqlite'
+    parser: "firefox_history"
+    tag: "browser"
+    category: "users"
+
+  - name: "PowerShell Console History"
+    description: "Plain-text command history captured by PSReadLine for each user"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history\.txt'
+    parser: "powershell_history"
+    tag: "execution"
+    category: "users"
+
+  - name: "Scheduled Tasks Definitions"
+    description: "XML files defining one-off and recurring tasks (common persistence mechanism)"
+    paths:
+      - '\Windows\System32\Tasks\\.*'
+    parser: "scheduled_tasks"
+    tag: "persistence"
+    category: "system"
+
+  - name: "Run/RunOnce Registry Keys"
+    description: "Autostart entries under HKLM/HKCU captured via SOFTWARE hive"
+    paths:
+      - '\Windows\System32\config\SOFTWARE'
+    parser: "registry_run"
+    tag: "persistence"
+    category: "system"
+
+  - name: "WMI Repository"
+    description: "Compiled provider database – inspect for malicious permanent event subscriptions"
+    paths:
+      - '\Windows\System32\wbem\Repository\OBJECTS\.DATA'
+    parser: "wmi_repository"
+    tag: "persistence"
+    category: "system"
+
+  - name: "Windows Defender Operational Logs"
+    description: "Anti-malware scan and detection activity"
+    paths:
+      - '\ProgramData\Microsoft\Windows Defender\Support\\.*\.log'
+    parser: "defender_log"
+    tag: "security"
+    category: "system"
+
+  - name: "BitLocker Management Logs"
+    description: "Key-protectors and encryption state changes"
+    paths:
+      - '\Windows\System32\winevt\Logs\Microsoft-Windows-BitLocker%4BitLocker Management.evtx'
+    parser: "evtx"
+    tag: "security"
+    category: "system"
+
+  - name: "Recycle Bin $I Records"
+    description: "Deleted-file metadata (.$I) holding original path & deletion time"
+    paths:
+      - '\$Recycle\.Bin\[^\\]+\\\$I[^\\]+'
+    parser: "recycle_bin"
+    tag: "filesystem"
+    category: "users"
+
+  - name: "VSS Snapshots"
+    description: "Volume Shadow Copies providing historical file versions"
+    paths:
+      - '\System Volume Information\\[0-9A-F]+\\'
+    parser: "vss"
+    tag: "backup"
+    category: "system"
+
+  - name: "BITS Job Database"
+    description: "Background Intelligent Transfer Service queue (often abused for staging)"
+    paths:
+      - '\ProgramData\Microsoft\Network\Downloader\qmgr\.db'
+    parser: "bits_db"
+    tag: "network"
+    category: "network"
+
+  - name: "IIS HTTP Logs"
+    description: "Per-site web server access logs (if IIS is installed)"
+    paths:
+      - '\inetpub\logs\LogFiles\W3SVC[^\\]+\\u_ex[0-9]+\.log'
+    parser: "iis_log"
+    tag: "web"
+    category: "network"
+
+  - name: "RDP Client Cache Bitmaps"
+    description: "Bitmap cache files revealing remote desktop activity"
+    paths:
+      - '\Users\[^\\]+\\AppData\\Local\\Microsoft\\Terminal Server Client\\Cache\\.*'
+    parser: "rdp_cache"
+    tag: "network"
+    category: "users"
+
+  - name: "Clipboard Data Store"
+    description: "Cloud/clipboard ring database for Windows 10+"
+    paths:
+      - '\Windows\ServiceProfiles\LocalService\AppData\Local\Microsoft\Windows\Clipboard\\.*'
+    parser: "clipboard_cache"
+    tag: "user"
+    category: "users"
+
+  - name: "DHCP Server Logs"
+    description: "Per-day DHCP lease logs (on servers or workstations with service enabled)"
+    paths:
+      - '\Windows\System32\dhcp\DhcpSrvLog-.*\.log'
+    parser: "dhcp_log"
+    tag: "network"
+    category: "network"
+
+  - name: "Print Spool SPL Files"
+    description: "Raw spool files holding printed document content"
+    paths:
+      - '\Windows\System32\spool\PRINTERS\\.*\.spl'
+    parser: "print_spool"
+    tag: "device"
+    category: "system"
+
+  - name: "Windows Error Reporting (WER)"
+    description: "Crash reports and application error diagnostics"
+    paths:
+      - '\ProgramData\Microsoft\Windows\WER\ReportQueue\\.*'
+    parser: "wer"
+    tag: "logs"
+    category: "system"
+
+  - name: "NetLogon Service Log"
+    description: "Domain logon negotiation and trust events – useful in lateral-movement investigations"
+    paths:
+      - '\Windows\System32\LogFiles\NetLogon\NetLogon\.log'
+    parser: "netlogon"
+    tag: "logs"
+    category: "network"

@@ -6,9 +6,9 @@ import {
   Evidence,
   MBRPartitionEntry,
   GPTPartitionEntry,
+  PartitionEntry,
 } from "../../../../../dbutils/types";
 import { getSelectedPartitions } from "../../../../../dbutils/sqlite";
-
 import MBRPartition from "../../../common/MBRPartition";
 import GPTPartition from "../../../common/GPTPartition";
 import ProcessingTask from "../../../processing/ProcessingTask";
@@ -19,8 +19,6 @@ interface SummaryProps {
   evidence: Evidence; // full evidence record
   partitionId: number | null; // DB id of the partition to show
 }
-
-type PartitionEntry = MBRPartitionEntry | GPTPartitionEntry;
 
 /* ================================================================== */
 const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
@@ -85,10 +83,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
             )}
           </Grid>
           <Grid size={12}>
-            <FileSystem
-              path={evidence.path}
-              partition={partition as MBRPartitionEntry}
-            />
+            <FileSystem path={evidence.path} partition={partition} />
           </Grid>
         </Grid>
       </Grid>

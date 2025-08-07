@@ -42,6 +42,14 @@ const GPTPartition: React.FC<GPTPartitionProps> = ({ gptPartition, index }) => {
         <strong>End LBA:</strong>{" "}
         {`0x${gptPartition.ending_lba.toString(16).toUpperCase()}`}
       </Typography>
+      <Typography variant="body2">
+        <strong>Start Address (absolute):</strong>{" "}
+        {`0x${gptPartition.first_byte_addr.toString(16).toUpperCase()}`}
+      </Typography>
+      <Typography variant="body2">
+        <strong>Size (sectors):</strong>{" "}
+        {`0x${gptPartition.size_sectors.toString(16).toUpperCase()}`}
+      </Typography>
     </Paper>
   );
 };

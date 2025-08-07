@@ -14,7 +14,8 @@ pub struct FsInfo {
 #[tauri::command]
 pub fn get_fs_info(path: String, offset: u64, size: u64) -> Result<FsInfo, String> {
     let mut body: Body = Body::new(path.to_string(), "auto");
-    let fs = match detect_filesystem(&mut body, offset, size) {
+    let bytes_size = body.get_sector_size() as u64 * size;
+    let fs = match detect_filesystem(&mut body, offset, bytes_size) {
         Ok(fs) => fs,
         Err(err) => {
             return Err(format!(

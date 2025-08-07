@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Evidence } from "../../../../dbutils/types";
+import { Evidence } from "../../../dbutils/types";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
-import { getEvidence } from "../../../../dbutils/sqlite";
-import { useSnackbar } from "../../../SnackbarProvider";
+import { getEvidence } from "../../../dbutils/sqlite";
+import { useSnackbar } from "../../SnackbarProvider";
 import { useParams } from "react-router";
+
 import {
   Apps,
   BlurOn,
@@ -16,13 +17,12 @@ import {
   Settings,
   Timeline,
 } from "@mui/icons-material";
-import Summary from "./summary/Summary";
-import System from "./system/System";
-import Network from "./network/Network";
-import { PartitionSelection } from "../PartitionSelection";
-import Terminal from "../../../Terminal";
-import Users from "./users/Users";
-import Applications from "./applications/Applications";
+import Summary from "./categories/summary/Summary";
+import System from "./categories/system/System";
+import Network from "./categories/network/Network";
+import { PartitionSelection } from "./PartitionSelection";
+import Users from "./categories/users/Users";
+import Applications from "./categories/applications/Applications";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -81,8 +81,7 @@ const InvestigateLinux: React.FC = () => {
           setLoading(false);
           return;
         }
-        const db = null; // Replace with your DB instance if necessary
-        const fetchedEvidence = await getEvidence(db, evidence_id.toString());
+        const fetchedEvidence = await getEvidence(null, evidence_id.toString());
         if (!fetchedEvidence) {
           setError(`No evidence found for ID ${evidence_id}.`);
         } else {
@@ -116,11 +115,11 @@ const InvestigateLinux: React.FC = () => {
       <Box
         sx={{
           position: "absolute",
-          mr: 1,
-          mb: 5,
-          bottom: "0",
-          right: "0",
-          zIndex: 1,
+          bottom: 35,
+          right: 16,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
         }}
       >
         <PartitionSelection

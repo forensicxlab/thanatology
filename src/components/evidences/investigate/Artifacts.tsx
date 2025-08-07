@@ -16,7 +16,7 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate } from "react-router";
 import Database from "@tauri-apps/plugin-sql";
-import UnixToUTC from "./linux/UnixToUTC";
+import UnixToUTC from "../common/UnixToUTC";
 import { fetchArtifactsByCategory } from "../../../dbutils/sqlite";
 import * as ReactDOM from "react-dom";
 import { ArtifactWithFile } from "../../../dbutils/types";
@@ -179,25 +179,34 @@ const Artifacts: React.FC<ArtifactsProps> = ({
       {
         field: "created",
         headerName: "Created",
-        renderCell: (params: GridRenderCellParams) => (
-          <UnixToUTC timestamp={params.value} />
-        ),
+        renderCell: (params: GridRenderCellParams) =>
+          params.value ? (
+            <UnixToUTC timestamp={params.value} />
+          ) : (
+            <div style={{ color: "orange" }}>None</div>
+          ),
       },
 
       {
         field: "modified",
         headerName: "Modified",
-        renderCell: (params: GridRenderCellParams) => (
-          <UnixToUTC timestamp={params.value} />
-        ),
+        renderCell: (params: GridRenderCellParams) =>
+          params.value ? (
+            <UnixToUTC timestamp={params.value} />
+          ) : (
+            <div style={{ color: "orange" }}>None</div>
+          ),
       },
 
       {
         field: "accessed",
         headerName: "Accessed",
-        renderCell: (params: GridRenderCellParams) => (
-          <UnixToUTC timestamp={params.value} />
-        ),
+        renderCell: (params: GridRenderCellParams) =>
+          params.value ? (
+            <UnixToUTC timestamp={params.value} />
+          ) : (
+            <div style={{ color: "orange" }}>None</div>
+          ),
       },
 
       {

@@ -13,9 +13,6 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import RemoveOutlinedIcon from "@mui/icons-material/RemoveOutlined";
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Keep your existing xterm wrapper exactly as-is and just import it here.
-// ────────────────────────────────────────────────────────────────────────────────
 import Terminal from "./Terminal";
 
 interface TermDescriptor {
@@ -50,7 +47,6 @@ export default function BottomActionBar() {
     setOpen((prev) => {
       const next = !prev;
       if (next && tabs.length === 0) {
-        // lazily create the very first terminal
         setTabs([{ id: nextId.current++, label: `Shell` }]);
         setActiveTab(0);
       }
@@ -74,12 +70,11 @@ export default function BottomActionBar() {
       const idx = ts.findIndex((t) => t.id === id);
       const remaining = ts.filter((t) => t.id !== id);
 
-      // update active tab index *after* computing remaining array
       setActiveTab((prev) => {
-        if (remaining.length === 0) return 0; // will be ignored once drawer auto‑closes
-        if (prev > idx) return prev - 1; // indices shifted left
-        if (prev === idx) return Math.max(0, idx - 1); // select previous sibling
-        return prev; // unaffected
+        if (remaining.length === 0) return 0;
+        if (prev > idx) return prev - 1;
+        if (prev === idx) return Math.max(0, idx - 1);
+        return prev;
       });
 
       // auto‑hide drawer if that was the last tab
@@ -125,6 +120,7 @@ export default function BottomActionBar() {
       {/* ───────── Bottom Drawer (terminal pane) ───────── */}
       <Drawer
         anchor="bottom"
+        variant="persistent"
         open={open}
         onClose={() => setOpen(false)}
         hideBackdrop

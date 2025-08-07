@@ -3,8 +3,11 @@ use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
+use sqlx::Row;
+
 pub mod modules;
 
 use modules::th_artifacts::extract_artifacts;
@@ -128,16 +131,9 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
 }
 
 #[tauri::command]
-fn process_partitions(
-    evidence_id: i64,
-    mbr_partitions: Vec<MBRPartitionEntry>,
-    gpt_partitions: Vec<GPTPartitionEntry>,
-    disk_image_path: String,
-    db_path: String,
-    app: AppHandle,
-) {
+fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // Connect to the SQLite database.
+        // ───────────────────────────────── DB CONNECT ────────────────────────────────
         let pool = match SqlitePool::connect(&db_path).await {
             Ok(p) => p,
             Err(err) => {
@@ -148,35 +144,68 @@ fn process_partitions(
                     format!("DB connection error: {err:?}"),
                     &app,
                 );
+                error!("DB connection error: {err:?}");
                 return;
             }
         };
 
-        let total_partitions = mbr_partitions.len() as u64 + gpt_partitions.len() as u64;
-        // MODULE 0 - Indexation: Needs to be fast and dumm. Other modules will take their time to do the smart stuff later
-        // But we want the investigator to be able to jump into the analysis as soon as possible.
-        for (index, partition) in mbr_partitions.clone().into_iter().enumerate() {
-            // Emit phase message
+        // ───────────────────────────────── LOAD EVIDENCE ─────────────────────────────
+        let evidence = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
+            .bind(evidence_id)
+            .fetch_one(&pool)
+            .await
+        {
+            Ok(row) => row,
+            Err(err) => {
+                error!("Error fetching evidence: {err:?}");
+                return;
+            }
+        };
+
+        // ───────────────────────────────── LOAD PARTITIONS ───────────────────────────
+        let mbr_partitions =
+            sqlx::query("SELECT * FROM mbr_partition_entries WHERE evidence_id = ?")
+                .bind(evidence_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+        let gpt_partitions =
+            sqlx::query("SELECT * FROM gpt_partition_entries WHERE evidence_id = ?")
+                .bind(evidence_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+        // Build a *single* collection of references we can loop over twice.
+        let all_partitions: Vec<&sqlx::sqlite::SqliteRow> =
+            mbr_partitions.iter().chain(gpt_partitions.iter()).collect();
+
+        let total_partitions = all_partitions.len() as u64;
+
+        // ───────────────────────────────── INDEXATION (MODULE 0) ─────────────────────
+        for (idx, partition) in all_partitions.iter().enumerate() {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Info,
-                format!("Indexing partition {}/{}", index + 1, total_partitions),
+                format!("Indexing partition {}/{}", idx + 1, total_partitions),
                 &app,
             );
 
-            // Process the partition
             index_partition(
                 evidence_id,
-                partition,
-                disk_image_path.clone(),
-                pool.clone(),
+                partition.get("id"),
+                partition.get("size_sectors"),
+                partition.get("first_byte_addr"),
+                evidence.get("path"),
+                &pool,
                 &app,
             )
             .await;
         }
 
-        // Update the evidence status in the database to 3 (Indexation Completed)
+        // Mark evidence as “indexation completed” (status 3)
         if let Err(err) = update_evidence_status(&pool, evidence_id, 3).await {
             emit_progress_event(
                 &evidence_id,
@@ -185,29 +214,29 @@ fn process_partitions(
                 format!("Failed to update evidence status: {err:?}"),
                 &app,
             );
+            error!("Failed to update evidence status: {err:?}");
+            return;
         } else {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Success,
-                "Succesfully indexed all of the partitions.",
+                "Successfully indexed all partitions.",
                 &app,
             );
         }
 
-        // Once the indexation part is finished the user will be able to review the evidence but
-        // in the background, we still execute the other parsing modules that are smarter (so a bit slower).
-        // We give information about the progress via the same emit channel.
-        // Thanatology will keep track of the executing tasks via the evidence id + status.
-
-        for (_index, partition) in mbr_partitions.into_iter().enumerate() {
-            let mut body = Body::new(disk_image_path.clone(), "auto");
-            let sector_size = body.get_sector_size();
-            let partition_size_bytes = partition.size_sectors as u64 * sector_size as u64;
+        // ──────────────────────────────── POST-INDEX MODULES ─────────────────────────
+        for partition in all_partitions {
+            let mut body = Body::new(evidence.get("path"), "auto");
+            let sector_size = body.get_sector_size() as u64;
+            let partition_size_bytes: u64 = partition
+                .get::<u64, _>("size_sectors")
+                .saturating_mul(sector_size);
 
             let mut fs = match detect_filesystem(
                 &mut body,
-                partition.first_byte_addr as u64,
+                partition.get("first_byte_addr"),
                 partition_size_bytes,
             ) {
                 Ok(fs) => fs,
@@ -216,72 +245,46 @@ fn process_partitions(
                         &evidence_id,
                         ProgressMessageLevel::Main,
                         ProgressMessageType::Error,
-                        format!("Could not detect the filesystem: {}", err.to_string()),
+                        format!("Could not detect filesystem: {}", err),
                         &app,
                     );
-                    return;
+                    error!("Could not detect filesystem: {}", err);
+                    continue; // move on to the next partition
                 }
             };
 
-            // Module 1 - Artifact Parsing => Should be fast. Once done, the status will be updated to 4.
-            extract_artifacts(
-                &mut fs,
-                evidence_id,
-                partition.id.unwrap(),
+            // ── Module 1: Artifact extraction ───────────────────────────────────────
+            extract_artifacts(evidence_id, partition.get("id"), &app, &pool).await;
+
+            update_evidence_status(&pool, evidence_id, 4).await.ok();
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                "Successfully extracted artifacts",
                 &app,
-                pool.clone(),
-            )
-            .await;
+            );
 
-            // Update the evidence status in the database to 4 (Indexation Completed)
-            if let Err(err) = update_evidence_status(&pool, evidence_id, 4).await {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed to update evidence status: {err:?}"),
-                    &app,
-                );
-            } else {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Success,
-                    "Succesfully extracted artifacts",
-                    &app,
-                );
-            }
-
-            // Module 2 - File Identification => Will be slow. Once done the status will be updated to 5.
+            // ── Module 2: File-type identification ──────────────────────────────────
             identify_file_types(
                 &mut fs,
                 evidence_id,
-                partition.id.unwrap(),
+                partition.get("id"),
                 &app,
                 pool.clone(),
             )
             .await;
 
-            // Update the evidence status in the database to 4 (Indexation Completed)
-            if let Err(err) = update_evidence_status(&pool, evidence_id, 5).await {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed to update evidence status: {err:?}"),
-                    &app,
-                );
-            } else {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Success,
-                    "Succesfully finished file identification",
-                    &app,
-                );
-            }
+            update_evidence_status(&pool, evidence_id, 5).await.ok();
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                "Successfully finished file identification",
+                &app,
+            );
 
-            // Module 3 - TBD => We can add more status here.
+            // ── Module 3: (reserved for future work) ────────────────────────────────
         }
     });
 }

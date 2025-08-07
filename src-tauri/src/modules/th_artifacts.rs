@@ -1,13 +1,9 @@
-use exhume_body::Body;
-use exhume_filesystem::detected_fs::detect_filesystem;
-use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
-use exhume_filesystem::{File, Filesystem};
-use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
+use exhume_filesystem::File;
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 //use futures::TryStreamExt;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
+use sqlx::sqlite::SqlitePool;
 use std::fs;
 
 use tauri::AppHandle;
@@ -69,15 +65,12 @@ impl ArtifactSet {
     }
 }
 
-pub async fn extract_artifacts<T: Filesystem>(
-    fs: &mut T,
+pub async fn extract_artifacts(
     evidence_id: i64,
     partition_id: i64,
     app: &AppHandle,
-    pool: Pool<Sqlite>,
-) where
-    T::DirectoryType: DirectoryCommon,
-{
+    pool: &SqlitePool,
+) {
     let artifacts_path = "artifacts.yaml".to_string();
 
     let stmt = r#"
@@ -105,7 +98,7 @@ pub async fn extract_artifacts<T: Filesystem>(
                 .bind(path)
                 .bind(evidence_id)
                 .bind(partition_id)
-                .fetch_all(&pool)
+                .fetch_all(pool)
                 .await
                 .map_err(|e| format!("Failed to query database: {}", e))
                 .unwrap();
@@ -121,7 +114,7 @@ pub async fn extract_artifacts<T: Filesystem>(
                     .bind(&artifact.parser)
                     .bind(&artifact.tag)
                     .bind(format!("{:?}", &artifact.category))
-                    .execute(&pool)
+                    .execute(pool)
                     .await
                 {
                     emit_progress_event(

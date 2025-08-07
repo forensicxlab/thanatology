@@ -146,12 +146,22 @@ const PartitionsComponent: React.FC<PartitionsComponentProps> = ({
       { field: "id", headerName: "ID", width: 70 },
       {
         field: "starting_lba",
-        headerName: "Start LBA",
+        headerName: "Start Address (LBA)",
         renderCell: (p) => `0x${p.value.toString(16).toUpperCase()}`,
       },
       {
         field: "ending_lba",
-        headerName: "End LBA",
+        headerName: "End Address (LBA)",
+        renderCell: (p) => `0x${p.value.toString(16).toUpperCase()}`,
+      },
+      {
+        field: "first_byte_addr",
+        headerName: "Start Address (Absolute)",
+        renderCell: (p) => `0x${p.value.toString(16).toUpperCase()}`,
+      },
+      {
+        field: "size_sectors",
+        headerName: "Size (sectors)",
         renderCell: (p) => `0x${p.value.toString(16).toUpperCase()}`,
       },
       { field: "partition_guid_string", headerName: "Partition GUID" },

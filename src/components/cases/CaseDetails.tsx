@@ -125,7 +125,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
       <Box
         sx={{
           position: "fixed",
-          bottom: 16,
+          bottom: 35,
           right: 16,
           display: "flex",
           flexDirection: "column",

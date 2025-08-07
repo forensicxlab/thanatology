@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
-import { MBRPartitionEntry, FsInfo } from "../../../../../dbutils/types";
+import { PartitionEntry, FsInfo } from "../../../../../dbutils/types";
 import { useSnackbar } from "../../../../SnackbarProvider";
 import { Box, Paper, Typography } from "@mui/material";
 import { GridView, Info, TableBar } from "@mui/icons-material";
@@ -13,7 +13,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 interface FileSystemProps {
   path: String;
-  partition: MBRPartitionEntry;
+  partition: PartitionEntry;
 }
 
 const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
@@ -27,7 +27,7 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
         const info: FsInfo = await invoke("get_fs_info", {
           path: path,
           offset: partition.first_byte_addr,
-          size: partition.sector_size * partition.size_sectors,
+          size: partition.size_sectors,
         });
         setFsInfo(info);
       } catch (error) {

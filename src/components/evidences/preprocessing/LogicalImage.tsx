@@ -108,8 +108,7 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
       diskImageFormat,
       selectedMbrPartitions: [],
       selectedGptPartitions: [],
-      selectedLogicalPartition,
-      extractionModules: [],
+      //selectedLogicalPartition,
     };
 
     try {
