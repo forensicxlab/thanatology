@@ -34,6 +34,14 @@ export default function Terminal() {
       rows: term.rows,
     });
 
+    // if (cwd) {
+    //   const cd =
+    //     os === "windows"
+    //       ? `Set-Location -LiteralPath "${cwd}"\r`
+    //       : `cd "${cwd}"\r`;
+    //   pty.write(cd);
+    // }
+
     pty.onData((data) => term.write(data));
     pty.onExit(({ exitCode }) => {
       term.write(`\n\nProgram exit: ${exitCode}`);

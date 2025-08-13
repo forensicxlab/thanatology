@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import AppBar from "@mui/material/AppBar";
 import Toolbar from "@mui/material/Toolbar";
 import IconButton from "@mui/material/IconButton";
@@ -20,29 +20,55 @@ interface TermDescriptor {
   label: string;
 }
 
-/**
- * BottomActionBar — VS Code‑style bottom panel with terminal tabs.
- */
 export default function BottomActionBar() {
-  // ───────── Drawer state ─────────
   const [open, setOpen] = useState(false);
-  const [height, setHeight] = useState<number>(window.innerHeight * 0.5); // px
+  const [height, setHeight] = useState<number>(window.innerHeight * 0.5);
   const [full, setFull] = useState(false);
 
-  // ───────── Terminal‑manager state ─────────
-  const [tabs, setTabs] = useState<TermDescriptor[]>([]); // start empty → auto‑spawn on first open
+  const [tabs, setTabs] = useState<TermDescriptor[]>([]);
   const [activeTab, setActiveTab] = useState(0);
   const nextId = useRef(0);
 
-  // ──────────────────────────────────────────────────────────────────────────────
-  // Drawer helpers
-  // ──────────────────────────────────────────────────────────────────────────────
+  // Dragging state
+  const isResizing = useRef(false);
+  const startY = useRef(0);
+  const startHeight = useRef(0);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current || full) return;
+      const deltaY = startY.current - e.clientY;
+      let newHeight = Math.min(
+        window.innerHeight,
+        Math.max(100, startHeight.current + deltaY),
+      );
+      setHeight(newHeight);
+      e.preventDefault();
+    };
+
+    const handleMouseUp = () => {
+      isResizing.current = false;
+      document.body.style.cursor = "default";
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [full]);
+
+  const startResize = (e: React.MouseEvent) => {
+    isResizing.current = true;
+    startY.current = e.clientY;
+    startHeight.current = height;
+    document.body.style.cursor = "ns-resize";
+    e.preventDefault();
+  };
+
   const toggleFullScreen = () => setFull((f) => !f);
 
-  /**
-   * Toggle drawer visibility from the toolbar icon.
-   * – If opening and there are no tabs, create one automatically.
-   */
   const handleToolbarToggle = () => {
     setOpen((prev) => {
       const next = !prev;
@@ -54,9 +80,6 @@ export default function BottomActionBar() {
     });
   };
 
-  // ──────────────────────────────────────────────────────────────────────────────
-  // Tab helpers
-  // ──────────────────────────────────────────────────────────────────────────────
   const addTerminal = () => {
     setTabs((ts) => {
       const newTabs = [...ts, { id: nextId.current++, label: `Shell` }];
@@ -77,7 +100,6 @@ export default function BottomActionBar() {
         return prev;
       });
 
-      // auto‑hide drawer if that was the last tab
       if (remaining.length === 0) {
         setOpen(false);
       }
@@ -86,12 +108,8 @@ export default function BottomActionBar() {
     });
   };
 
-  // ──────────────────────────────────────────────────────────────────────────────
-  // Render
-  // ──────────────────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ───────── Bottom app‑bar (quick actions) ───────── */}
       <AppBar
         position="fixed"
         sx={(theme) => ({
@@ -108,7 +126,6 @@ export default function BottomActionBar() {
           sx={{ minHeight: 28, justifyContent: "flex-end", px: 1 }}
         >
           <IconButton size="small" onClick={handleToolbarToggle}>
-            {/* Change icon color when drawer is active */}
             <TerminalIcon
               fontSize="small"
               color={open ? "primary" : "inherit"}
@@ -117,14 +134,13 @@ export default function BottomActionBar() {
         </Toolbar>
       </AppBar>
 
-      {/* ───────── Bottom Drawer (terminal pane) ───────── */}
       <Drawer
         anchor="bottom"
         variant="persistent"
         open={open}
         onClose={() => setOpen(false)}
         hideBackdrop
-        ModalProps={{ keepMounted: true }} // Preserve xterms while hidden
+        ModalProps={{ keepMounted: true }}
         slotProps={{
           paper: {
             sx: {
@@ -137,10 +153,17 @@ export default function BottomActionBar() {
           },
         }}
       >
-        {/* Drag‑bar / resize‑handle (placeholder, non‑interactive) */}
-        <Box sx={{ height: 4, bgcolor: "divider", zIndex: 1 }} />
+        {/* Resize handle */}
+        <Box
+          sx={{
+            height: 6,
+            bgcolor: "divider",
+            cursor: full ? "default" : "ns-resize",
+            "&:hover": { bgcolor: "text.secondary" },
+          }}
+          onMouseDown={startResize}
+        />
 
-        {/* ───────── Tab‑bar & actions ───────── */}
         <Toolbar variant="dense" sx={{ minHeight: 32, pr: 1 }}>
           <Tabs
             value={activeTab}
@@ -162,7 +185,7 @@ export default function BottomActionBar() {
                       size="small"
                       sx={{ ml: 0.5 }}
                       onClick={(e) => {
-                        e.stopPropagation(); // keep tab-selection intact
+                        e.stopPropagation();
                         closeTerminal(t.id);
                       }}
                     >
@@ -174,7 +197,6 @@ export default function BottomActionBar() {
             ))}
           </Tabs>
 
-          {/* add / full‑screen / hide‑drawer buttons */}
           <IconButton size="small" sx={{ ml: 0.5 }} onClick={addTerminal}>
             <AddIcon fontSize="small" />
           </IconButton>
@@ -194,7 +216,6 @@ export default function BottomActionBar() {
           </IconButton>
         </Toolbar>
 
-        {/* ───────── Terminals themselves ───────── */}
         <Box sx={{ flex: 1, position: "relative" }}>
           {tabs.map((t, idx) => (
             <Box
@@ -204,10 +225,6 @@ export default function BottomActionBar() {
                 height: "100%",
               }}
             >
-              {/*
-                The Terminal component is responsible for spawning and wiring its PTY.
-                We simply mount / unmount it.
-              */}
               <Terminal />
             </Box>
           ))}

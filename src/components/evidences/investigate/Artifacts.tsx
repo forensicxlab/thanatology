@@ -100,8 +100,6 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         partition_id,
       )) as ArtifactWithFile[];
 
-      console.log(data);
-
       /* Flush the row update synchronously so the DOM is updated immediately */
       ReactDOM.flushSync(() => {
         setLoading(false);
@@ -283,6 +281,14 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         getDetailPanelHeight={getDetailPanelHeight}
         initialState={{
           pinnedColumns: { left: [GRID_DETAIL_PANEL_TOGGLE_FIELD] },
+          columns: {
+            columnVisibilityModel: {
+              permissions: false, // Hide 'age' column by default
+              group: false, // Hide 'fullName' column by default
+              modified: false,
+              accessed: false,
+            },
+          },
         }}
         sx={{
           "& .MuiDataGrid-detailPanel": {

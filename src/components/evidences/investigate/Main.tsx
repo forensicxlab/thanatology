@@ -13,6 +13,7 @@ import {
   Fingerprint,
   Home,
   Hub,
+  List,
   PermMedia,
   Settings,
   Timeline,
@@ -23,6 +24,7 @@ import Network from "./categories/network/Network";
 import { PartitionSelection } from "./PartitionSelection";
 import Users from "./categories/users/Users";
 import Applications from "./categories/applications/Applications";
+import Media from "./categories/media/Media";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -155,10 +157,21 @@ const InvestigateLinux: React.FC = () => {
                 }}
               />
               <Tab
+                icon={<List />}
+                iconPosition="start"
+                label="Files"
+                {...a11yProps(1)}
+                sx={{
+                  fontSize: "0.75rem",
+                  minHeight: 0,
+                  justifyContent: "left",
+                }}
+              />
+              <Tab
                 icon={<Settings />}
                 iconPosition="start"
                 label="System"
-                {...a11yProps(1)}
+                {...a11yProps(2)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -169,7 +182,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<Hub />}
                 iconPosition="start"
                 label="Network"
-                {...a11yProps(2)}
+                {...a11yProps(3)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -180,7 +193,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<Fingerprint />}
                 iconPosition="start"
                 label="Users"
-                {...a11yProps(3)}
+                {...a11yProps(4)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -191,7 +204,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<PermMedia />}
                 iconPosition="start"
                 label="Multimedia"
-                {...a11yProps(4)}
+                {...a11yProps(5)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -202,7 +215,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<Apps />}
                 iconPosition="start"
                 label="Applications"
-                {...a11yProps(5)}
+                {...a11yProps(6)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -213,7 +226,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<Timeline />}
                 iconPosition="start"
                 label="Timeline"
-                {...a11yProps(6)}
+                {...a11yProps(7)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -224,7 +237,7 @@ const InvestigateLinux: React.FC = () => {
                 icon={<BlurOn />}
                 iconPosition="start"
                 label="Explore"
-                {...a11yProps(7)}
+                {...a11yProps(8)}
                 sx={{
                   fontSize: "0.75rem",
                   minHeight: 0,
@@ -241,37 +254,45 @@ const InvestigateLinux: React.FC = () => {
               <TabPanel value={value} index={0}>
                 <Summary evidence={evidence} partitionId={selectedPartition} />
               </TabPanel>
+
               <TabPanel value={value} index={1}>
+                Files
+              </TabPanel>
+
+              <TabPanel value={value} index={2}>
                 <System
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
               </TabPanel>
-              <TabPanel value={value} index={2}>
+              <TabPanel value={value} index={3}>
                 <Network
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
               </TabPanel>
-              <TabPanel value={value} index={3}>
+              <TabPanel value={value} index={4}>
                 <Users
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
               </TabPanel>
-              <TabPanel value={value} index={4}>
-                Multimedia content
-              </TabPanel>
               <TabPanel value={value} index={5}>
+                <Media
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                ></Media>
+              </TabPanel>
+              <TabPanel value={value} index={6}>
                 <Applications
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
               </TabPanel>
-              <TabPanel value={value} index={6}>
+              <TabPanel value={value} index={7}>
                 Timeline content
               </TabPanel>
-              <TabPanel value={value} index={7}>
+              <TabPanel value={value} index={8}>
                 Explore content
               </TabPanel>
             </Box>

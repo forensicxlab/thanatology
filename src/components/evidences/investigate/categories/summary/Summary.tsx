@@ -67,29 +67,21 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
 
   return (
     <Grid container spacing={1}>
-      <Grid size={{ lg: 6, md: 12, sm: 12, xs: 12 }}>
-        <Grid container spacing={2}>
-          <Grid size={12}>
-            {isMbr ? (
-              <MBRPartition
-                mbrPartition={partition as MBRPartitionEntry}
-                index={0}
-              />
-            ) : (
-              <GPTPartition
-                gptPartition={partition as GPTPartitionEntry}
-                index={0}
-              />
-            )}
-          </Grid>
-          <Grid size={12}>
-            <FileSystem path={evidence.path} partition={partition} />
-          </Grid>
-        </Grid>
+      <Grid size={6}>
+        {isMbr ? (
+          <MBRPartition
+            mbrPartition={partition as MBRPartitionEntry}
+            index={0}
+          />
+        ) : (
+          <GPTPartition
+            gptPartition={partition as GPTPartitionEntry}
+            index={0}
+          />
+        )}
       </Grid>
-
       {evidence.status > 1 ? (
-        <Grid size={{ lg: 6, md: 12, sm: 12, xs: 12 }}>
+        <Grid size={6}>
           <ProcessingTask
             status={evidence.status}
             evidenceName={evidence.name}
@@ -100,6 +92,10 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
       ) : (
         <></>
       )}
+
+      <Grid size={12}>
+        <FileSystem path={evidence.path} partition={partition} />
+      </Grid>
     </Grid>
   );
 };

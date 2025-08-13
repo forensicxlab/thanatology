@@ -21,6 +21,7 @@ import PreProcessing from "./components/evidences/preprocessing/PreProcessing";
 import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/Main";
 import { LicenseInfo } from "@mui/x-license";
+import RawViewer from "./RawViewer";
 
 const darkTheme = createTheme({
   palette: {
@@ -77,6 +78,10 @@ const App: React.FC = () => {
                 <Route
                   path="evidences/investigate/:id"
                   element={<LinuxInvestigation />}
+                />
+                <Route
+                  path="viewer/:id"
+                  element={<RawViewer fileId={393424} fileSize={113712} />}
                 />
               </Route>
             </Routes>

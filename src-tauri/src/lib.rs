@@ -1,17 +1,18 @@
 use env_logger;
-use exhume_body::Body;
-use exhume_filesystem::detected_fs::detect_filesystem;
+use exhume_body::{Body, BodySlice};
+use exhume_filesystem::detected_fs::{detect_filesystem, DetectedFs};
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
+use std::sync::{Arc, Mutex};
 
 pub mod modules;
 
 use modules::th_artifacts::extract_artifacts;
-use modules::th_filesystem::get_fs_info;
+use modules::th_filesystem::{get_fs_info, read_file_bytes, read_file_prefix, read_file_slice};
 use modules::th_identifier::identify_file_types;
 use modules::th_index::index_partition;
 
@@ -374,6 +375,7 @@ pub fn run(init_migrations: Vec<Migration>) {
         .filter_level(log::LevelFilter::Info)
         .init();
     tauri::Builder::default()
+        .manage(Arc::new(Mutex::new(None::<DetectedFs<BodySlice>>)))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -397,6 +399,9 @@ pub fn run(init_migrations: Vec<Migration>) {
             new_shell,
             read_chunk,
             file_size,
+            read_file_slice,
+            read_file_prefix,
+            read_file_bytes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

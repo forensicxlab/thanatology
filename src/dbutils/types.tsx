@@ -147,6 +147,8 @@ export interface File {
   name: string;
   ftype: string;
   size: number;
+  sig_mime: string;
+  sig_name: string;
   metadata: string;
 }
 

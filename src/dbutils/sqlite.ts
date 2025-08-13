@@ -29,6 +29,27 @@ export async function createUser(username: string, db: Database | null) {
   return await db.execute("INSERT INTO users (name) VALUES ($1)", [username]);
 }
 
+export async function fetchFiles(
+  partition_id: number,
+  offset: number,
+  limit: number,
+): Promise<{ rows: File[]; rowCount: number }> {
+  const db = await Database.load("sqlite:thanatology.db");
+
+  const rows: File[] = await db.select(
+    "SELECT * FROM system_files WHERE partition_id = $1 LIMIT $2 OFFSET $3",
+    [partition_id, limit, offset],
+  );
+
+  const countResult: Array<any> = await db.select(
+    "SELECT COUNT(*) as count FROM system_files WHERE partition_id = $1",
+    [partition_id],
+  );
+  const rowCount = countResult[0].count;
+
+  return { rows, rowCount };
+}
+
 export async function createCaseAndEvidence(
   caseData: Case,
   evidenceList: Evidence[],
@@ -473,35 +494,25 @@ export async function getFileByEvidenceAndAbsolutePath(
   return rows[0];
 }
 
-/**
- * Searches for Files using a SQL LIKE query.
- * @param db - The Database instance (if null, a new connection is loaded).
- * @param evidenceId - The evidence ID.
- * @param partitionId - The partition ID.
- * @param pattern - The search pattern (e.g. '%term%').
- * @returns An array of matching File objects.
- */
-export async function searchFiles(
-  db: Database | null,
-  evidenceId: number,
-  partitionId: number,
-  pattern: string,
-): Promise<File[]> {
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
-  const query = `
-    SELECT * FROM system_files
-    WHERE evidence_id = $1 AND partition_id = $2
-      AND (filename LIKE $3 OR absolute_path LIKE $3)
-    ORDER BY file_type DESC, filename ASC
-  `;
-  const files: File[] = await db.select(query, [
-    evidenceId,
-    partitionId,
-    pattern,
-  ]);
-  return files;
+export async function searchMedia(
+  partition_id: number,
+  offset: number,
+  limit: number,
+): Promise<{ rows: File[]; rowCount: number }> {
+  const db = await Database.load("sqlite:thanatology.db");
+
+  const rows: File[] = await db.select(
+    "SELECT * FROM system_files WHERE partition_id = $1 AND ( (sig_mime LIKE 'image%') OR (sig_mime LIKE 'video%') OR (sig_mime LIKE 'audio%') ) LIMIT $2 OFFSET $3",
+    [partition_id, limit, offset],
+  );
+
+  const countResult: Array<any> = await db.select(
+    "SELECT COUNT(*) as count FROM system_files WHERE partition_id = $1 AND ( (sig_mime LIKE 'image%') OR (sig_mime LIKE 'video%') OR (sig_mime LIKE 'audio%') )",
+    [partition_id],
+  );
+  const rowCount = countResult[0].count;
+
+  return { rows, rowCount };
 }
 
 export async function fetchArtifactsByCategory(
