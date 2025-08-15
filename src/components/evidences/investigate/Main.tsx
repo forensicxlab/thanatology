@@ -20,11 +20,14 @@ import {
 } from "@mui/icons-material";
 import Summary from "./categories/summary/Summary";
 import System from "./categories/system/System";
+import Timeliner from "./categories/timeline/Timeliner";
+
 import Network from "./categories/network/Network";
 import { PartitionSelection } from "./PartitionSelection";
 import Users from "./categories/users/Users";
 import Applications from "./categories/applications/Applications";
 import Media from "./categories/media/Media";
+import FileDataGrid from "./categories/files/FilesDataGrid";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -256,7 +259,7 @@ const InvestigateLinux: React.FC = () => {
               </TabPanel>
 
               <TabPanel value={value} index={1}>
-                Files
+                <FileDataGrid partition_id={selectedPartition} />
               </TabPanel>
 
               <TabPanel value={value} index={2}>
@@ -290,7 +293,10 @@ const InvestigateLinux: React.FC = () => {
                 />
               </TabPanel>
               <TabPanel value={value} index={7}>
-                Timeline content
+                <Timeliner
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
               </TabPanel>
               <TabPanel value={value} index={8}>
                 Explore content

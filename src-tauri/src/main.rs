@@ -215,6 +215,17 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "evidence_artifacts",
+            sql: r#"
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_ev_part ON system_files (evidence_id, partition_id);
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_created  ON system_files (created);
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_accessed ON system_files (accessed);
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_modified ON system_files (modified);
+            "#,
+            kind: MigrationKind::Up,
+        },
     ];
 
     thanatology_lib::run(init_migrations);

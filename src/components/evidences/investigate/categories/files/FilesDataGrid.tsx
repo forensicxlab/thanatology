@@ -6,15 +6,16 @@ import {
   GridActionsCellItem,
   GridRenderCellParams,
   useGridApiRef,
+  GridFilterModel,
   GridRowParams,
 } from "@mui/x-data-grid-pro";
 import { Chip, Tooltip } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { InfoOutlined } from "@mui/icons-material";
 import { useNavigate } from "react-router";
-import UnixToISO8601UTC from "../common/UnixToUTC";
-import { fetchFiles, searchFileTypes } from "../../../dbutils/sqlite";
-import { File } from "../../../dbutils/types";
+import UnixToISO8601UTC from "../../../common/UnixToUTC";
+import { getFiles } from "../../../../../dbutils/sqlite";
+import { File } from "../../../../../dbutils/types";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -60,7 +61,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         minWidth: 140,
         renderCell: (params: GridRenderCellParams) => (
           <Chip
-            label={params.value}
+            label={params.value ?? "unknown"}
             size="small"
             color="primary"
             variant="outlined"
@@ -125,7 +126,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
             onClick={() => {
               onRowActivate?.(row);
               // Keep your existing file-viewer nav too:
-              // navigate(`/viewer/${row.file_id}`);
+              navigate(`/viewer/${row.file_id}`);
             }}
             showInMenu={false}
           />,
@@ -138,15 +139,18 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     [onRowActivate],
   );
 
+  const [queryOptions, setQueryOptions] = React.useState({});
+
   const fetchData = React.useCallback(async () => {
     const { page, pageSize } = paginationModel;
     const offset = page * pageSize;
 
     setIsLoading(true);
-    const { rows: newRows, rowCount: total } = await searchFileTypes(
+    const { rows: newRows, rowCount: total } = await getFiles(
       partition_id,
       offset,
       pageSize,
+      queryOptions.filterModel as any, // matches FilterModel shape used above
     );
 
     ReactDOM.flushSync(() => {
@@ -158,12 +162,11 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     onRowsLoaded?.(newRows);
 
     await sleep(0);
-
     apiRef.current?.autosizeColumns({
       includeHeaders: true,
       includeOutliers: true,
     });
-  }, [paginationModel, partition_id, apiRef, onRowsLoaded]);
+  }, [paginationModel, partition_id, apiRef, onRowsLoaded, queryOptions]);
 
   React.useEffect(() => {
     fetchData();
@@ -175,6 +178,10 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     },
     [onRowActivate],
   );
+
+  const onFilterChange = React.useCallback((filterModel: GridFilterModel) => {
+    setQueryOptions({ filterModel: { ...filterModel } });
+  }, []);
 
   return (
     <div style={{ width: "100%", height: "70vh" }}>
@@ -190,7 +197,9 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         onPaginationModelChange={setPaginationModel}
         pageSizeOptions={[10, 20, 50]}
         rowHeight={50}
+        onFilterModelChange={onFilterChange}
         density="compact"
+        showToolbar={true}
         onRowDoubleClick={handleRowDoubleClick}
       />
     </div>

@@ -50,13 +50,10 @@ const Media: React.FC<MediaProps> = ({ partitionId }) => {
   }, []);
 
   return (
-    <Box sx={{ p: 1 }}>
+    <Box>
       <Grid container spacing={2}>
         {/* Left: DataGrid */}
         <Grid size={12}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Files
-          </Typography>
           <FileDataGrid
             partition_id={partitionId}
             onRowsLoaded={setLoadedRows}
@@ -66,9 +63,6 @@ const Media: React.FC<MediaProps> = ({ partitionId }) => {
 
         {/* Right: Gallery */}
         <Grid size={12}>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Media (images / video / audio) from current page
-          </Typography>
           <MediaGallery
             media={media}
             openById={openById}

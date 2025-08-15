@@ -13,11 +13,12 @@ import MBRPartition from "../../../common/MBRPartition";
 import GPTPartition from "../../../common/GPTPartition";
 import ProcessingTask from "../../../processing/ProcessingTask";
 import FileSystem from "./FileSystem";
+import TimelineScatter from "../timeline/TimelineScatter";
 
 /* ------------------------------------------------------------------ */
 interface SummaryProps {
   evidence: Evidence; // full evidence record
-  partitionId: number | null; // DB id of the partition to show
+  partitionId: number | null;
 }
 
 /* ================================================================== */

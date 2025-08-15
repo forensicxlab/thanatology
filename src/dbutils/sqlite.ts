@@ -8,6 +8,7 @@ import {
   File,
   GPTPartitionEntry,
 } from "./types";
+import type { TimestampType, TimestampCount } from "./types";
 
 export async function createUser(username: string, db: Database | null) {
   if (!db) {
@@ -566,4 +567,252 @@ export async function fetchArtifactsByCategory(
   ])) as any[];
   console.log(rows);
   return rows;
+}
+
+/* Server side processing for FilesDataGrid.tsx, To be put in another file */
+
+type LogicOperator = "and" | "or";
+type Operator =
+  | "contains"
+  | "doesNotContain"
+  | "equals"
+  | "startsWith"
+  | "endsWith"
+  | "isEmpty"
+  | "isNotEmpty";
+
+type FilterItem = {
+  field: string;
+  operator: Operator;
+  value?: string | number | null;
+};
+
+type FilterModel = {
+  items?: FilterItem[];
+  logicOperator?: LogicOperator;
+  quickFilterValues?: (string | number)[];
+  quickFilterLogicOperator?: LogicOperator;
+};
+
+const FIELD_MAP: Record<string, string> = {
+  id: "id",
+  evidence_id: "evidence_id",
+  partition_id: "partition_id",
+  identifier: "identifier",
+  absolute_path: "absolute_path",
+  name: "name",
+  ftype: "ftype",
+  size: "size",
+  created: "created",
+  modified: "modified",
+  accessed: "accessed",
+  permissions: "permissions",
+  owner: "owner",
+  group: `"group"`,
+  sig_name: "sig_name",
+  sig_mime: "sig_mime",
+  sig_exts: "sig_exts",
+  metadata: "metadata",
+};
+
+const QUICK_FILTER_COLUMNS: string[] = [
+  "absolute_path",
+  "name",
+  "ftype",
+  "permissions",
+  "owner",
+  `"group"`,
+  "sig_name",
+  "sig_mime",
+  "sig_exts",
+  // numeric -> cast to text for LIKE
+  "CAST(identifier AS TEXT)",
+  "CAST(size AS TEXT)",
+];
+
+function isTextLikeField(field: string): boolean {
+  return [
+    "absolute_path",
+    "name",
+    "ftype",
+    "permissions",
+    "owner",
+    "group",
+    "sig_name",
+    "sig_mime",
+    "sig_exts",
+    "metadata",
+  ].includes(field);
+}
+
+function escapeLike(raw: string): string {
+  return raw.replace(/[%_\\]/g, (m) => "\\" + m);
+}
+
+function buildFiltersWithDollarPlaceholders(
+  model: FilterModel | undefined,
+  startIndex: number, // first $ index available (we'll use 2 because $1 is partition_id)
+) {
+  const items = model?.items ?? [];
+  const logic = (model?.logicOperator ?? "and").toLowerCase() as LogicOperator;
+  const qfValues = model?.quickFilterValues ?? [];
+  const qfLogic = (
+    model?.quickFilterLogicOperator ?? "and"
+  ).toLowerCase() as LogicOperator;
+
+  let p = startIndex;
+  const params: any[] = [];
+  const clauses: string[] = [];
+
+  const itemClauses: string[] = [];
+  for (const item of items) {
+    const mapped = FIELD_MAP[item.field];
+    if (!mapped) continue;
+
+    const op = item.operator;
+    const valRaw = item.value;
+
+    const likeOp =
+      op === "contains" ||
+      op === "doesNotContain" ||
+      op === "startsWith" ||
+      op === "endsWith";
+
+    const exprBase =
+      likeOp && !isTextLikeField(item.field)
+        ? `LOWER(CAST(${mapped} AS TEXT))`
+        : likeOp
+          ? `LOWER(${mapped})`
+          : mapped;
+
+    switch (op) {
+      case "contains": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "doesNotContain": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        const expr =
+          exprBase.startsWith("LOWER(") || exprBase.startsWith("COALESCE(")
+            ? `COALESCE(${exprBase}, '')`
+            : `COALESCE(LOWER(CAST(${mapped} AS TEXT)), '')`;
+        itemClauses.push(`${expr} NOT LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "equals": {
+        const ph = `$${++p}`;
+        itemClauses.push(`${mapped} = ${ph}`);
+        params.push(valRaw);
+        break;
+      }
+      case "startsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "endsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}`);
+        break;
+      }
+      case "isEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NULL OR TRIM(CAST(${mapped} AS TEXT)) = '')`,
+        );
+        break;
+      }
+      case "isNotEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NOT NULL AND TRIM(CAST(${mapped} AS TEXT)) <> '')`,
+        );
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (itemClauses.length) {
+    clauses.push(`(${itemClauses.join(` ${logic.toUpperCase()} `)})`);
+  }
+
+  if (qfValues.length) {
+    const perValueGroups: string[] = [];
+    for (const raw of qfValues) {
+      const v = String(raw ?? "").toLowerCase();
+      const perColumn: string[] = [];
+      for (const col of QUICK_FILTER_COLUMNS) {
+        const ph = `$${++p}`;
+        perColumn.push(`LOWER(${col}) LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v)}%`);
+      }
+      perValueGroups.push(`(${perColumn.join(" OR ")})`);
+    }
+    clauses.push(`(${perValueGroups.join(` ${qfLogic.toUpperCase()} `)})`);
+  }
+
+  return {
+    where: clauses.length ? clauses.join(" AND ") : "",
+    params,
+    lastIndex: p,
+  };
+}
+
+export async function getFiles(
+  partition_id: number,
+  offset: number,
+  limit: number,
+  filterModel?: FilterModel,
+): Promise<{ rows: File[]; rowCount: number }> {
+  const db = await Database.load("sqlite:thanatology.db");
+
+  // $1 is always the partition_id
+  const base = `partition_id = $1`;
+
+  const built = buildFiltersWithDollarPlaceholders(
+    filterModel,
+    /* startIndex */ 1,
+  );
+
+  // Next placeholders after dynamic filters:
+  const limitIndex = built.lastIndex + 1;
+  const offsetIndex = built.lastIndex + 2;
+
+  const whereSql = [base, built.where].filter(Boolean).join(" AND ");
+
+  const rowsSql = `
+    SELECT *
+    FROM system_files
+    WHERE ${whereSql}
+    LIMIT $${limitIndex}
+    OFFSET $${offsetIndex}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*) AS count
+    FROM system_files
+    WHERE ${whereSql}
+  `;
+
+  const dynamicParams = built.params; // corresponds to $2..$N depending on how many were created
+  const rowsParams = [partition_id, ...dynamicParams, limit, offset];
+  const countParams = [partition_id, ...dynamicParams];
+
+  const rows: File[] = await db.select(rowsSql, rowsParams);
+  const countResult: Array<{ count: number }> = await db.select(
+    countSql,
+    countParams,
+  );
+  const rowCount = Number(countResult?.[0]?.count ?? 0);
+
+  return { rows, rowCount };
 }

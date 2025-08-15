@@ -142,14 +142,23 @@ export interface FsInfo {
 }
 export interface File {
   id: number;
-  identifier: number;
+  evidence_id: number;
+  partition_id: number;
+  identifier: number; // INTEGER in DB; if this can be a string, switch to string
   absolute_path: string;
   name: string;
   ftype: string;
   size: number;
-  sig_mime: string;
-  sig_name: string;
-  metadata: string;
+  created: number | null; // UNIX timestamp, can be null
+  modified: number | null;
+  accessed: number | null;
+  permissions: string | null;
+  owner: string | null;
+  group: string | null; // quoted in DB, must be renamed in TS
+  sig_name: string | null;
+  sig_mime: string | null;
+  sig_exts: string | null;
+  metadata: string; // JSON as string from DB
 }
 
 export interface ArtifactWithFile {
@@ -175,4 +184,13 @@ export interface ArtifactWithFile {
   sig_name: string;
   sig_mime: string;
   sig_exts: string;
+}
+
+// types.ts
+export type TimestampType = "created" | "accessed" | "modified";
+
+export interface TimestampCount {
+  type: TimestampType; // 'created' | 'accessed' | 'modified'
+  ts: number; // epoch ms (what the chart expects)
+  count: number; // number of files with this (bucketed) timestamp
 }

@@ -156,6 +156,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         pageSizeOptions={[10, 20, 50]}
         rowHeight={50}
         density="compact"
+        showToolbar
         onRowDoubleClick={handleRowDoubleClick}
       />
     </div>

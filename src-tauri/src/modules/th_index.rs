@@ -159,6 +159,10 @@ async fn index_filesystem<T: Filesystem>(
     "#;
 
     for f in &files {
+        let created = f.created.unwrap() as i64;
+        let modified = f.modified.unwrap() as i64;
+        let accessed = f.accessed.unwrap() as i64;
+
         if let Err(e) = sqlx::query(stmt)
             .bind(evidence_id)
             .bind(partition_id)
@@ -167,9 +171,9 @@ async fn index_filesystem<T: Filesystem>(
             .bind(&f.name)
             .bind(&f.ftype)
             .bind(f.size as i64)
-            .bind(Some(f.created).unwrap())
-            .bind(Some(f.modified).unwrap())
-            .bind(Some(f.accessed).unwrap())
+            .bind(Some(created))
+            .bind(Some(modified))
+            .bind(Some(accessed))
             .bind(&f.permissions)
             .bind(&f.owner)
             .bind(&f.group)
