@@ -4,13 +4,7 @@ import Toolbar from "@mui/material/Toolbar";
 function ResponsiveAppBar() {
   return (
     <AppBar position="fixed">
-      <Toolbar
-        variant="dense"
-        sx={{
-          backgroundColor: "rgba(0,0,0,0.5)",
-        }}
-        disableGutters
-      >
+      <Toolbar variant="dense" disableGutters>
         <Box
           sx={{
             flexGrow: 10,

@@ -108,12 +108,7 @@ export default function MiniDrawer() {
 
   return (
     <Box sx={{ display: "flex" }}>
-      <CssBaseline />
       <Drawer variant="permanent" open={open}>
-        <DrawerHeader>
-          <ResponsiveAppBar />
-        </DrawerHeader>
-        <Divider />
         <List>
           {["", "Cases", "Tasks", "Settings"].map((text, index) => (
             <ListItem key={index} disablePadding sx={{ display: "block" }}>

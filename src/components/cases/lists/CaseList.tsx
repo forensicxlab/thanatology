@@ -124,7 +124,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
   ];
 
   return (
-    <Box sx={{ height: "70vh", width: "100%" }}>
+    <Box sx={{ width: "100%" }}>
       <DataGridPro
         pagination
         rowHeight={30}
@@ -140,10 +140,9 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
         autoPageSize
       />
 
-      {/* Floating Action Buttons */}
       <Box
         sx={{
-          position: "absolute",
+          position: "fixed",
           bottom: 35,
           right: 16,
           display: "flex",

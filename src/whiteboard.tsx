@@ -4,8 +4,4 @@ import WhiteBoardApp from "./WhiteBoardApp";
 
 ReactDOM.createRoot(
   document.getElementById("whiteboard") as HTMLElement,
-).render(
-  <React.StrictMode>
-    <WhiteBoardApp />
-  </React.StrictMode>,
-);
+).render(<React.StrictMode>{/*<WhiteBoardApp />*/}</React.StrictMode>);

@@ -9,7 +9,7 @@ import NewCaseForm from "../forms/NewCaseForm";
 import MultipleEvidenceForm from "../../evidences/forms/MultipleEvidenceForm";
 import FinalSummary from "./FinalSummary";
 import { Evidence } from "../../../dbutils/types";
-import { createCaseAndEvidence } from "../../../dbutils/sqlite";
+import { createCaseAndEvidences } from "../../../dbutils/cases";
 import Database from "@tauri-apps/plugin-sql";
 import { useNavigate } from "react-router";
 import { CheckCircle } from "@mui/icons-material";
@@ -110,27 +110,25 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
   const handleFinish = async () => {
     setIsSubmitting(true);
     try {
-      createCaseAndEvidence(
+      const caseId = await createCaseAndEvidences(
         {
-          id: 0,
           name,
           description,
-          collaborators: [1],
+          collaboratorIds: [1], // map from your selectedCollaborators if needed
         },
-        evidences,
-        database,
-      )
-        .then((result) => {
-          setCreatedCaseId(result.toString());
-          setActiveStep(steps.length);
-        })
-        .catch((error: any) => {
-          console.log(error);
-          // display_message("warning", error);
-        });
+        evidences.map((e) => ({
+          name: e.name,
+          type: e.type,
+          path: e.path,
+          description: e.description,
+        })),
+      );
+
+      setCreatedCaseId(caseId.toString());
+      setActiveStep(steps.length);
     } catch (error) {
       console.error("Error creating case:", error);
-      // TODO add error handling (e.g. display a message to the user).
+      // TODO: surface a user-visible message/snackbar
     } finally {
       setIsSubmitting(false);
     }

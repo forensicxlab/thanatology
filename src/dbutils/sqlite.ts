@@ -51,54 +51,6 @@ export async function fetchFiles(
   return { rows, rowCount };
 }
 
-export async function createCaseAndEvidence(
-  caseData: Case,
-  evidenceList: Evidence[],
-  db: Database | null,
-): Promise<number> {
-  // Change the Promise return type to 'number'
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
-
-  // Insert the case into the 'cases' table.
-  const caseInsertResult: Array<{ id: number }> = await db.select(
-    "INSERT INTO cases (name, description) VALUES ($1, $2) RETURNING id",
-    [caseData.name, caseData.description],
-  );
-
-  if (caseInsertResult.length === 0) {
-    throw new Error("Failed to retrieve the case ID.");
-  }
-  const caseId = caseInsertResult[0].id;
-
-  // Insert each collaborator into the join table 'case_collaborators'.
-  if (caseData.collaborators && caseData.collaborators.length > 0) {
-    for (const userId of caseData.collaborators) {
-      await db.execute(
-        "INSERT OR IGNORE INTO case_collaborators (case_id, user_id) VALUES ($1, $2)",
-        [caseId, userId],
-      );
-    }
-  }
-
-  // Insert each piece of evidence linked to this case.
-  for (const evidence of evidenceList) {
-    await db.execute(
-      "INSERT INTO evidence (case_id, name, type, path, description) VALUES ($1, $2, $3, $4, $5)",
-      [
-        caseId,
-        evidence.name,
-        evidence.type,
-        evidence.path,
-        evidence.description,
-      ],
-    );
-  }
-
-  return caseId;
-}
-
 export async function getCases(db: Database | null) {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
@@ -568,6 +520,96 @@ export async function fetchArtifactsByCategory(
   console.log(rows);
   return rows;
 }
+
+/**
+ * Aggregates timestamps from system_files into (type, ts, count).
+ * DB columns are Unix time **seconds** (INTEGER). We convert to **ms** for JS.
+ */
+export async function getTimestampCountsByType(
+  db: Database | null,
+  evidenceId: number,
+  partitionId: number,
+  opts?: {
+    bucket?: "second" | "minute" | "hour" | "day";
+    /** Range boundaries; accept ms or seconds (we normalize) */
+    start?: number | null;
+    end?: number | null;
+  },
+): Promise<TimestampCount[]> {
+  if (!db) db = await Database.load("sqlite:thanatology.db");
+
+  const bucket = opts?.bucket ?? "second";
+
+  // ---- normalize inputs: accept sec or ms and convert to *seconds* for SQL
+  const toMs = (ts: number) => (ts < 1e11 ? ts * 1000 : ts); // < 1e11 -> seconds
+  const startSec =
+    opts?.start != null ? Math.floor(toMs(opts.start) / 1000) : null;
+  const endSec = opts?.end != null ? Math.ceil(toMs(opts.end) / 1000) : null;
+
+  // Group in epoch *seconds*
+  const bucketExpr = (() => {
+    switch (bucket) {
+      case "minute":
+        return `(CAST(ts AS INTEGER) / 60) * 60`;
+      case "hour":
+        return `(CAST(ts AS INTEGER) / 3600) * 3600`;
+      case "day":
+        return `(CAST(ts AS INTEGER) / 86400) * 86400`;
+      default:
+        return `CAST(ts AS INTEGER)`;
+    }
+  })();
+
+  const rows = await db.select<{
+    type: TimestampType;
+    ts_sec: number;
+    count: number;
+  }>(
+    `
+      WITH events AS (
+        SELECT 'created'  AS type, created  AS ts
+        FROM system_files
+        WHERE evidence_id = $1 AND partition_id = $2
+          AND created IS NOT NULL
+          AND ($3 IS NULL OR created >= $3)
+          AND ($4 IS NULL OR created <= $4)
+        UNION ALL
+        SELECT 'accessed' AS type, accessed AS ts
+        FROM system_files
+        WHERE evidence_id = $1 AND partition_id = $2
+          AND accessed IS NOT NULL
+          AND ($3 IS NULL OR accessed >= $3)
+          AND ($4 IS NULL OR accessed <= $4)
+        UNION ALL
+        SELECT 'modified' AS type, modified AS ts
+        FROM system_files
+        WHERE evidence_id = $1 AND partition_id = $2
+          AND modified IS NOT NULL
+          AND ($3 IS NULL OR modified >= $3)
+          AND ($4 IS NULL OR modified <= $4)
+      ),
+      norm AS (
+        SELECT type, ${bucketExpr} AS ts_sec
+        FROM events
+      )
+      SELECT type, ts_sec, COUNT(*) AS count
+      FROM norm
+      GROUP BY type, ts_sec
+      ORDER BY ts_sec ASC, type ASC
+    `,
+    [evidenceId, partitionId, startSec, endSec],
+  );
+
+  return rows
+    .map((r) => ({
+      type: r.type,
+      ts: r.ts_sec * 1000, // seconds → ms for chart
+      count: r.count,
+    }))
+    .filter((r) => Number.isFinite(r.ts) && r.ts > 0 && r.count > 0);
+}
+
+/*  SERVER-SIDE FILTERING FOR FILES Exploration */
 
 /* Server side processing for FilesDataGrid.tsx, To be put in another file */
 

@@ -5,7 +5,7 @@ import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import Database from "@tauri-apps/plugin-sql";
 import "./App.css";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { ThemeProvider, createTheme, GlobalStyles } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
 import MiniDrawer from "./components/MiniDrawer";
 import { BrowserRouter as Router, Routes, Route } from "react-router";
@@ -22,6 +22,7 @@ import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/Main";
 import { LicenseInfo } from "@mui/x-license";
 import RawViewer from "./RawViewer";
+import { glassTheme } from "./glassTheme";
 
 const darkTheme = createTheme({
   palette: {
@@ -49,7 +50,7 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <ThemeProvider theme={darkTheme}>
+    <ThemeProvider theme={glassTheme}>
       <CssBaseline />
       <SnackbarProvider>
         {firstLaunch ? (

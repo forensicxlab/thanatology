@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 pub mod modules;
 
 use modules::th_artifacts::extract_artifacts;
+use modules::th_evidences::create_case_with_evidence;
 use modules::th_filesystem::{get_fs_info, read_file_bytes, read_file_prefix, read_file_slice};
 use modules::th_identifier::identify_file_types;
 use modules::th_index::index_partition;
@@ -387,6 +388,7 @@ pub fn run(init_migrations: Vec<Migration>) {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
         .invoke_handler(tauri::generate_handler![
+            create_case_with_evidence,
             check_evidence_exists,
             check_disk_image_format,
             discover_partitions,
