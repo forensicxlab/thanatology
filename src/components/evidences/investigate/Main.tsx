@@ -120,11 +120,12 @@ const InvestigateLinux: React.FC = () => {
       <Box
         sx={{
           position: "fixed",
-          bottom: 35,
-          right: 16,
+          top: 30,
+          right: 100,
           display: "flex",
           flexDirection: "column",
           gap: 1,
+          zIndex: 99999,
         }}
       >
         <PartitionSelection

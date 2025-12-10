@@ -1,11 +1,10 @@
-import React, { useEffect } from "react";
+import React, { useState } from "react";
 import {
   DataGridPro,
   GridColDef,
   GridRowSelectionModel,
   GridRenderCellParams,
   GridActionsCellItem,
-  useGridApiRef,
 } from "@mui/x-data-grid-pro";
 import {
   Badge,
@@ -23,7 +22,7 @@ import { Evidence } from "../../../dbutils/types";
 
 interface EvidenceListProps {
   evidences: Evidence[];
-  onSelectionChange: (selectedIds: number[]) => void;
+  onSelectionChange: (selectionModel: GridRowSelectionModel) => void;
 }
 
 const EvidenceList: React.FC<EvidenceListProps> = ({
@@ -31,6 +30,17 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
   onSelectionChange,
 }) => {
   const navigate = useNavigate();
+  const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>({
+    type: "include",
+    ids: new Set(),
+  });
+
+  const handleRowSelectionModelChange = (
+    newSelection: GridRowSelectionModel,
+  ) => {
+    setSelectionModel(newSelection);
+    onSelectionChange(newSelection);
+  };
 
   const columns: GridColDef[] = [
     {
@@ -60,7 +70,6 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       headerName: "Type",
       flex: 1,
     },
-
     {
       field: "description",
       headerName: "Description",
@@ -142,7 +151,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
           ];
         } else if (status === 2) {
           return [
-            <Tooltip key="review" title="Stop processing">
+            <Tooltip key="stop" title="Stop processing">
               <GridActionsCellItem
                 icon={<Stop />}
                 label="Stop processing the evidence"
@@ -163,7 +172,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
           ];
         } else if (status >= 3) {
           return [
-            <Tooltip key="review" title="Investigate">
+            <Tooltip key="investigate" title="Investigate">
               <GridActionsCellItem
                 icon={<PlayArrow />}
                 label="Investigate the evidence"
@@ -183,9 +192,8 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
         rows={evidences}
         columns={columns}
         checkboxSelection
-        onRowSelectionModelChange={(newSelection) =>
-          onSelectionChange([...newSelection.ids] as number[])
-        }
+        rowSelectionModel={selectionModel}
+        onRowSelectionModelChange={handleRowSelectionModelChange}
         autosizeOptions={{
           columns: ["id", "name", "type", "description", "status", "actions"],
           includeOutliers: true,

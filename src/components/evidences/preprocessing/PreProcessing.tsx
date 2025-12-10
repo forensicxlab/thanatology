@@ -18,7 +18,6 @@ import { Evidence } from "../../../dbutils/types";
 import { getEvidence } from "../../../dbutils/sqlite";
 import DiskImage from "./DiskImage";
 import LogicalImage from "./LogicalImage";
-import { start_processing } from "../processing/utils/diskimage";
 import { useSnackbar } from "../../SnackbarProvider";
 
 interface PreProcessingProps {
@@ -62,22 +61,10 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
   const renderPreprocessingComponent = () => {
     switch (evidence.type) {
       case "Logical Disk image":
-        return (
-          <LogicalImage
-            database={database}
-            evidenceData={evidence}
-            onComplete={start_processing}
-          />
-        );
+        return <LogicalImage database={database} evidenceData={evidence} />;
       default:
         // Fallback to DiskImage for physical/raw disk images, memory dumps, etc.
-        return (
-          <DiskImage
-            database={database}
-            evidenceData={evidence}
-            onComplete={start_processing}
-          />
-        );
+        return <DiskImage database={database} evidenceData={evidence} />;
     }
   };
 

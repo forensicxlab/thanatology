@@ -1,3 +1,4 @@
+// thanatology/src/components/evidences/preprocessing/LogicalImage.tsx
 import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -22,29 +23,34 @@ import { useSnackbar } from "../../SnackbarProvider";
 interface LogicalImageProps {
   database: Database | null;
   evidenceData: Evidence; // MUST have an 'id' that exists in DB
-  onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
 
 /**
  * LogicalImage preprocessing wizard.
  * A logical image represents a single filesystem snapshot captured at
- * file‑level.  We therefore only need to (1) confirm the file exists and
- * (2) verify/identify the image format (E01, AFF4, ZIP, etc.).
+ * file-level. We therefore:
+ *   (1) confirm the file exists
+ *   (2) identify the image container format (E01/AFF4/RAW/etc.)
+ *   (3) detect the filesystem inside the logical image (NTFS/ext4/APFS/…)
  */
 const LogicalImage: React.FC<LogicalImageProps> = ({
   database,
   evidenceData,
-  onComplete,
 }) => {
   const { display_message } = useSnackbar();
   const navigate = useNavigate();
 
-  const steps = ["Check Evidence Existence", "Detect Image Format"];
+  const steps = [
+    "Check Evidence Existence",
+    "Detect Image Format",
+    "Detect Filesystem",
+  ];
 
   const [activeStep, setActiveStep] = useState<number>(0);
   const [currentError, setCurrentError] = useState<string | null>(null);
 
   const [diskImageFormat, setDiskImageFormat] = useState<string>("");
+  const [filesystemName, setFilesystemName] = useState<string>("");
 
   const [finalInsertStatus, setFinalInsertStatus] = useState<
     "idle" | "loading" | "success" | "error"
@@ -70,7 +76,14 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
           });
           setDiskImageFormat(fmt);
           setCurrentError(null);
-          setActiveStep(2); // finished wizard
+          setActiveStep(2);
+        } else if (step === 2) {
+          const fsName: string = await invoke("detect_logical_filesystem", {
+            path: evidenceData.path,
+          });
+          setFilesystemName(fsName);
+          setCurrentError(null);
+          setActiveStep(3); // finished wizard
         }
       } catch (err: any) {
         console.error("LogicalImage auto step error", err);
@@ -81,8 +94,8 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
   );
 
   useEffect(() => {
-    if (activeStep < 2) runAutoStep(activeStep);
-    // eslint‑disable‑next‑line react‑hooks/exhaustive‑deps
+    if (activeStep < 3) runAutoStep(activeStep);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStep]);
 
   /* -------------------------------------------------------------- */
@@ -108,13 +121,13 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
       diskImageFormat,
       selectedMbrPartitions: [],
       selectedGptPartitions: [],
-      //selectedLogicalPartition,
-    };
+      // For logical images we store the detected FS name as the "format" detail:
+      logicalFilesystem: filesystemName, // <— add this field in your TS type if not present yet
+    } as ProcessedEvidenceMetadata;
 
     try {
       await savePreprocessingMetadata(metadata, database);
       setFinalInsertStatus("success");
-      onComplete(metadata);
     } catch (err: any) {
       console.error("Error saving preprocessing metadata", err);
       display_message("error", `Error saving metadata: ${err}`);
@@ -140,6 +153,14 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
           </Typography>
         ) : (
           <Typography variant="body1">Detecting image format…</Typography>
+        );
+      case 2:
+        return filesystemName ? (
+          <Typography variant="body1">
+            Filesystem detected: {filesystemName}
+          </Typography>
+        ) : (
+          <Typography variant="body1">Detecting filesystem…</Typography>
         );
       default:
         return <Typography variant="body1">Unknown step</Typography>;
@@ -223,7 +244,7 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
                     <Typography variant="body2" color="error">
                       {currentError}
                     </Typography>
-                    {idx < 2 && (
+                    {idx < 3 && (
                       <Button
                         variant="outlined"
                         color="error"
@@ -252,7 +273,7 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
         <Button
           variant="contained"
           onClick={handleNext}
-          disabled={currentError !== null || activeStep < 1}
+          disabled={currentError !== null || activeStep < 2}
         >
           Next
         </Button>
@@ -263,8 +284,8 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
         </Button>
       )}
 
-      {/* Auto‑step spinner */}
-      {activeStep < 2 && !currentError && (
+      {/* Auto-step spinner */}
+      {activeStep < 3 && !currentError && (
         <Box sx={{ display: "flex", alignItems: "center", mt: 2 }}>
           <CircularProgress size={30} />
           <Typography variant="body2" sx={{ ml: 1 }}>

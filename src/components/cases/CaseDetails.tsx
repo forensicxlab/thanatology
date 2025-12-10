@@ -11,9 +11,9 @@ import {
   DialogActions,
   Fab,
   Box,
-  Card,
-  CardContent,
   Divider,
+  Backdrop,
+  CircularProgress,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 
@@ -21,18 +21,9 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EvidenceList from "../evidences/lists/EvidenceList";
 import { Case, Evidence } from "../../dbutils/types";
-import { getCaseWithEvidences } from "../../dbutils/sqlite";
+import { getCaseWithEvidences, deleteEvidences } from "../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
-
-// Function to perform deletion from the database.
-async function deleteEvidences(evidenceIds: number[]): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      console.log("Deleted evidences with IDs:", evidenceIds);
-      resolve();
-    }, 1000);
-  });
-}
+import { GridRowSelectionModel } from "@mui/x-data-grid-pro";
 
 interface CaseDetailsProps {
   database: Database | null;
@@ -42,10 +33,31 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const { id } = useParams<{ id: string }>();
   const [caseDetails, setCaseDetails] = useState<Case | null>(null);
   const [evidences, setEvidences] = useState<Evidence[]>([]);
-  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<number[]>([]);
+  const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>({
+    type: "include",
+    ids: new Set(),
+  });
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
   const [openNewEvidenceDialog, setOpenNewEvidenceDialog] =
     useState<boolean>(false);
+  const [deleting, setDeleting] = useState<boolean>(false);
+
+  // Helper: normalize the selection model into number[]
+  const getSelectedEvidenceIds = (): number[] => {
+    const sm = selectionModel as any;
+
+    // New style: { type: 'include' | 'exclude', ids: Set<GridRowId> }
+    if (sm && typeof sm === "object" && "ids" in sm && sm.ids instanceof Set) {
+      return Array.from(sm.ids).map((id) => Number(id));
+    }
+
+    // Old style: GridRowId[]
+    if (Array.isArray(sm)) {
+      return sm.map((id) => Number(id));
+    }
+
+    return [];
+  };
 
   const fetchCaseData = async () => {
     try {
@@ -60,34 +72,50 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
 
   useEffect(() => {
     async function fetchData() {
-      getCaseWithEvidences(database, id)
-        .then(({ case: fetchedCase, evidences: fetchedEvidences }) => {
-          setEvidences(fetchedEvidences);
-          setCaseDetails(fetchedCase);
-        })
-        .catch((error: any) => {
-          console.error("Error fetching case details:", error);
-        });
+      try {
+        const { case: fetchedCase, evidences: fetchedEvidences } =
+          await getCaseWithEvidences(database, id);
+        setEvidences(fetchedEvidences);
+        setCaseDetails(fetchedCase);
+      } catch (error) {
+        console.error("Error fetching case details:", error);
+      }
     }
     fetchData();
   }, [id, database]);
 
   const handleDeleteSelected = async () => {
+    const selectedEvidenceIds = getSelectedEvidenceIds();
+    if (selectedEvidenceIds.length === 0) {
+      // Nothing selected => just close dialog defensively
+      setDeleteDialogOpen(false);
+      return;
+    }
+
     try {
+      setDeleting(true);
       await deleteEvidences(selectedEvidenceIds);
       setEvidences((prev) =>
         prev.filter((evidence) => !selectedEvidenceIds.includes(evidence.id)),
       );
-      setSelectedEvidenceIds([]);
+
+      // Clear selection in a way compatible with both APIs
+      setSelectionModel({ type: "include", ids: new Set() });
+
+      // Explicitly close the dialog
       setDeleteDialogOpen(false);
     } catch (error) {
       console.error("Error deleting evidences:", error);
+    } finally {
+      setDeleting(false);
     }
   };
 
   const handleAddEvidence = () => {
     setOpenNewEvidenceDialog(true);
   };
+
+  const selectedEvidenceIds = getSelectedEvidenceIds();
 
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
@@ -116,7 +144,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
         <Grid size={12}>
           <EvidenceList
             evidences={evidences}
-            onSelectionChange={setSelectedEvidenceIds}
+            onSelectionChange={setSelectionModel}
           />
         </Grid>
       </Grid>
@@ -173,6 +201,14 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Full-screen loader while deleting evidences */}
+      <Backdrop
+        sx={{ color: "#fff", zIndex: (theme) => theme.zIndex.drawer + 1 }}
+        open={deleting}
+      >
+        <CircularProgress color="inherit" />
+      </Backdrop>
     </Box>
   );
 };

@@ -261,28 +261,53 @@ export const glassTheme = createTheme({
       defaultProps: { disableElevation: true },
       styleOverrides: {
         root: {
-          borderRadius: 12,
+          borderRadius: 14,
           textTransform: "none",
+          color: "#fff", // <-- Force white text globally
+          fontWeight: 500,
           backdropFilter: `saturate(${glass.saturate}) blur(4px)`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(4px)`,
+          transition: "all 0.25s ease",
+          "& svg": { color: "#fff !important" }, // icons stay white too
         },
+
         contained: {
           background:
             "linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06))",
           border: glass.border,
           boxShadow: glass.shadow,
-          ":hover": {
-            filter: "brightness(1.05)",
+          color: "#fff", // ensure white text for contained
+          "&:hover": {
+            filter: "brightness(1.08)",
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
             boxShadow: "0 12px 48px rgba(0,0,0,0.45)",
           },
+          "&:active": {
+            transform: "translateY(1px)",
+          },
         },
+
         outlined: {
           border: glass.border,
           backgroundColor: "rgba(255,255,255,0.04)",
-          ":hover": { backgroundColor: "rgba(255,255,255,0.08)" },
+          color: "#fff",
+          "&:hover": {
+            backgroundColor: "rgba(255,255,255,0.08)",
+            borderColor: "rgba(255,255,255,0.4)",
+          },
         },
-        text: { backgroundColor: "transparent" },
+
+        text: {
+          color: "#fff",
+          backgroundColor: "transparent",
+          "&:hover": {
+            backgroundColor: "rgba(255,255,255,0.08)",
+          },
+        },
       },
+
+      // Optional glass variant
       variants: [
         {
           props: { variant: "glass" },
@@ -290,7 +315,10 @@ export const glassTheme = createTheme({
             backgroundColor: glass.bgElevated,
             border: glass.border,
             boxShadow: glass.shadow,
-            ":hover": { backgroundColor: "rgba(255,255,255,0.16)" },
+            color: "#fff",
+            "&:hover": {
+              backgroundColor: "rgba(255,255,255,0.18)",
+            },
           },
         },
       ],

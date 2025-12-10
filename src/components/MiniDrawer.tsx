@@ -3,8 +3,6 @@ import { styled, Theme, CSSObject } from "@mui/material/styles";
 import Box from "@mui/material/Box";
 import MuiDrawer from "@mui/material/Drawer";
 import List from "@mui/material/List";
-import CssBaseline from "@mui/material/CssBaseline";
-import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
@@ -21,7 +19,6 @@ import {
   ChevronLeft,
 } from "@mui/icons-material";
 import { Outlet, Link } from "react-router";
-import ResponsiveAppBar from "./AppBar";
 
 const drawerWidth = 240;
 
@@ -173,7 +170,6 @@ export default function MiniDrawer() {
           width: { sm: `calc(100% - ${drawerWidth}px)` },
         }}
       >
-        <DrawerHeader />
         <Outlet />
       </Box>
       <BottomActionBar />

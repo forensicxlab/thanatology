@@ -83,6 +83,16 @@ export interface GPT {
   partition_entries: GPTPartitionEntry[];
 }
 
+// dbutils/types.ts
+export interface LogicalPartitionEntry {
+  id: number;
+  evidence_id: number;
+  /** total size in bytes of the logical snapshot */
+  size: number;
+  /** optional short text for UI; add this column if you like */
+  description?: string | null;
+}
+
 /* -------------------------  Combined view  --------------------------- */
 
 export interface Partitions {
@@ -97,6 +107,7 @@ export interface Partitions {
 
   /** GPT layout (null when absent) */
   gpt?: GPT | null;
+  logical?: LogicalPartition | null;
 }
 
 /* --------------------------------------------------------------------- */

@@ -40,7 +40,6 @@ import Database from "@tauri-apps/plugin-sql";
 interface DiskImageProps {
   database: Database | null;
   evidenceData: Evidence;
-  onComplete: (metadata: ProcessedEvidenceMetadata) => void;
 }
 
 interface PartitionReadResult {
@@ -51,11 +50,7 @@ interface PartitionReadResult {
 
 /* ------------------------------------------------------------------ */
 
-const DiskImage: React.FC<DiskImageProps> = ({
-  database,
-  evidenceData,
-  onComplete,
-}) => {
+const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
   const { display_message } = useSnackbar();
   const navigate = useNavigate();
 

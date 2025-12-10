@@ -7,6 +7,7 @@ import {
   ProcessedEvidenceMetadata,
   File,
   GPTPartitionEntry,
+  LogicalPartitionEntry,
 } from "./types";
 import type { TimestampType, TimestampCount } from "./types";
 
@@ -300,14 +301,20 @@ export async function savePreprocessingMetadata(
 
   return preprocessingId;
 }
-// Fetch the selected partitions metadata for a given evidence
+
+// dbutils/sqlite.ts
 export async function getSelectedPartitions(
   evidenceId: number,
   db: Database | null,
-): Promise<{ mbrRows: MBRPartitionEntry[]; gptRows: GPTPartitionEntry[] }> {
+): Promise<{
+  mbrRows: MBRPartitionEntry[];
+  gptRows: GPTPartitionEntry[];
+  logicalRows: LogicalPartitionEntry[];
+}> {
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
+
   const mbrRows: MBRPartitionEntry[] = await db.select(
     "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
     [evidenceId],
@@ -318,7 +325,12 @@ export async function getSelectedPartitions(
     [evidenceId],
   );
 
-  return { mbrRows, gptRows };
+  const logicalRows: LogicalPartitionEntry[] = await db.select(
+    "SELECT * FROM logical_partition_entries WHERE evidence_id = $1",
+    [evidenceId],
+  );
+
+  return { mbrRows, gptRows, logicalRows };
 }
 
 // Fetch modules for processing.
@@ -857,4 +869,113 @@ export async function getFiles(
   const rowCount = Number(countResult?.[0]?.count ?? 0);
 
   return { rows, rowCount };
+}
+
+export async function deleteEvidence(
+  evidenceId: number,
+  db: Database | null,
+): Promise<void> {
+  if (!db) {
+    db = await Database.load("sqlite:thanatology.db");
+  }
+
+  await db.execute("BEGIN TRANSACTION");
+
+  try {
+    // Delete partition-related entries
+    await db.execute(
+      "DELETE FROM mbr_partition_entries WHERE evidence_id = $1",
+      [evidenceId],
+    );
+    await db.execute(
+      "DELETE FROM gpt_partition_entries WHERE evidence_id = $1",
+      [evidenceId],
+    );
+    await db.execute(
+      "DELETE FROM logical_partition_entries WHERE evidence_id = $1",
+      [evidenceId],
+    );
+
+    // Delete artifacts and system files linked to this evidence
+    await db.execute("DELETE FROM artifacts WHERE evidence_id = $1", [
+      evidenceId,
+    ]);
+    await db.execute("DELETE FROM system_files WHERE evidence_id = $1", [
+      evidenceId,
+    ]);
+
+    // Delete preprocessing metadata
+    await db.execute(
+      "DELETE FROM evidence_preprocessing_metadata WHERE evidence_id = $1",
+      [evidenceId],
+    );
+
+    // Finally delete the evidence itself
+    await db.execute("DELETE FROM evidence WHERE id = $1", [evidenceId]);
+
+    await db.execute("COMMIT");
+  } catch (error) {
+    await db.execute("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function deleteEvidences(evidenceIds: number[]): Promise<void> {
+  if (evidenceIds.length === 0) return;
+
+  const db = await Database.load("sqlite:thanatology.db");
+
+  const placeholders = evidenceIds.map((_, i) => `$${i + 1}`).join(", ");
+
+  await db.execute("BEGIN TRANSACTION");
+
+  try {
+    // Partition-related entries
+    await db.execute(
+      `DELETE FROM mbr_partition_entries
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+    await db.execute(
+      `DELETE FROM gpt_partition_entries
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+    await db.execute(
+      `DELETE FROM logical_partition_entries
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+
+    // Artifacts and system files
+    await db.execute(
+      `DELETE FROM artifacts
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+    await db.execute(
+      `DELETE FROM system_files
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+
+    // Preprocessing metadata
+    await db.execute(
+      `DELETE FROM evidence_preprocessing_metadata
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+
+    // Finally evidences
+    await db.execute(
+      `DELETE FROM evidence
+       WHERE id IN (${placeholders})`,
+      evidenceIds,
+    );
+
+    await db.execute("COMMIT");
+  } catch (error) {
+    await db.execute("ROLLBACK");
+    throw error;
+  }
 }

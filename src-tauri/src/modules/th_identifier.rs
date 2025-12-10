@@ -5,8 +5,9 @@ use log::{error, info};
 use sqlx::{Pool, Row, Sqlite};
 use tauri::AppHandle;
 
-use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
-
+use crate::modules::utils::th_progress::{
+    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
+};
 const SAMPLE_LEN: usize = 8192; // 8 KiB of magic bytes
 
 pub async fn identify_file_types<T: Filesystem>(

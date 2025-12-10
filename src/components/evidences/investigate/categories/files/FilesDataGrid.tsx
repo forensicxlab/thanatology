@@ -29,7 +29,7 @@ interface FileDataGridProps {
   onRowActivate?: (row: File) => void;
 }
 
-const pageSizeDefault = 50;
+const pageSizeDefault = 30;
 
 const FileDataGrid: React.FC<FileDataGridProps> = ({
   partition_id,
@@ -184,7 +184,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "70vh" }}>
+    <div style={{ width: "100%" }}>
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

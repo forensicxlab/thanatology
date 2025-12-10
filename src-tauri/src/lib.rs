@@ -1,8 +1,8 @@
 use env_logger;
 use exhume_body::{Body, BodySlice};
 use exhume_filesystem::detected_fs::{detect_filesystem, DetectedFs};
+use exhume_filesystem::Filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
-use exhume_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
@@ -14,6 +14,8 @@ pub mod modules;
 use modules::th_artifacts::extract_artifacts;
 use modules::th_evidences::create_case_with_evidence;
 use modules::th_filesystem::{get_fs_info, read_file_bytes, read_file_prefix, read_file_slice};
+use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+
 use modules::th_identifier::identify_file_types;
 use modules::th_index::index_partition;
 
@@ -102,6 +104,25 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
     Ok(fs)
 }
 
+/// Detect the filesystem inside a logical image (single filesystem snapshot).
+#[tauri::command]
+fn detect_logical_filesystem(path: String) -> Result<String, String> {
+    let mut body: Body = Body::new(path.clone(), "auto");
+    let size = std::fs::metadata(&path)
+        .map_err(|e| format!("Failed to stat image: {}", e))?
+        .len();
+    let fs = match detect_filesystem(&mut body, 0, size) {
+        Ok(fs) => fs,
+        Err(err) => {
+            return Err(format!(
+                "Error detecting the filesystem: {}",
+                err.to_string()
+            ))
+        }
+    };
+    return Ok(fs.filesystem_type());
+}
+
 #[tauri::command]
 fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool, String> {
     let mut body: Body = Body::new(path.to_string(), "auto");
@@ -135,7 +156,7 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
 #[tauri::command]
 fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // ───────────────────────────────── DB CONNECT ────────────────────────────────
+        // ─────────────────────────────── DB CONNECT ───────────────────────────────
         let pool = match SqlitePool::connect(&db_path).await {
             Ok(p) => p,
             Err(err) => {
@@ -151,7 +172,7 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
             }
         };
 
-        // ───────────────────────────────── LOAD EVIDENCE ─────────────────────────────
+        // ─────────────────────────────── LOAD EVIDENCE ────────────────────────────
         let evidence = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
             .bind(evidence_id)
             .fetch_one(&pool)
@@ -159,48 +180,214 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
         {
             Ok(row) => row,
             Err(err) => {
-                error!("Error fetching evidence: {err:?}");
+                let msg = format!("Error fetching evidence {evidence_id}: {err:?}");
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    msg.clone(),
+                    &app,
+                );
+                error!("{msg}");
                 return;
             }
         };
 
-        // ───────────────────────────────── LOAD PARTITIONS ───────────────────────────
-        let mbr_partitions =
-            sqlx::query("SELECT * FROM mbr_partition_entries WHERE evidence_id = ?")
+        let evidence_path: String = evidence.get("path");
+
+        // We’ll use Body to know sector size (and for later FS detection)
+        let mut body_for_info = Body::new(evidence_path.clone(), "auto");
+        let sector_size_u64 = body_for_info.get_sector_size() as u64;
+
+        // ─────────────────────────────── LOAD PARTITIONS ──────────────────────────
+        let mbr_rows = sqlx::query(
+            "SELECT id, first_byte_addr, size_sectors FROM mbr_partition_entries WHERE evidence_id = ?",
+        )
+        .bind(evidence_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        let gpt_rows = sqlx::query(
+            "SELECT id, first_byte_addr, size_sectors FROM gpt_partition_entries WHERE evidence_id = ?",
+        )
+        .bind(evidence_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        let logical_rows =
+            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
                 .bind(evidence_id)
                 .fetch_all(&pool)
                 .await
                 .unwrap_or_default();
 
-        let gpt_partitions =
-            sqlx::query("SELECT * FROM gpt_partition_entries WHERE evidence_id = ?")
+        // If there are no entries anywhere, create a single logical partition that covers the whole file.
+        if mbr_rows.is_empty() && gpt_rows.is_empty() && logical_rows.is_empty() {
+            let file_len = match std::fs::metadata(&evidence_path) {
+                Ok(m) => m.len(),
+                Err(err) => {
+                    let msg = format!("Failed to stat evidence file: {err}");
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        msg.clone(),
+                        &app,
+                    );
+                    error!("{msg}");
+                    return;
+                }
+            };
+
+            match sqlx::query(
+                "INSERT INTO logical_partition_entries (evidence_id, size) VALUES (?, ?)",
+            )
+            .bind(evidence_id)
+            .bind(file_len as i64)
+            .execute(&pool)
+            .await
+            {
+                Ok(_) => {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Info,
+                        format!(
+                            "No MBR/GPT partitions detected; created a logical partition covering {} bytes.",
+                            file_len
+                        ),
+                        &app,
+                    );
+                }
+                Err(err) => {
+                    let msg = format!("Failed to create logical partition entry: {err:?}");
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        msg.clone(),
+                        &app,
+                    );
+                    error!("{msg}");
+                    return;
+                }
+            }
+        }
+
+        // Re-read logical rows (in case we just inserted one)
+        let logical_rows = if logical_rows.is_empty() && mbr_rows.is_empty() && gpt_rows.is_empty()
+        {
+            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
                 .bind(evidence_id)
                 .fetch_all(&pool)
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default()
+        } else {
+            logical_rows
+        };
 
-        // Build a *single* collection of references we can loop over twice.
-        let all_partitions: Vec<&sqlx::sqlite::SqliteRow> =
-            mbr_partitions.iter().chain(gpt_partitions.iter()).collect();
+        // ──────────────────────── Build unified work list ────────────────────────
+        struct WorkPartition {
+            id: i64,
+            first_byte_addr: u64,
+            size_sectors: u64,
+            size_bytes: u64,    // exact byte length for this region
+            kind: &'static str, // "MBR" | "GPT" | "LOGICAL"
+        }
 
-        let total_partitions = all_partitions.len() as u64;
+        let mut work: Vec<WorkPartition> = Vec::new();
 
-        // ───────────────────────────────── INDEXATION (MODULE 0) ─────────────────────
-        for (idx, partition) in all_partitions.iter().enumerate() {
+        // MBR
+        for r in &mbr_rows {
+            let id: i64 = r.get("id");
+            let fba: i64 = r.get("first_byte_addr");
+            let sz_sectors: i64 = r.get("size_sectors");
+            let size_sectors_u64 = (sz_sectors as u64);
+            work.push(WorkPartition {
+                id,
+                first_byte_addr: fba as u64,
+                size_sectors: size_sectors_u64,
+                size_bytes: size_sectors_u64.saturating_mul(sector_size_u64),
+                kind: "MBR",
+            });
+        }
+
+        // GPT
+        for r in &gpt_rows {
+            let id: i64 = r.get("id");
+            let fba: i64 = r.get("first_byte_addr");
+            let sz_sectors: i64 = r.get("size_sectors");
+            let size_sectors_u64 = (sz_sectors as u64);
+            work.push(WorkPartition {
+                id,
+                first_byte_addr: fba as u64,
+                size_sectors: size_sectors_u64,
+                size_bytes: size_sectors_u64.saturating_mul(sector_size_u64),
+                kind: "GPT",
+            });
+        }
+
+        // LOGICAL
+        for r in &logical_rows {
+            let id: i64 = r.get("id");
+            let size: i64 = r.get("size"); // bytes
+            let size_u64 = size as u64;
+
+            // Derive sectors for reuse with indexer
+            let size_sectors = if sector_size_u64 > 0 {
+                size_u64 / sector_size_u64
+            } else {
+                0
+            };
+
+            work.push(WorkPartition {
+                id,
+                first_byte_addr: 0,
+                size_sectors,
+                size_bytes: size_u64, // keep exact size for FS detection and modules
+                kind: "LOGICAL",
+            });
+        }
+
+        if work.is_empty() {
+            let msg = "No partitions (MBR/GPT/logical) available to process.".to_string();
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                msg.clone(),
+                &app,
+            );
+            error!("{msg}");
+            return;
+        }
+
+        let total_partitions = work.len() as u64;
+
+        // ────────────────────────────── INDEXATION ───────────────────────────────
+        for (idx, p) in work.iter().enumerate() {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Info,
-                format!("Indexing partition {}/{}", idx + 1, total_partitions),
+                format!(
+                    "Indexing {} partition {}/{}",
+                    p.kind,
+                    idx + 1,
+                    total_partitions
+                ),
                 &app,
             );
 
+            // Reuse your existing indexing code path
             index_partition(
                 evidence_id,
-                partition.get("id"),
-                partition.get("size_sectors"),
-                partition.get("first_byte_addr"),
-                evidence.get("path"),
+                p.id,
+                p.size_sectors,    // for LOGICAL, derived from bytes/sector
+                p.first_byte_addr, // 0 for LOGICAL
+                evidence_path.clone(),
                 &pool,
                 &app,
             )
@@ -213,10 +400,10 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Error,
-                format!("Failed to update evidence status: {err:?}"),
+                format!("Failed to update evidence status to 3: {err:?}"),
                 &app,
             );
-            error!("Failed to update evidence status: {err:?}");
+            error!("Failed to update evidence status to 3: {err:?}");
             return;
         } else {
             emit_progress_event(
@@ -228,65 +415,72 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
             );
         }
 
-        // ──────────────────────────────── POST-INDEX MODULES ─────────────────────────
-        for partition in all_partitions {
-            let mut body = Body::new(evidence.get("path"), "auto");
-            let sector_size = body.get_sector_size() as u64;
-            let partition_size_bytes: u64 = partition
-                .get::<u64, _>("size_sectors")
-                .saturating_mul(sector_size);
+        // ───────────────────────────── POST-INDEX ────────────────────────────────
+        for p in work {
+            // New Body for each partition to keep read state simple
+            let mut body = Body::new(evidence_path.clone(), "auto");
 
-            let mut fs = match detect_filesystem(
-                &mut body,
-                partition.get("first_byte_addr"),
-                partition_size_bytes,
-            ) {
+            // Decide byte length for FS detection:
+            // - MBR/GPT: size_sectors * sector_size
+            // - LOGICAL: exact size_bytes from the logical table
+            let bytes_len = match p.kind {
+                "LOGICAL" => p.size_bytes,
+                _ => p.size_sectors.saturating_mul(sector_size_u64),
+            };
+
+            // Filesystem detection
+            let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len) {
                 Ok(fs) => fs,
                 Err(err) => {
                     emit_progress_event(
                         &evidence_id,
                         ProgressMessageLevel::Main,
                         ProgressMessageType::Error,
-                        format!("Could not detect filesystem: {}", err),
+                        format!(
+                            "Could not detect filesystem for {} partition (id {}): {}",
+                            p.kind, p.id, err
+                        ),
                         &app,
                     );
-                    error!("Could not detect filesystem: {}", err);
+                    error!(
+                        "Could not detect filesystem for {} partition (id {}): {}",
+                        p.kind, p.id, err
+                    );
                     continue; // move on to the next partition
                 }
             };
 
-            // ── Module 1: Artifact extraction ───────────────────────────────────────
-            extract_artifacts(evidence_id, partition.get("id"), &app, &pool).await;
+            // ── Module 1: Artifact extraction
+            extract_artifacts(evidence_id, p.id, &app, &pool).await;
 
             update_evidence_status(&pool, evidence_id, 4).await.ok();
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Success,
-                "Successfully extracted artifacts",
+                format!(
+                    "Successfully extracted artifacts for {} partition (id {}).",
+                    p.kind, p.id
+                ),
                 &app,
             );
 
-            // ── Module 2: File-type identification ──────────────────────────────────
-            identify_file_types(
-                &mut fs,
-                evidence_id,
-                partition.get("id"),
-                &app,
-                pool.clone(),
-            )
-            .await;
+            // ── Module 2: File-type identification
+            identify_file_types(&mut fs, evidence_id, p.id, &app, pool.clone()).await;
 
             update_evidence_status(&pool, evidence_id, 5).await.ok();
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Success,
-                "Successfully finished file identification",
+                format!(
+                    "Successfully finished file identification for {} partition (id {}).",
+                    p.kind, p.id
+                ),
                 &app,
             );
 
-            // ── Module 3: (reserved for future work) ────────────────────────────────
+            // ── Module 3: (reserved)
         }
     });
 }
@@ -403,7 +597,8 @@ pub fn run(init_migrations: Vec<Migration>) {
             file_size,
             read_file_slice,
             read_file_prefix,
-            read_file_bytes
+            read_file_bytes,
+            detect_logical_filesystem
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

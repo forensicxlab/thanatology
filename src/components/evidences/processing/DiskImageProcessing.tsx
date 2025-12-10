@@ -103,11 +103,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       return;
     }
 
-    if (mbrPartitions.length === 0 && gptPartitions.length === 0) {
-      display_message("info", "No partitions selected for processing.");
-      return;
-    }
-
     // Build a minimal metadata object for updating evidence status
     const metadata: ProcessedEvidenceMetadata = {
       evidenceData: evidence,
@@ -209,10 +204,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
           variant="contained"
           color="primary"
           onClick={handleStartProcessing}
-          disabled={
-            processing ||
-            (mbrPartitions.length === 0 && gptPartitions.length === 0)
-          }
+          disabled={processing}
         >
           {processing ? "Processing..." : "Start Processing"}
         </Button>

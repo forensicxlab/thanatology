@@ -137,7 +137,6 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
         showToolbar={true}
         rowSelectionModel={selectionModel}
         disableRowSelectionOnClick
-        autoPageSize
       />
 
       <Box
