@@ -13,7 +13,7 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import RemoveOutlinedIcon from "@mui/icons-material/RemoveOutlined";
 
-import Terminal from "./Terminal";
+import Terminal from "../Terminal";
 
 interface TermDescriptor {
   id: number;

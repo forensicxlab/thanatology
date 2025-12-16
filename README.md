@@ -17,22 +17,27 @@ Thanatology is a project built using the Tauri framework to deliver a cross-plat
 
 This roadmap is dynamic, consider all of the alpha tagged release as not production ready for a real case investigation.
 
-## v0.1.0-alpha-Release (Q4 of 2025)
+## v2026-1-alpha : Release (Q1 of 2026)
 
 - [x] Case and Evidence management.
 - [x] Sqlite Support
-- [x] DiskImage Layout Analysis.
-- [ ] FileSystem Artefact extraction using YAML configuration files
-- [ ] Advanced File Viewer with window communication.
-- [ ] ProcMon Artefacts Vizualisation for Malware Analysis.
+- [x] Filesystem processing: (NTFS/ExFAT/ExtFS).
+- [x] FileSystem Artefact extraction.
+- [X] Logical And Physical Acquisition support.
+- [X] Disk Layout Discovery and Partition Selection for Physical Analysis.
+- [ ] Optimized File Viewer.
 - [x] Terminal Intergration: (Bash, ZSH, Powershell).
-- [] File Signature Analysis
+- [ ] AI integration for artifacts description, content summary on demand. 
 
-## v0.2.0-alpha
-- [ ] exFAT Artefact extraction for Analysis
-- [ ] FAT16/32 Artefact extraction for Analysis
-- [ ] Embeded Hexadecimal Editor for Malware Analysis
-- [ ] PostGreSQL support
+
+## v2026-2-alpha: Release (Q2 of 2026)
+- [ ] Embeded advanced Hexadecimal Editor
+- [ ] Memory Forensics Basic Features
+- [ ] ProcMon Artefacts Vizualisation for Malware Analysis.
+
+## v2026-3-alpha Release (Q3 of 2026)
+
+TBD
 
 # Join the community
 

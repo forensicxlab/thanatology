@@ -586,3 +586,35 @@ artifacts:
     parser: "netlogon"
     tag: "logs"
     category: "network"
+
+  - name: "Windows Event Logs (System & Application)"
+    description: "Core Windows .evtx logs from System and Application channels"
+    paths:
+      - path: 'C:\\Windows\\System32\\winevt\\Logs\\(System|Application)\.evtx'
+        regexp: true
+    parser: "evtx"
+    tag: "logs"
+    category: "system"
+
+  - name: "User Registry Hives – NTUSER.DAT"
+    description: "Per-user NTUSER.DAT registry hives under C:\\Users"
+    paths:
+      # Matches e.g. C:\Users\Alice\NTUSER.DAT, C:\Users\Bob\NTUSER.DAT
+      - path: 'C:\\Users\\[^\\]+\\NTUSER\.DAT'
+        regexp: true
+    parser: "registry_ntuser"
+    tag: "registry"
+    category: "users"
+
+  - name: "Chrome History (per-user)"
+    description: "Google Chrome History SQLite DB for each user profile"
+    paths:
+      # Default profile
+      - path: 'C:\\Users\\[^\\]+\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\History'
+        regexp: true
+      # Any profile (Profile 1, Profile 2, etc.)
+      - path: 'C:\\Users\\[^\\]+\\AppData\\Local\\Google\\Chrome\\User Data\\Profile [0-9]+\\History'
+        regexp: true
+    parser: "chrome_history"
+    tag: "browser"
+    category: "application"

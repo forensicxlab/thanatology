@@ -92,9 +92,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const db = await Database.load("sqlite:thanatology.db");
       const data = (await fetchArtifactsByCategory(
-        db,
         category,
         evidence_id,
         partition_id,

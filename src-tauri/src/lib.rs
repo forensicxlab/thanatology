@@ -5,9 +5,11 @@ use exhume_filesystem::Filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub mod modules;
 
@@ -28,6 +30,188 @@ use std::{
 use tauri::AppHandle;
 use tauri_plugin_sql::Migration;
 
+fn as_sqlite_url(path_or_url: &str) -> String {
+    if path_or_url.starts_with("sqlite:") {
+        path_or_url.to_string()
+    } else if path_or_url.starts_with('/') {
+        format!("sqlite:{}", path_or_url)
+    } else {
+        format!("sqlite:{}", path_or_url)
+    }
+}
+
+async fn open_pool(db_path_or_url: &str) -> Result<SqlitePool, sqlx::Error> {
+    let opts = SqliteConnectOptions::from_str(&as_sqlite_url(db_path_or_url))?
+        .with_regexp()
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(30))
+        .create_if_missing(true);
+
+    SqlitePoolOptions::new()
+        // single-writer friendly; reduces lock contention inside each DB
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+}
+
+async fn has_user_tables(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+async fn copy_schema_from_main(
+    main_pool: &SqlitePool,
+    evidence_pool: &SqlitePool,
+) -> Result<(), sqlx::Error> {
+    // Tables
+    let table_rows = sqlx::query(
+        "SELECT sql FROM sqlite_master
+         WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+         ORDER BY name;",
+    )
+    .fetch_all(main_pool)
+    .await?;
+
+    for r in table_rows {
+        let sql: String = r.get("sql");
+        // If schema already exists, ignore "already exists" errors
+        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
+            let msg = format!("{e:?}");
+            if !msg.contains("already exists") {
+                return Err(e);
+            }
+        }
+    }
+
+    // Indexes
+    let index_rows = sqlx::query(
+        "SELECT sql FROM sqlite_master
+         WHERE type='index' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
+         ORDER BY name;",
+    )
+    .fetch_all(main_pool)
+    .await?;
+
+    for r in index_rows {
+        let sql: String = r.get("sql");
+        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
+            let msg = format!("{e:?}");
+            if !msg.contains("already exists") {
+                return Err(e);
+            }
+        }
+    }
+
+    // Triggers
+    let trig_rows = sqlx::query(
+        "SELECT sql FROM sqlite_master
+         WHERE type='trigger' AND sql IS NOT NULL
+         ORDER BY name;",
+    )
+    .fetch_all(main_pool)
+    .await?;
+
+    for r in trig_rows {
+        let sql: String = r.get("sql");
+        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
+            let msg = format!("{e:?}");
+            if !msg.contains("already exists") {
+                return Err(e);
+            }
+        }
+    }
+
+    // Views (optional)
+    let view_rows = sqlx::query(
+        "SELECT sql FROM sqlite_master
+         WHERE type='view' AND sql IS NOT NULL
+         ORDER BY name;",
+    )
+    .fetch_all(main_pool)
+    .await?;
+
+    for r in view_rows {
+        let sql: String = r.get("sql");
+        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
+            let msg = format!("{e:?}");
+            if !msg.contains("already exists") {
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn escape_sqlite_single_quotes(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+async fn attach_main_db(
+    evidence_pool: &SqlitePool,
+    main_db_path_fs: &str,
+) -> Result<(), sqlx::Error> {
+    // ATTACH expects filesystem path (not sqlite: URL)
+    let escaped = escape_sqlite_single_quotes(main_db_path_fs);
+    let sql = format!("ATTACH DATABASE '{}' AS main_db;", escaped);
+    sqlx::query(&sql).execute(evidence_pool).await?;
+    Ok(())
+}
+
+async fn copy_evidence_scoped_rows(
+    evidence_pool: &SqlitePool,
+    evidence_id: i64,
+) -> Result<(), sqlx::Error> {
+    // 1) Find the case_id for this evidence in main DB
+    let case_id: i64 = sqlx::query_scalar("SELECT case_id FROM main_db.evidence WHERE id = ?;")
+        .bind(evidence_id)
+        .fetch_one(evidence_pool)
+        .await?;
+
+    // 2) Copy the parent case first (required for FK evidence.case_id -> cases.id)
+    sqlx::query("INSERT OR REPLACE INTO cases SELECT * FROM main_db.cases WHERE id = ?;")
+        .bind(case_id)
+        .execute(evidence_pool)
+        .await?;
+
+    // 3) Copy evidence row
+    sqlx::query("INSERT OR REPLACE INTO evidence SELECT * FROM main_db.evidence WHERE id = ?;")
+        .bind(evidence_id)
+        .execute(evidence_pool)
+        .await?;
+
+    // 4) Copy partitions for this evidence
+    for table in [
+        "mbr_partition_entries",
+        "gpt_partition_entries",
+        "logical_partition_entries",
+    ] {
+        let del = format!("DELETE FROM {} WHERE evidence_id = ?;", table);
+        let ins = format!(
+            "INSERT OR REPLACE INTO {t} SELECT * FROM main_db.{t} WHERE evidence_id = ?;",
+            t = table
+        );
+
+        sqlx::query(&del)
+            .bind(evidence_id)
+            .execute(evidence_pool)
+            .await
+            .ok();
+
+        sqlx::query(&ins)
+            .bind(evidence_id)
+            .execute(evidence_pool)
+            .await
+            .ok();
+    }
+
+    Ok(())
+}
 async fn update_evidence_status(
     pool: &SqlitePool,
     evidence_id: i64,
@@ -154,28 +338,121 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
 }
 
 #[tauri::command]
-fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
+fn process_partitions(
+    evidence_id: i64,
+    main_db_path: String,
+    evidence_db_path: String,
+    app: AppHandle,
+) {
     tauri::async_runtime::spawn(async move {
-        // ─────────────────────────────── DB CONNECT ───────────────────────────────
-        let pool = match SqlitePool::connect(&db_path).await {
+        // Ensure per-evidence DB folder exists
+        if let Some(parent) = std::path::Path::new(&evidence_db_path).parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to create evidence DB directory: {e}"),
+                    &app,
+                );
+                error!("Failed to create evidence DB directory: {e}");
+                return;
+            }
+        }
+
+        // Connect pools
+        let main_pool = match open_pool(&main_db_path).await {
             Ok(p) => p,
             Err(err) => {
                 emit_progress_event(
                     &evidence_id,
                     ProgressMessageLevel::Main,
                     ProgressMessageType::Error,
-                    format!("DB connection error: {err:?}"),
+                    format!("Main DB connection error: {err:?}"),
                     &app,
                 );
-                error!("DB connection error: {err:?}");
+                error!("Main DB connection error: {err:?}");
+
                 return;
             }
         };
 
-        // ─────────────────────────────── LOAD EVIDENCE ────────────────────────────
-        let evidence = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
+        let evidence_pool = match open_pool(&evidence_db_path).await {
+            Ok(p) => p,
+            Err(err) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Evidence DB connection error: {err:?}"),
+                    &app,
+                );
+                error!("Evidence DB connection error: {err:?}");
+
+                return;
+            }
+        };
+
+        // Initialize evidence DB schema once (copy from main)
+        match has_user_tables(&evidence_pool).await {
+            Ok(false) => {
+                if let Err(err) = copy_schema_from_main(&main_pool, &evidence_pool).await {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        format!("Failed to initialize evidence DB schema: {err:?}"),
+                        &app,
+                    );
+                    error!("Failed to initialize evidence DB schema: {err:?}");
+
+                    return;
+                }
+            }
+            Ok(true) => {}
+            Err(err) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed checking evidence DB schema: {err:?}"),
+                    &app,
+                );
+                error!("Failed checking evidence DB schema: {err:?}");
+
+                return;
+            }
+        }
+
+        // Attach main DB (filesystem path) and copy evidence rows into evidence DB
+        if let Err(err) = attach_main_db(&evidence_pool, &main_db_path).await {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to attach main DB: {err:?}"),
+                &app,
+            );
+            error!("Failed to attach main DB: {err:?}");
+            return;
+        }
+
+        if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to copy evidence rows into evidence DB: {err:?}"),
+                &app,
+            );
+            error!("Failed to copy evidence rows into evidence DB: {err:?}");
+            return;
+        }
+
+        // Load evidence path from MAIN DB (authoritative)
+        let evidence_row = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
             .bind(evidence_id)
-            .fetch_one(&pool)
+            .fetch_one(&main_pool)
             .await
         {
             Ok(row) => row,
@@ -193,18 +470,18 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
             }
         };
 
-        let evidence_path: String = evidence.get("path");
+        let evidence_path: String = evidence_row.get("path");
 
-        // We’ll use Body to know sector size (and for later FS detection)
+        // Sector size reference
         let mut body_for_info = Body::new(evidence_path.clone(), "auto");
         let sector_size_u64 = body_for_info.get_sector_size() as u64;
 
-        // ─────────────────────────────── LOAD PARTITIONS ──────────────────────────
+        // Load partitions FROM EVIDENCE DB (no shared locks with other evidences)
         let mbr_rows = sqlx::query(
             "SELECT id, first_byte_addr, size_sectors FROM mbr_partition_entries WHERE evidence_id = ?",
         )
         .bind(evidence_id)
-        .fetch_all(&pool)
+        .fetch_all(&evidence_pool)
         .await
         .unwrap_or_default();
 
@@ -212,18 +489,18 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
             "SELECT id, first_byte_addr, size_sectors FROM gpt_partition_entries WHERE evidence_id = ?",
         )
         .bind(evidence_id)
-        .fetch_all(&pool)
+        .fetch_all(&evidence_pool)
         .await
         .unwrap_or_default();
 
-        let logical_rows =
+        let mut logical_rows =
             sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
                 .bind(evidence_id)
-                .fetch_all(&pool)
+                .fetch_all(&evidence_pool)
                 .await
                 .unwrap_or_default();
 
-        // If there are no entries anywhere, create a single logical partition that covers the whole file.
+        // Create logical partition entry (in evidence DB) if none exist
         if mbr_rows.is_empty() && gpt_rows.is_empty() && logical_rows.is_empty() {
             let file_len = match std::fs::metadata(&evidence_path) {
                 Ok(m) => m.len(),
@@ -241,112 +518,86 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
                 }
             };
 
-            match sqlx::query(
+            if let Err(err) = sqlx::query(
                 "INSERT INTO logical_partition_entries (evidence_id, size) VALUES (?, ?)",
             )
             .bind(evidence_id)
             .bind(file_len as i64)
-            .execute(&pool)
+            .execute(&evidence_pool)
             .await
             {
-                Ok(_) => {
-                    emit_progress_event(
-                        &evidence_id,
-                        ProgressMessageLevel::Main,
-                        ProgressMessageType::Info,
-                        format!(
-                            "No MBR/GPT partitions detected; created a logical partition covering {} bytes.",
-                            file_len
-                        ),
-                        &app,
-                    );
-                }
-                Err(err) => {
-                    let msg = format!("Failed to create logical partition entry: {err:?}");
-                    emit_progress_event(
-                        &evidence_id,
-                        ProgressMessageLevel::Main,
-                        ProgressMessageType::Error,
-                        msg.clone(),
-                        &app,
-                    );
-                    error!("{msg}");
-                    return;
-                }
+                let msg = format!("Failed to create logical partition entry: {err:?}");
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    msg.clone(),
+                    &app,
+                );
+                error!("{msg}");
+                return;
             }
+
+            logical_rows =
+                sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
+                    .bind(evidence_id)
+                    .fetch_all(&evidence_pool)
+                    .await
+                    .unwrap_or_default();
         }
 
-        // Re-read logical rows (in case we just inserted one)
-        let logical_rows = if logical_rows.is_empty() && mbr_rows.is_empty() && gpt_rows.is_empty()
-        {
-            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
-                .bind(evidence_id)
-                .fetch_all(&pool)
-                .await
-                .unwrap_or_default()
-        } else {
-            logical_rows
-        };
-
-        // ──────────────────────── Build unified work list ────────────────────────
         struct WorkPartition {
             id: i64,
             first_byte_addr: u64,
             size_sectors: u64,
-            size_bytes: u64,    // exact byte length for this region
-            kind: &'static str, // "MBR" | "GPT" | "LOGICAL"
+            size_bytes: u64,
+            kind: &'static str,
         }
 
         let mut work: Vec<WorkPartition> = Vec::new();
 
-        // MBR
         for r in &mbr_rows {
             let id: i64 = r.get("id");
             let fba: i64 = r.get("first_byte_addr");
-            let sz_sectors: i64 = r.get("size_sectors");
-            let size_sectors_u64 = (sz_sectors as u64);
+            let sz: i64 = r.get("size_sectors");
+            let ss = sz as u64;
             work.push(WorkPartition {
                 id,
                 first_byte_addr: fba as u64,
-                size_sectors: size_sectors_u64,
-                size_bytes: size_sectors_u64.saturating_mul(sector_size_u64),
+                size_sectors: ss,
+                size_bytes: ss.saturating_mul(sector_size_u64),
                 kind: "MBR",
             });
         }
 
-        // GPT
         for r in &gpt_rows {
             let id: i64 = r.get("id");
             let fba: i64 = r.get("first_byte_addr");
-            let sz_sectors: i64 = r.get("size_sectors");
-            let size_sectors_u64 = (sz_sectors as u64);
+            let sz: i64 = r.get("size_sectors");
+            let ss = sz as u64;
             work.push(WorkPartition {
                 id,
                 first_byte_addr: fba as u64,
-                size_sectors: size_sectors_u64,
-                size_bytes: size_sectors_u64.saturating_mul(sector_size_u64),
+                size_sectors: ss,
+                size_bytes: ss.saturating_mul(sector_size_u64),
                 kind: "GPT",
             });
         }
 
-        // LOGICAL
         for r in &logical_rows {
             let id: i64 = r.get("id");
-            let size: i64 = r.get("size"); // bytes
+            let size: i64 = r.get("size");
             let size_u64 = size as u64;
-
-            // Derive sectors for reuse with indexer
             let size_sectors = if sector_size_u64 > 0 {
                 size_u64 / sector_size_u64
             } else {
                 0
             };
-
             work.push(WorkPartition {
                 id,
                 first_byte_addr: 0,
                 size_sectors,
-                size_bytes: size_u64, // keep exact size for FS detection and modules
+                size_bytes: size_u64,
                 kind: "LOGICAL",
             });
         }
@@ -364,71 +615,58 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
             return;
         }
 
-        let total_partitions = work.len() as u64;
-
-        // ────────────────────────────── INDEXATION ───────────────────────────────
+        // Indexation (writes ONLY to evidence DB)
+        let total = work.len() as u64;
         for (idx, p) in work.iter().enumerate() {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Info,
-                format!(
-                    "Indexing {} partition {}/{}",
-                    p.kind,
-                    idx + 1,
-                    total_partitions
-                ),
+                format!("Indexing {} partition {}/{}", p.kind, idx + 1, total),
                 &app,
             );
 
-            // Reuse your existing indexing code path
             index_partition(
                 evidence_id,
                 p.id,
-                p.size_sectors,    // for LOGICAL, derived from bytes/sector
-                p.first_byte_addr, // 0 for LOGICAL
+                p.size_sectors,
+                p.first_byte_addr,
                 evidence_path.clone(),
-                &pool,
+                &evidence_pool,
                 &app,
             )
             .await;
         }
 
-        // Mark evidence as “indexation completed” (status 3)
-        if let Err(err) = update_evidence_status(&pool, evidence_id, 3).await {
+        // Update main DB status for UI completion screen
+        if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Error,
-                format!("Failed to update evidence status to 3: {err:?}"),
+                format!("Failed to update main evidence status to 3: {err:?}"),
                 &app,
             );
-            error!("Failed to update evidence status to 3: {err:?}");
             return;
-        } else {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Success,
-                "Successfully indexed all partitions.",
-                &app,
-            );
         }
 
-        // ───────────────────────────── POST-INDEX ────────────────────────────────
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            "Successfully indexed all partitions.",
+            &app,
+        );
+
+        // Post-index modules (also writes to evidence DB)
         for p in work {
-            // New Body for each partition to keep read state simple
             let mut body = Body::new(evidence_path.clone(), "auto");
 
-            // Decide byte length for FS detection:
-            // - MBR/GPT: size_sectors * sector_size
-            // - LOGICAL: exact size_bytes from the logical table
             let bytes_len = match p.kind {
                 "LOGICAL" => p.size_bytes,
                 _ => p.size_sectors.saturating_mul(sector_size_u64),
             };
 
-            // Filesystem detection
             let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len) {
                 Ok(fs) => fs,
                 Err(err) => {
@@ -442,45 +680,19 @@ fn process_partitions(evidence_id: i64, db_path: String, app: AppHandle) {
                         ),
                         &app,
                     );
-                    error!(
-                        "Could not detect filesystem for {} partition (id {}): {}",
-                        p.kind, p.id, err
-                    );
-                    continue; // move on to the next partition
+                    continue;
                 }
             };
 
-            // ── Module 1: Artifact extraction
-            extract_artifacts(evidence_id, p.id, &app, &pool).await;
+            extract_artifacts(evidence_id, p.id, &app, &evidence_pool).await;
+            update_evidence_status(&evidence_pool, evidence_id, 4)
+                .await
+                .ok();
 
-            update_evidence_status(&pool, evidence_id, 4).await.ok();
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Success,
-                format!(
-                    "Successfully extracted artifacts for {} partition (id {}).",
-                    p.kind, p.id
-                ),
-                &app,
-            );
-
-            // ── Module 2: File-type identification
-            identify_file_types(&mut fs, evidence_id, p.id, &app, pool.clone()).await;
-
-            update_evidence_status(&pool, evidence_id, 5).await.ok();
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Success,
-                format!(
-                    "Successfully finished file identification for {} partition (id {}).",
-                    p.kind, p.id
-                ),
-                &app,
-            );
-
-            // ── Module 3: (reserved)
+            identify_file_types(&mut fs, evidence_id, p.id, &app, evidence_pool.clone()).await;
+            update_evidence_status(&evidence_pool, evidence_id, 5)
+                .await
+                .ok();
         }
     });
 }

@@ -260,7 +260,10 @@ const InvestigateLinux: React.FC = () => {
               </TabPanel>
 
               <TabPanel value={value} index={1}>
-                <FileDataGrid partition_id={selectedPartition} />
+                <FileDataGrid
+                  evidence_id={evidence.id}
+                  partition_id={selectedPartition}
+                />
               </TabPanel>
 
               <TabPanel value={value} index={2}>

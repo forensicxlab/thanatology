@@ -21,6 +21,7 @@ function sleep(ms: number) {
 }
 
 interface FileDataGridProps {
+  evidence_id: number;
   partition_id: number;
   /** Called each time the grid fetches a new page of rows. */
   onRowsLoaded?: (rows: File[]) => void;
@@ -31,6 +32,7 @@ interface FileDataGridProps {
 const pageSizeDefault = 50;
 
 const FileDataGrid: React.FC<FileDataGridProps> = ({
+  evidence_id,
   partition_id,
   onRowsLoaded,
   onRowActivate,
@@ -109,6 +111,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
     setIsLoading(true);
     const { rows: newRows, rowCount: total } = await searchMedia(
+      evidence_id,
       partition_id,
       offset,
       pageSize,

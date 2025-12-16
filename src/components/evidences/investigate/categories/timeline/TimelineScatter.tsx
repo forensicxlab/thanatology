@@ -147,12 +147,11 @@ export default function TimelineScatter({
         const start = rangeApplied[0]?.valueOf() ?? null; // ms
         const end = rangeApplied[1]?.valueOf() ?? null; // ms
 
-        const rows = await getTimestampCountsByType(
-          null,
-          evidenceId,
-          partitionId,
-          { bucket: bucketApplied, start, end },
-        );
+        const rows = await getTimestampCountsByType(evidenceId, partitionId, {
+          bucket: bucketApplied,
+          start,
+          end,
+        });
 
         if (cancelled) return;
 

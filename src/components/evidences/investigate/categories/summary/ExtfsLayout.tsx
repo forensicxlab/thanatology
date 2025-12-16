@@ -64,7 +64,6 @@ export default function ExtfsLayout({ superblock }: { superblock: any }) {
               justifyContent="center"
               position="relative"
               sx={{
-                cursor: section.clickable ? "pointer" : "default",
                 borderRight:
                   idx < layout.length - 1 ? "1px solid #fff" : "none",
               }}

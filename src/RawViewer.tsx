@@ -1,33 +1,52 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useRef, useCallback, useEffect, useState } from "react";
 import { FixedSizeList as List } from "react-window";
 import { invoke } from "@tauri-apps/api/core";
+// RawMonacoViewer.tsx
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import CircularProgress from "@mui/material/CircularProgress";
 
-function useTauriFileReader(fileId: number, chunkSize = 256, fileSize: number) {
+import Editor, { OnMount } from "@monaco-editor/react";
+import type * as monacoEditor from "monaco-editor";
+
+function useTauriFileReader(
+  fileId: number,
+  fileSize: number,
+  chunkSize = 64 * 1024, // 64 KB default, tweak as needed
+) {
   const [offset, setOffset] = useState(0);
   const [isReading, setIsReading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+
+  // Reset when file changes
+  useEffect(() => {
+    setOffset(0);
+    setHasMore(true);
+  }, [fileId, fileSize, chunkSize]);
 
   const readNextChunk = useCallback(async () => {
     if (isReading || !hasMore) return "";
 
     setIsReading(true);
-
     try {
-      const length = chunkSize;
+      const remaining = fileSize - offset;
+      if (remaining <= 0) {
+        setHasMore(false);
+        return "";
+      }
+
+      const length = Math.min(chunkSize, remaining);
       let text = "";
 
       if (offset === 0) {
-        // First read – grab the prefix.
+        // First read – prefix
         text = await invoke<string>("read_file_prefix", {
-          fileId: fileId,
+          fileId,
           length,
         });
       } else {
         text = await invoke<string>("read_file_slice", {
-          fileId: fileId,
+          fileId,
           offset,
           length,
         });
@@ -36,127 +55,272 @@ function useTauriFileReader(fileId: number, chunkSize = 256, fileSize: number) {
       const newOffset = offset + length;
       setOffset(newOffset);
 
-      if (text.length === 0 || newOffset >= fileSize) {
+      if (!text || text.length === 0 || newOffset >= fileSize) {
         setHasMore(false);
       }
+
       return text;
     } finally {
       setIsReading(false);
     }
-  }, [fileId, chunkSize, offset, isReading, hasMore]);
+  }, [fileId, fileSize, chunkSize, offset, isReading, hasMore]);
 
-  return { readNextChunk, hasMore, isReading };
+  return { readNextChunk, hasMore, isReading, offset };
 }
 
 interface RawViewerProps {
-  /** Absolute or relative path recognised by backend */
+  /** File identifier understood by your backend (same as before) */
   fileId: number;
-  fileSize: number;
-  /** Height of the list viewport in px */
-  height?: number;
-  /** Width of the list viewport in px */
+
+  /** Height of the editor viewport in px */
+  height?: number | string;
+  /** Width of the editor viewport in px */
   width?: number | string;
-  /** Approximate height of a single text line in px */
-  lineHeight?: number;
+
   /** Bytes per chunk */
   chunkSize?: number;
-  /** Additional className for the wrapping Card */
+
+  /** Monaco language id ("plaintext", "json", "log", etc.) */
+  language?: string;
+
+  /** Monaco theme ("vs-dark", "light", or a custom one) */
+  theme?: string;
+
+  /** Extra className for the wrapping Card */
   className?: string;
+
   /** Inline sx prop forwarded to MUI Card */
   sx?: object;
+
+  /**
+   * Optional safety limit: max bytes to load into Monaco.
+   * If you deal with *very* large files you can cap it (e.g. 50 * 1024 * 1024).
+   * If undefined, it will try to load the whole file.
+   */
+  maxBytesToLoad?: number;
 }
 
-/**
- * A virtualised text viewer that streams huge files chunk‑by‑chunk from the filesystem
- * via Tauri commands, keeping memory usage low and UX snappy.
- */
 const RawViewer: React.FC<RawViewerProps> = ({
   fileId,
   fileSize,
-  height = 600,
+  height = "100",
   width = "100%",
-  lineHeight = 20,
-  chunkSize,
+  chunkSize = 64 * 1024,
+  language = "plaintext",
+  theme = "vs-dark",
   className,
   sx,
+  maxBytesToLoad,
 }) => {
   const { readNextChunk, hasMore, isReading } = useTauriFileReader(
     fileId,
-    chunkSize,
     fileSize,
+    chunkSize,
   );
 
-  const [lines, setLines] = useState<string[]>([]);
+  const editorRef = useRef<monacoEditor.editor.IStandaloneCodeEditor | null>(
+    null,
+  );
+  const monacoRef = useRef<typeof monacoEditor | null>(null);
 
-  // Initial load
-  useEffect(() => {
-    (async () => {
+  // We don't keep the full content in React state – just track length & errors.
+  const contentLengthRef = useRef(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isEditorReady, setIsEditorReady] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+
+  const canLoadMore = hasMore && !truncated;
+
+  const resetEditorContent = useCallback(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (model) {
+      model.setValue("");
+    }
+    contentLengthRef.current = 0;
+    setTruncated(false);
+    setLoadError(null);
+  }, []);
+
+  const appendToEditor = useCallback(
+    (chunk: string) => {
+      if (!editorRef.current || !monacoRef.current || !chunk) return;
+
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor.getModel();
+      if (!model) return;
+
+      // Optional: enforce maxBytesToLoad
+      const currentLength = contentLengthRef.current;
+      if (
+        typeof maxBytesToLoad === "number" &&
+        currentLength >= maxBytesToLoad
+      ) {
+        setTruncated(true);
+        return;
+      }
+
+      let textToInsert = chunk;
+      if (
+        typeof maxBytesToLoad === "number" &&
+        currentLength + chunk.length > maxBytesToLoad
+      ) {
+        const remaining = maxBytesToLoad - currentLength;
+        textToInsert = chunk.slice(0, remaining);
+        setTruncated(true);
+      }
+
+      const lineCount = model.getLineCount();
+      const lastLineLength = model.getLineMaxColumn(lineCount);
+
+      // Efficient append using applyEdits
+      model.applyEdits([
+        {
+          range: new monaco.Range(
+            lineCount,
+            lastLineLength,
+            lineCount,
+            lastLineLength,
+          ),
+          text: textToInsert,
+          forceMoveMarkers: true,
+        },
+      ]);
+
+      contentLengthRef.current = currentLength + textToInsert.length;
+    },
+    [maxBytesToLoad],
+  );
+
+  const loadMore = useCallback(async () => {
+    if (!canLoadMore || isReading) return;
+    try {
       const chunk = await readNextChunk();
       if (!chunk) return;
-      setLines([chunk]); // Just append the raw chunk as-is
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileId]);
-
-  // Load more when we scroll near the end
-  const loadMoreLines = useCallback(async () => {
-    if (!hasMore || isReading) return;
-    const chunk = await readNextChunk();
-    if (!chunk) return;
-
-    setLines((prev) => [...prev, chunk]);
-  }, [readNextChunk, hasMore, isReading]);
-
-  const handleScroll = ({ scrollOffset }: { scrollOffset: number }) => {
-    const threshold = (lines.length - 100) * lineHeight;
-    if (scrollOffset > threshold) {
-      loadMoreLines();
+      appendToEditor(chunk);
+    } catch (err) {
+      console.error(err);
+      setLoadError(err instanceof Error ? err.message : String(err));
     }
+  }, [canLoadMore, isReading, readNextChunk, appendToEditor]);
+
+  const handleEditorDidMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    setIsEditorReady(true);
   };
+  const loadMoreRef = useRef(loadMore);
+  useEffect(() => {
+    loadMoreRef.current = loadMore;
+  }, [loadMore]);
+  // When fileId changes and editor is ready: clear and load first chunk
+  useEffect(() => {
+    if (!isEditorReady) return;
+
+    resetEditorContent();
+    void loadMoreRef.current();
+  }, [fileId, isEditorReady, resetEditorContent]);
+
+  // Attach scroll listener to load more when near bottom
+  useEffect(() => {
+    if (!isEditorReady || !editorRef.current) return;
+
+    const editor = editorRef.current;
+
+    const disposable = editor.onDidScrollChange((e) => {
+      const domNode = editor.getDomNode();
+      if (!domNode) return;
+
+      // Distance from bottom in px
+      const clientHeight = domNode.clientHeight;
+      const distanceFromBottom = e.scrollHeight - (e.scrollTop + clientHeight);
+
+      // Tune this threshold as needed
+      if (distanceFromBottom < 2000) {
+        void loadMore();
+      }
+    });
+
+    return () => {
+      disposable.dispose();
+    };
+  }, [isEditorReady, loadMore]);
 
   return (
     <Card className={className} sx={{ maxWidth: width, ...sx }}>
-      <CardContent sx={{ p: 0 }}>
-        <List
+      <CardContent sx={{ p: 0, position: "relative" }}>
+        <Editor
           height={height}
-          itemCount={lines.length}
-          itemSize={lineHeight}
-          width={"100%"}
-          onScroll={handleScroll}
-        >
-          {({ index, style }) => (
-            <div
-              style={style}
-              className="whitespace-pre font-mono text-sm px-2"
-            >
-              {lines[index]}
-            </div>
-          )}
-        </List>
+          width="100%"
+          defaultLanguage={language}
+          defaultValue=""
+          theme={theme}
+          onMount={handleEditorDidMount}
+          options={{
+            readOnly: true,
+            wordWrap: "off",
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            renderWhitespace: "boundary",
+            renderLineHighlight: "none",
+            automaticLayout: true,
+          }}
+        />
+
+        {/* Loading indicator */}
         {isReading && (
           <div
             style={{
+              position: "absolute",
+              bottom: 8,
+              left: 0,
+              right: 0,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              padding: "8px 0",
               gap: 8,
+              pointerEvents: "none",
             }}
           >
             <CircularProgress size={18} thickness={4} />
             <span style={{ fontSize: 14, color: "#666" }}>Loading…</span>
           </div>
         )}
-        {!hasMore && (
+
+        {/* EOF / truncated indicator */}
+        {!canLoadMore && !isReading && (
           <div
             style={{
+              position: "absolute",
+              bottom: 8,
+              left: 0,
+              right: 0,
               textAlign: "center",
-              padding: "8px 0",
               fontSize: 12,
               color: "#999",
+              pointerEvents: "none",
             }}
           >
-            EOF
+            {truncated ? "Reached client size limit – view truncated" : "EOF"}
+          </div>
+        )}
+
+        {/* Error indicator */}
+        {loadError && (
+          <div
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 0,
+              right: 0,
+              textAlign: "center",
+              fontSize: 12,
+              color: "red",
+              pointerEvents: "none",
+            }}
+          >
+            Error while reading file: {loadError}
           </div>
         )}
       </CardContent>

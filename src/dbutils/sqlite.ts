@@ -10,6 +10,7 @@ import {
   LogicalPartitionEntry,
 } from "./types";
 import type { TimestampType, TimestampCount } from "./types";
+import { getEvidenceDb } from "./db";
 
 export async function createUser(username: string, db: Database | null) {
   if (!db) {
@@ -32,11 +33,12 @@ export async function createUser(username: string, db: Database | null) {
 }
 
 export async function fetchFiles(
+  evidenceId: number,
   partition_id: number,
   offset: number,
   limit: number,
 ): Promise<{ rows: File[]; rowCount: number }> {
-  const db = await Database.load("sqlite:thanatology.db");
+  const db = await getEvidenceDb(evidenceId);
 
   const rows: File[] = await db.select(
     "SELECT * FROM system_files WHERE partition_id = $1 LIMIT $2 OFFSET $3",
@@ -227,11 +229,11 @@ export async function savePreprocessingMetadata(
   }
   const preprocessingId = insertRes[0].id;
 
-  // 2) Insert each selected MBR partition
-  for (const partition of metadata.selectedMbrPartitions) {
-    console.log(partition);
-    await db.execute(
-      `
+  if (metadata.selectedMbrPartitions) {
+    for (const partition of metadata.selectedMbrPartitions) {
+      console.log(partition);
+      await db.execute(
+        `
         INSERT INTO mbr_partition_entries (
           evidence_id,
           partition_type,
@@ -245,50 +247,53 @@ export async function savePreprocessingMetadata(
           description
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
-      [
-        metadata.evidenceData.id,
-        partition.partition_type,
-        partition.boot_indicator,
-        partition.start_chs,
-        partition.end_chs,
-        partition.start_lba,
-        partition.size_sectors,
-        partition.sector_size,
-        partition.first_byte_addr,
-        partition.description,
-      ],
-    );
+        [
+          metadata.evidenceData.id,
+          partition.partition_type,
+          partition.boot_indicator,
+          partition.start_chs,
+          partition.end_chs,
+          partition.start_lba,
+          partition.size_sectors,
+          partition.sector_size,
+          partition.first_byte_addr,
+          partition.description,
+        ],
+      );
+    }
   }
 
-  for (const partition of metadata.selectedGptPartitions) {
-    await db.execute(
-      `
-        INSERT INTO gpt_partition_entries (
-          evidence_id,
-          partition_guid,
-          partition_type_guid,
-          starting_lba,
-          ending_lba,
-          attributes,
-          partition_name,
-          description,
-          first_byte_addr,
-          size_sectors
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `,
-      [
-        metadata.evidenceData.id,
-        partition.partition_guid_string,
-        partition.partition_type_guid_string,
-        partition.starting_lba,
-        partition.ending_lba,
-        partition.attributes,
-        partition.partition_name,
-        partition.description,
-        partition.first_byte_addr,
-        partition.size_sectors,
-      ],
-    );
+  if (metadata.selectedGptPartitions) {
+    for (const partition of metadata.selectedGptPartitions) {
+      await db.execute(
+        `
+          INSERT INTO gpt_partition_entries (
+            evidence_id,
+            partition_guid,
+            partition_type_guid,
+            starting_lba,
+            ending_lba,
+            attributes,
+            partition_name,
+            description,
+            first_byte_addr,
+            size_sectors
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `,
+        [
+          metadata.evidenceData.id,
+          partition.partition_guid_string,
+          partition.partition_type_guid_string,
+          partition.starting_lba,
+          partition.ending_lba,
+          partition.attributes,
+          partition.partition_name,
+          partition.description,
+          partition.first_byte_addr,
+          partition.size_sectors,
+        ],
+      );
+    }
   }
 
   // 4) Update status
@@ -314,6 +319,31 @@ export async function getSelectedPartitions(
   if (!db) {
     db = await Database.load("sqlite:thanatology.db");
   }
+
+  const mbrRows: MBRPartitionEntry[] = await db.select(
+    "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
+    [evidenceId],
+  );
+
+  const gptRows: GPTPartitionEntry[] = await db.select(
+    "SELECT * FROM gpt_partition_entries WHERE evidence_id = $1",
+    [evidenceId],
+  );
+
+  const logicalRows: LogicalPartitionEntry[] = await db.select(
+    "SELECT * FROM logical_partition_entries WHERE evidence_id = $1",
+    [evidenceId],
+  );
+
+  return { mbrRows, gptRows, logicalRows };
+}
+
+export async function getPartitions(evidenceId: number): Promise<{
+  mbrRows: MBRPartitionEntry[];
+  gptRows: GPTPartitionEntry[];
+  logicalRows: LogicalPartitionEntry[];
+}> {
+  const db = await getEvidenceDb(evidenceId);
 
   const mbrRows: MBRPartitionEntry[] = await db.select(
     "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
@@ -460,11 +490,12 @@ export async function getFileByEvidenceAndAbsolutePath(
 }
 
 export async function searchMedia(
+  evidence_id: number,
   partition_id: number,
   offset: number,
   limit: number,
 ): Promise<{ rows: File[]; rowCount: number }> {
-  const db = await Database.load("sqlite:thanatology.db");
+  const db = await getEvidenceDb(evidence_id);
 
   const rows: File[] = await db.select(
     "SELECT * FROM system_files WHERE partition_id = $1 AND ( (sig_mime LIKE 'image%') OR (sig_mime LIKE 'video%') OR (sig_mime LIKE 'audio%') ) LIMIT $2 OFFSET $3",
@@ -481,14 +512,11 @@ export async function searchMedia(
 }
 
 export async function fetchArtifactsByCategory(
-  db: Database | null,
   category: string,
   evidenceId: number,
   partitionId: number,
 ): Promise<any[]> {
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
+  const db = await getEvidenceDb(evidenceId);
 
   const query = `
     SELECT
@@ -538,7 +566,6 @@ export async function fetchArtifactsByCategory(
  * DB columns are Unix time **seconds** (INTEGER). We convert to **ms** for JS.
  */
 export async function getTimestampCountsByType(
-  db: Database | null,
   evidenceId: number,
   partitionId: number,
   opts?: {
@@ -548,7 +575,7 @@ export async function getTimestampCountsByType(
     end?: number | null;
   },
 ): Promise<TimestampCount[]> {
-  if (!db) db = await Database.load("sqlite:thanatology.db");
+  const db = await getEvidenceDb(evidenceId);
 
   const bucket = opts?.bucket ?? "second";
 
@@ -822,12 +849,13 @@ function buildFiltersWithDollarPlaceholders(
 }
 
 export async function getFiles(
+  evidenceId: number,
   partition_id: number,
   offset: number,
   limit: number,
   filterModel?: FilterModel,
 ): Promise<{ rows: File[]; rowCount: number }> {
-  const db = await Database.load("sqlite:thanatology.db");
+  const db = await getEvidenceDb(evidenceId);
 
   // $1 is always the partition_id
   const base = `partition_id = $1`;

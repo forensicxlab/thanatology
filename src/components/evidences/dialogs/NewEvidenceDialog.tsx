@@ -26,8 +26,11 @@ const NewEvidenceDialog: React.FC<NewEvidenceDialogProps> = ({
 }) => {
   const [evidenceName, setEvidenceName] = useState("");
   const [evidenceType, setEvidenceType] = useState<
-    "Disk image" | "Memory Image" | "Procmon dump"
-  >("Disk image");
+    | "Memory Image"
+    | "Procmon dump"
+    | "Physical Disk image"
+    | "Logical Disk image"
+  >("Physical Disk image");
   const [evidenceLocation, setEvidenceLocation] = useState("");
   const [evidenceDescription, setEvidenceDescription] = useState("");
 
@@ -54,7 +57,7 @@ const NewEvidenceDialog: React.FC<NewEvidenceDialogProps> = ({
 
       // Reset the form fields
       setEvidenceName("");
-      setEvidenceType("Disk image");
+      setEvidenceType("Physical Disk image");
       setEvidenceLocation("");
       setEvidenceDescription("");
     } catch (error) {

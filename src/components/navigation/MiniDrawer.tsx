@@ -19,8 +19,11 @@ import {
   ChevronLeft,
 } from "@mui/icons-material";
 import { Outlet, Link } from "react-router";
+import TitlebarNav from "./TitlebarNav";
 
 const drawerWidth = 240;
+
+const TITLEBAR_HEIGHT = 40;
 
 const openedMixin = (theme: Theme): CSSObject => ({
   width: drawerWidth,
@@ -29,6 +32,7 @@ const openedMixin = (theme: Theme): CSSObject => ({
     duration: theme.transitions.duration.enteringScreen,
   }),
   overflowX: "hidden",
+  marginTop: TITLEBAR_HEIGHT,
 });
 
 const closedMixin = (theme: Theme): CSSObject => ({
@@ -41,16 +45,17 @@ const closedMixin = (theme: Theme): CSSObject => ({
   [theme.breakpoints.up("sm")]: {
     width: `calc(${theme.spacing(8)} + 1px)`,
   },
+  marginTop: TITLEBAR_HEIGHT,
 });
 
-const DrawerHeader = styled("div")(({ theme }) => ({
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "flex-end",
-  padding: theme.spacing(0, 1),
-  // necessary for content to be below app bar
-  ...theme.mixins.toolbar,
-}));
+// const DrawerHeader = styled("div")(({ theme }) => ({
+//   display: "flex",
+//   alignItems: "center",
+//   justifyContent: "flex-end",
+//   padding: theme.spacing(0, 1),
+//   // necessary for content to be below app bar
+//   ...theme.mixins.toolbar,
+// }));
 
 function renderIcon(index: number) {
   switch (index) {
@@ -104,19 +109,47 @@ export default function MiniDrawer() {
   };
 
   return (
-    <Box sx={{ display: "flex" }}>
-      <Drawer variant="permanent" open={open}>
-        <List>
-          {["", "Cases", "Tasks", "Settings"].map((text, index) => (
-            <ListItem key={index} disablePadding sx={{ display: "block" }}>
+    <>
+      <TitlebarNav />
+      <Box sx={{ display: "flex", pt: `${TITLEBAR_HEIGHT}px` }}>
+        <Drawer variant="permanent" open={open}>
+          <List>
+            {["", "Cases", "Tasks", "Settings"].map((text, index) => (
+              <ListItem key={index} disablePadding sx={{ display: "block" }}>
+                <ListItemButton
+                  sx={{
+                    minHeight: 48,
+                    justifyContent: open ? "initial" : "center",
+                    px: 2.5,
+                  }}
+                  component={Link}
+                  to={`/${text.toLowerCase().replace(" ", "")}`}
+                >
+                  <ListItemIcon
+                    sx={{
+                      minWidth: 0,
+                      mr: open ? 3 : "auto",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {renderIcon(index)}
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={text === "" ? "Dashboard" : text}
+                    sx={{ opacity: open ? 1 : 0 }}
+                  />
+                </ListItemButton>
+              </ListItem>
+            ))}
+          </List>
+          <List>
+            <ListItem disablePadding sx={{ display: "block" }}>
               <ListItemButton
                 sx={{
                   minHeight: 48,
                   justifyContent: open ? "initial" : "center",
                   px: 2.5,
                 }}
-                component={Link}
-                to={`/${text.toLowerCase().replace(" ", "")}`}
               >
                 <ListItemIcon
                   sx={{
@@ -125,54 +158,29 @@ export default function MiniDrawer() {
                     justifyContent: "center",
                   }}
                 >
-                  {renderIcon(index)}
+                  <IconButton
+                    onClick={open ? handleDrawerClose : handleDrawerOpen}
+                  >
+                    {open ? <ChevronRight /> : <ChevronLeft />}
+                  </IconButton>
                 </ListItemIcon>
-                <ListItemText
-                  primary={text === "" ? "Dashboard" : text}
-                  sx={{ opacity: open ? 1 : 0 }}
-                />
+                <ListItemText primary="Close" sx={{ opacity: open ? 1 : 0 }} />
               </ListItemButton>
             </ListItem>
-          ))}
-        </List>
-        <List>
-          <ListItem disablePadding sx={{ display: "block" }}>
-            <ListItemButton
-              sx={{
-                minHeight: 48,
-                justifyContent: open ? "initial" : "center",
-                px: 2.5,
-              }}
-            >
-              <ListItemIcon
-                sx={{
-                  minWidth: 0,
-                  mr: open ? 3 : "auto",
-                  justifyContent: "center",
-                }}
-              >
-                <IconButton
-                  onClick={open ? handleDrawerClose : handleDrawerOpen}
-                >
-                  {open ? <ChevronRight /> : <ChevronLeft />}
-                </IconButton>
-              </ListItemIcon>
-              <ListItemText primary="Close" sx={{ opacity: open ? 1 : 0 }} />
-            </ListItemButton>
-          </ListItem>
-        </List>
-      </Drawer>
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          p: 1,
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-        }}
-      >
-        <Outlet />
+          </List>
+        </Drawer>
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            p: 1,
+            width: { sm: `calc(100% - ${drawerWidth}px)` },
+          }}
+        >
+          <Outlet />
+        </Box>
+        <BottomActionBar />
       </Box>
-      <BottomActionBar />
-    </Box>
+    </>
   );
 }

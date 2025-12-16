@@ -23,7 +23,7 @@ const kindFromMime = (mime: string): MediaEntry["kind"] =>
 
 const basename = (p?: string | null) => (p ? p.split(/[\\/]/).pop() || p : "");
 
-const Media: React.FC<MediaProps> = ({ partitionId }) => {
+const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
   const [loadedRows, setLoadedRows] = useState<File[]>([]);
   const [openById, setOpenById] = useState<number | null>(null);
 
@@ -55,6 +55,7 @@ const Media: React.FC<MediaProps> = ({ partitionId }) => {
         {/* Left: DataGrid */}
         <Grid size={12}>
           <FileDataGrid
+            evidence_id={evidenceId}
             partition_id={partitionId}
             onRowsLoaded={setLoadedRows}
             onRowActivate={handleRowActivate}

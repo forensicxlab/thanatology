@@ -7,7 +7,7 @@ import Database from "@tauri-apps/plugin-sql";
 import "./App.css";
 import { ThemeProvider, createTheme, GlobalStyles } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
-import MiniDrawer from "./components/MiniDrawer";
+import MiniDrawer from "./components/navigation/MiniDrawer";
 import { BrowserRouter as Router, Routes, Route } from "react-router";
 import Dashboard from "./components/Dashboard";
 import Cases from "./components/cases/Cases";
@@ -23,12 +23,13 @@ import LinuxInvestigation from "./components/evidences/investigate/Main";
 import { LicenseInfo } from "@mui/x-license";
 import RawViewer from "./RawViewer";
 import { glassTheme } from "./glassTheme";
+import { NavHistoryProvider } from "./components/navigation/NavHistory";
 
-const darkTheme = createTheme({
-  palette: {
-    mode: "dark",
-  },
-});
+// const darkTheme = createTheme({
+//   palette: {
+//     mode: "dark",
+//   },
+// });
 
 LicenseInfo.setLicenseKey("LICENCE_KEY_HERE");
 
@@ -57,35 +58,48 @@ const App: React.FC = () => {
           <FirstLaunch database={database} setFirstLaunch={setFirstLaunch} />
         ) : (
           <Router>
-            <Routes>
-              <Route path="/" element={<MiniDrawer />}>
-                <Route path="" element={<Dashboard />} />
-                <Route path="cases" element={<Cases database={database} />} />
-                <Route
-                  path="case/new"
-                  element={<CaseCreationStepper database={database} />}
-                />
-                <Route path="tasks" element={<Tasks />} />
-                <Route path="settings" element={<Settings />} />
-                <Route
-                  path="cases/:id"
-                  element={<CaseDetails database={database} />}
-                />
-                <Route
-                  path="evidences/preprocess/:id"
-                  element={<PreProcessing database={database} />}
-                />
-                <Route path="evidences/process/:id" element={<Processing />} />
-                <Route
-                  path="evidences/investigate/:id"
-                  element={<LinuxInvestigation />}
-                />
-                <Route
-                  path="viewer/:id"
-                  element={<RawViewer fileId={393424} fileSize={113712} />}
-                />
-              </Route>
-            </Routes>
+            <NavHistoryProvider>
+              <Routes>
+                <Route path="/" element={<MiniDrawer />}>
+                  <Route path="" element={<Dashboard />} />
+                  <Route path="cases" element={<Cases database={database} />} />
+                  <Route
+                    path="case/new"
+                    element={<CaseCreationStepper database={database} />}
+                  />
+                  <Route path="tasks" element={<Tasks />} />
+                  <Route path="settings" element={<Settings />} />
+                  <Route
+                    path="cases/:id"
+                    element={<CaseDetails database={database} />}
+                  />
+                  <Route
+                    path="evidences/preprocess/:id"
+                    element={<PreProcessing database={database} />}
+                  />
+                  <Route
+                    path="evidences/process/:id"
+                    element={<Processing />}
+                  />
+                  <Route
+                    path="evidences/investigate/:id"
+                    element={<LinuxInvestigation />}
+                  />
+                  <Route
+                    path="viewer/:id"
+                    element={
+                      <RawViewer
+                        fileId={52}
+                        height={"80vh"}
+                        language="plaintext"
+                        theme="vs-dark"
+                        chunkSize={64 * 1024}
+                      />
+                    }
+                  />
+                </Route>
+              </Routes>
+            </NavHistoryProvider>
           </Router>
         )}
       </SnackbarProvider>

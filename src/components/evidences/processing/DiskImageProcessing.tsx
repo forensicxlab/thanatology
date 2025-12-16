@@ -37,7 +37,9 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
   const [processing, setProcessing] = useState<boolean>(false);
-  const [dbPath, setDbPath] = useState<string>("");
+
+  const [mainDbPath, setMainDbPath] = useState<string>("");
+  const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
 
   useEffect(() => {
     async function fetchPartitions() {
@@ -64,8 +66,10 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
         setMbrPartitions(mbrRows);
         setGptPartitions(fetchedPartitions.gptRows);
-        const appLocalDataDirPath = await appLocalDataDir();
-        setDbPath(`${appLocalDataDirPath}/thanatology.db`);
+
+        const baseDir = await appLocalDataDir();
+        setMainDbPath(`${baseDir}/thanatology.db`);
+        setEvidenceDbPath(`${baseDir}/evidences/${evidence.id}.db`);
       } catch (error) {
         console.error("Error fetching processing data", error);
         display_message("error", "Error fetching processing data");
@@ -76,7 +80,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
   async function fetchEvidence() {
     try {
-      // Fetch evidence info.
       const fetchedEvidence: Evidence = await getEvidence(
         null,
         evidence.id.toString(),
@@ -88,30 +91,28 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     }
   }
 
-  // Listen for progress events from Tauri:
   useEffect(() => {
-    if (evidence.status === 2) {
-      setProcessing(true);
-    }
-
+    if (evidence.status === 2) setProcessing(true);
     return;
-  }, [display_message]);
+  }, [display_message, evidence.status]);
 
   const handleStartProcessing = async () => {
     if (!evidence) {
       display_message("info", "Evidence data is not loaded yet.");
       return;
     }
+    if (!mainDbPath || !evidenceDbPath) {
+      display_message("error", "Database paths are not ready yet.");
+      return;
+    }
 
-    // Build a minimal metadata object for updating evidence status
     const metadata: ProcessedEvidenceMetadata = {
       evidenceData: evidence,
-      diskImageFormat: "", // This could be set via check_disk_image_format if needed.
+      diskImageFormat: "",
       selectedMbrPartitions: mbrPartitions,
       selectedGptPartitions: gptPartitions,
     };
 
-    // Set processing status in the DB to "in progress"
     try {
       await setProcessingInProgress(null, metadata);
       await fetchEvidence();
@@ -125,13 +126,13 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     }
 
     setProcessing(true);
-
     display_message("info", "Processing Started");
 
     try {
       await invoke("process_partitions", {
-        dbPath: dbPath,
         evidenceId: evidence.id,
+        mainDbPath: mainDbPath,
+        evidenceDbPath: evidenceDbPath,
       });
     } catch (err) {
       console.error("Error invoking process_partitions", err);

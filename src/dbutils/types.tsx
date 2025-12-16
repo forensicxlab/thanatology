@@ -44,7 +44,10 @@ export interface MBR {
 
 /* ---------------------------  GPT  ------------------------------------ */
 
-export type PartitionEntry = MBRPartitionEntry | GPTPartitionEntry;
+export type PartitionEntry =
+  | MBRPartitionEntry
+  | GPTPartitionEntry
+  | LogicalPartitionEntry;
 
 export interface GPTPartitionEntry {
   id: number;

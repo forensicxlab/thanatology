@@ -1,6 +1,6 @@
 // thanatology/src/components/evidences/investigate/PartitionSelection.tsx
 import React, { useEffect, useState } from "react";
-import { getSelectedPartitions } from "../../../dbutils/sqlite";
+import { getPartitions, getSelectedPartitions } from "../../../dbutils/sqlite";
 import {
   MBRPartitionEntry,
   GPTPartitionEntry,
@@ -45,11 +45,8 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
   useEffect(() => {
     const fetchPartitions = async () => {
       try {
-        const db = null; // provide your custom DB instance here if you have one
-        const { mbrRows, gptRows, logicalRows } = await getSelectedPartitions(
-          evidenceId,
-          db,
-        );
+        const { mbrRows, gptRows, logicalRows } =
+          await getPartitions(evidenceId);
 
         // Normalise rows → PartitionOption
         const combined: PartitionOption[] = [

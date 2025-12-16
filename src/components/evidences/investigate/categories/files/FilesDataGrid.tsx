@@ -22,6 +22,7 @@ function sleep(ms: number) {
 }
 
 interface FileDataGridProps {
+  evidence_id: number;
   partition_id: number;
   /** Called each time the grid fetches a new page of rows. */
   onRowsLoaded?: (rows: File[]) => void;
@@ -32,6 +33,7 @@ interface FileDataGridProps {
 const pageSizeDefault = 30;
 
 const FileDataGrid: React.FC<FileDataGridProps> = ({
+  evidence_id,
   partition_id,
   onRowsLoaded,
   onRowActivate,
@@ -117,7 +119,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
       {
         field: "actions",
         type: "actions",
-        headerName: "",
+        headerName: "Action",
         getActions: ({ row }) => [
           <GridActionsCellItem
             key="view"
@@ -125,7 +127,6 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
             label="View file"
             onClick={() => {
               onRowActivate?.(row);
-              // Keep your existing file-viewer nav too:
               navigate(`/viewer/${row.file_id}`);
             }}
             showInMenu={false}
@@ -147,6 +148,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
     setIsLoading(true);
     const { rows: newRows, rowCount: total } = await getFiles(
+      evidence_id,
       partition_id,
       offset,
       pageSize,
@@ -161,11 +163,16 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
     onRowsLoaded?.(newRows);
 
+    // Allow the grid to render the new rows before autosizing
     await sleep(0);
-    apiRef.current?.autosizeColumns({
-      includeHeaders: true,
-      includeOutliers: true,
-    });
+    if (apiRef.current) {
+      apiRef.current.autosizeColumns({
+        includeHeaders: true,
+        includeOutliers: true,
+        disableColumnVirtualization: true,
+        expand: true,
+      });
+    }
   }, [paginationModel, partition_id, apiRef, onRowsLoaded, queryOptions]);
 
   React.useEffect(() => {
@@ -191,6 +198,15 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         columns={columns}
         loading={isLoading}
         rowCount={rowCount}
+        initialState={{
+          columns: {
+            columnVisibilityModel: {
+              permissions: false,
+              group: false,
+              owner: false,
+            },
+          },
+        }}
         pagination
         paginationMode="server"
         paginationModel={paginationModel}
@@ -201,6 +217,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         density="compact"
         showToolbar={true}
         onRowDoubleClick={handleRowDoubleClick}
+        autosizeOnMount={false}
       />
     </div>
   );

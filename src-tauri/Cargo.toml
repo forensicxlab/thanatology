@@ -36,12 +36,14 @@ log = "0.4"
 file_type = "0.8.8"
 
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.8.0", features = [
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
     "sqlite",
-    "runtime-tokio-native-tls",
     "macros",
+    "regexp",           # <- THIS is what gives you REGEXP support
 ] }
 futures = "0.3.31"
 tauri-plugin-shell = "2"
 tauri-plugin-pty = "0.1.0"
 tauri-plugin-os = "2.3.0"
+regex = "1.12.2"

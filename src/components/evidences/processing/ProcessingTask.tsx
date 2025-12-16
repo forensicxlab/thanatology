@@ -26,7 +26,9 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
   const [mainColor, setMainColor] = useState<
     "info" | "secondary" | "error" | "success"
   >("info");
-  const [moduleProgress, setModuleProgress] = useState("");
+  const [moduleProgress, setModuleProgress] = useState(
+    "Processing...Waiting for status.",
+  );
   const [moduleColor, setModuleColor] = useState<
     "info" | "secondary" | "error" | "success"
   >("info");
@@ -109,7 +111,10 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
           <Check />
         </Avatar>
       </ListItemAvatar>
-      <ListItemText primary={evidenceName} secondary="Finished" />
+      <ListItemText
+        primary={evidenceName}
+        secondary="Processing fully completed"
+      />
     </ListItem>
   );
 };
