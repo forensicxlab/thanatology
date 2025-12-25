@@ -1,14 +1,19 @@
 use crate::modules::utils::th_progress::{
     emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
+use anyhow::{Context, Result};
+use exhume_artefacts::parsers::ParserRegistry;
+use exhume_artefacts::{ObjectParsed, Parser as ArtefactParser, ParserInput};
+use exhume_filesystem::filesystem::{FileCommon, FsFileReadSeek};
 use exhume_filesystem::File;
+use exhume_filesystem::Filesystem;
 use log::{error, info};
+use regex::escape;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
+use sqlx::Row;
 use std::fs;
 use tauri::AppHandle;
-
-use regex::escape;
 
 /// Category assigned to an artifact.
 ///
@@ -107,7 +112,7 @@ impl ArtifactSet {
     }
 }
 
-pub async fn extract_artifacts(
+pub async fn identify_artefacts(
     evidence_id: i64,
     partition_id: i64,
     app: &AppHandle,
@@ -195,4 +200,242 @@ pub async fn extract_artifacts(
             }
         }
     }
+}
+
+/// Synchronously run one parser against one filesystem record, using streaming Read+Seek.
+fn extract_artefact<F: Filesystem>(
+    fs: &mut F,
+    parser: &dyn ArtefactParser,
+    fs_identifier: u64,
+) -> Result<Vec<ObjectParsed>>
+where
+    F::FileType: FileCommon,
+{
+    // Fetch FS record
+    let record = fs.get_file(fs_identifier).unwrap();
+    // Adapter: Read+Seek backed by Filesystem::read_file_slice
+    let rs = FsFileReadSeek::new(fs, record);
+
+    // Collect parsed objects
+    let mut out: Vec<ObjectParsed> = Vec::new();
+    let mut sink = |obj: ObjectParsed| -> Result<()> {
+        out.push(obj);
+        Ok(())
+    };
+
+    parser.run_into(ParserInput::ReadSeek(Box::new(rs)), &mut sink)?;
+    Ok(out)
+}
+
+/// Extract artefacts for a partition by running registered parsers against the matched files.
+///
+/// This is called from your `process_partitions` flow:
+///   identify_artefacts(..)
+///   extract_artefacts(.., &mut fs, &registry).await
+pub async fn extract_artefacts<F: Filesystem>(
+    evidence_id: i64,
+    partition_id: i64,
+    app: &AppHandle,
+    pool: &SqlitePool,
+    fs: &mut F,
+    registry: &ParserRegistry,
+) where
+    F::FileType: FileCommon,
+{
+    emit_progress_event(
+        &evidence_id,
+        ProgressMessageLevel::Module,
+        ProgressMessageType::Info,
+        "Starting artefact extraction…".to_string(),
+        app,
+    );
+
+    // Pull artefacts that specify a parser, joined to system_files to recover the FS identifier.
+    let rows = match sqlx::query(
+        r#"
+        SELECT
+            a.id            AS artifact_id,
+            a.file_id       AS file_id,
+            a.parser        AS parser_name,
+            sf.identifier   AS fs_identifier,
+            sf.absolute_path AS absolute_path
+        FROM artifacts a
+        JOIN system_files sf
+          ON sf.id = a.file_id
+        WHERE a.evidence_id  = ?
+          AND a.partition_id = ?
+          AND a.parser IS NOT NULL
+          AND TRIM(a.parser) <> ''
+        ORDER BY a.id;
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Module,
+                ProgressMessageType::Error,
+                format!("Failed to list artefacts to extract: {e:?}"),
+                app,
+            );
+            error!("extract_artefacts list error: {e:?}");
+            return;
+        }
+    };
+
+    if rows.is_empty() {
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::Success,
+            "No artefacts with a parser to extract.".to_string(),
+            app,
+        );
+        return;
+    }
+
+    let total = rows.len() as u64;
+
+    // Write parsed objects in one transaction for this partition.
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Module,
+                ProgressMessageType::Error,
+                format!("Could not open DB transaction for extraction: {e:?}"),
+                app,
+            );
+            return;
+        }
+    };
+
+    let mut processed_files = 0u64;
+    let mut emitted_objects = 0u64;
+
+    for row in rows {
+        processed_files += 1;
+
+        let artifact_id: i64 = row.get("artifact_id");
+        let file_id: Option<i64> = row.get("file_id");
+        let parser_name: String = row.get("parser_name");
+        let fs_identifier_i64: i64 = row.get("fs_identifier");
+        let abs_path: String = row.get("absolute_path");
+
+        let Some(parser) = registry.get(parser_name.as_str()) else {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Module,
+                ProgressMessageType::Error,
+                format!(
+                    "Artefact '{}' references unknown parser '{}' (file: {})",
+                    artifact_id, parser_name, abs_path
+                ),
+                app,
+            );
+            continue;
+        };
+
+        let objs = match extract_artefact(fs, &**parser, fs_identifier_i64 as u64) {
+            Ok(v) => v,
+            Err(e) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Error,
+                    format!(
+                        "Extraction failed (parser={}, file={}): {e:?}",
+                        parser_name, abs_path
+                    ),
+                    app,
+                );
+                error!("Extraction failed parser={parser_name} file={abs_path}: {e:?}");
+                continue;
+            }
+        };
+
+        for obj in objs {
+            emitted_objects += 1;
+
+            // Store the parsed object
+            if let Err(e) = sqlx::query(
+                r#"
+                INSERT INTO artifact_objects (
+                    evidence_id,
+                    partition_id,
+                    artifact_id,
+                    file_id,
+                    parser,
+                    kind,
+                    text,
+                    json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                "#,
+            )
+            .bind(evidence_id)
+            .bind(partition_id)
+            .bind(artifact_id)
+            .bind(file_id)
+            .bind(obj.parser)
+            .bind(obj.kind)
+            .bind(obj.text)
+            .bind(obj.json.to_string())
+            .execute(&mut *tx)
+            .await
+            {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Error,
+                    format!("DB insert error for parsed object: {e:?}"),
+                    app,
+                );
+                error!("DB insert error for parsed object: {e:?}");
+            }
+        }
+
+        if processed_files % 50 == 0 || processed_files == total {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Module,
+                ProgressMessageType::Info,
+                format!(
+                    "Artefact extraction: {processed_files}/{total} files, {emitted_objects} objects emitted…"
+                ),
+                app,
+            );
+        }
+    }
+
+    if let Err(e) = tx.commit().await {
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::Error,
+            format!("Extraction commit error: {e:?}"),
+            app,
+        );
+        return;
+    }
+
+    emit_progress_event(
+        &evidence_id,
+        ProgressMessageLevel::Module,
+        ProgressMessageType::Success,
+        format!(
+            "Artefact extraction done: processed {total} files, emitted {emitted_objects} objects."
+        ),
+        app,
+    );
+
+    info!(
+        "Artefact extraction done evidence_id={evidence_id} partition_id={partition_id}: \
+         processed={total} emitted={emitted_objects}"
+    );
 }

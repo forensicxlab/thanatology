@@ -226,6 +226,46 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "evidence_artefacts_parser",
+            sql: r#"
+            CREATE TABLE IF NOT EXISTS artifact_objects (
+              id           INTEGER PRIMARY KEY AUTOINCREMENT,
+
+              evidence_id  INTEGER NOT NULL,
+              partition_id INTEGER NOT NULL,
+
+              artifact_id  INTEGER NOT NULL,
+              file_id      INTEGER,
+
+              parser       TEXT NOT NULL,
+              kind         TEXT NOT NULL,
+
+              text         TEXT,
+              json         TEXT NOT NULL,
+
+              created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+
+              FOREIGN KEY (evidence_id) REFERENCES evidence(id) ON DELETE CASCADE,
+              FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
+              FOREIGN KEY (file_id)     REFERENCES system_files(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_objects_evp
+              ON artifact_objects(evidence_id, partition_id);
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_objects_artifact
+              ON artifact_objects(artifact_id);
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_objects_file
+              ON artifact_objects(file_id);
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_objects_parser_kind
+              ON artifact_objects(parser, kind);
+            "#,
+            kind: MigrationKind::Up,
+        },
     ];
 
     thanatology_lib::run(init_migrations);

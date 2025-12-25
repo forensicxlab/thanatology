@@ -1,6 +1,6 @@
 // thanatology/src/components/evidences/investigate/PartitionSelection.tsx
 import React, { useEffect, useState } from "react";
-import { getPartitions, getSelectedPartitions } from "../../../dbutils/sqlite";
+import { getPartitions } from "../../../dbutils/sqlite";
 import {
   MBRPartitionEntry,
   GPTPartitionEntry,
@@ -107,8 +107,8 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
   const logicalItems = partitions.filter((p) => p.type === "LOGICAL");
 
   return (
-    <FormControl style={{ marginBottom: "1rem", minWidth: 260 }}>
-      <InputLabel id="partition-selector-label">Partition</InputLabel>
+    <FormControl style={{ marginBottom: "1rem", minWidth: 260 }} size="small">
+      <InputLabel id="partition-selector-label">Partition(s)</InputLabel>
       <Select
         labelId="partition-selector-label"
         id="partition-selector"

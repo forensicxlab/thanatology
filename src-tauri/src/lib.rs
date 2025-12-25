@@ -10,12 +10,17 @@ use sqlx::Row;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub mod modules;
 
-use modules::th_artifacts::extract_artifacts;
+use exhume_artefacts::parsers::build_registry;
+use modules::th_artifacts::{extract_artefacts, identify_artefacts};
 use modules::th_evidences::create_case_with_evidence;
-use modules::th_filesystem::{get_fs_info, read_file_bytes, read_file_prefix, read_file_slice};
+use modules::th_filesystem::{
+    get_fs_info, read_file_bytes, read_file_prefix, read_file_slice, read_file_slice_bytes,
+};
+
 use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 use modules::th_identifier::identify_file_types;
@@ -27,7 +32,6 @@ use std::{
     path::Path,
     path::PathBuf,
 };
-use tauri::AppHandle;
 use tauri_plugin_sql::Migration;
 
 fn as_sqlite_url(path_or_url: &str) -> String {
@@ -473,7 +477,7 @@ fn process_partitions(
         let evidence_path: String = evidence_row.get("path");
 
         // Sector size reference
-        let mut body_for_info = Body::new(evidence_path.clone(), "auto");
+        let body_for_info = Body::new(evidence_path.clone(), "auto");
         let sector_size_u64 = body_for_info.get_sector_size() as u64;
 
         // Load partitions FROM EVIDENCE DB (no shared locks with other evidences)
@@ -684,7 +688,10 @@ fn process_partitions(
                 }
             };
 
-            extract_artifacts(evidence_id, p.id, &app, &evidence_pool).await;
+            identify_artefacts(evidence_id, p.id, &app, &evidence_pool).await;
+            let registry = build_registry();
+            extract_artefacts(evidence_id, p.id, &app, &evidence_pool, &mut fs, &registry).await;
+
             update_evidence_status(&evidence_pool, evidence_id, 4)
                 .await
                 .ok();
@@ -755,16 +762,23 @@ fn new_whiteboard(app: AppHandle) {
 }
 
 #[tauri::command]
-fn new_fileviewer(app: AppHandle) {
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "fileviewer",
-        tauri::WebviewUrl::App("fileviewer.html".into()),
-    )
-    .title("Advanced File Viewer")
-    .maximized(true)
-    .build()
-    .unwrap();
+async fn new_fileviewer(app: AppHandle) -> Result<(), String> {
+    let label = "fileviewer";
+
+    if let Some(win) = app.get_webview_window(label) {
+        // Bring to foreground (handle minimized/hidden cases)
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("fileviewer.html".into()))
+        .title("Advanced File Viewer")
+        .maximized(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -810,6 +824,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             read_file_slice,
             read_file_prefix,
             read_file_bytes,
+            read_file_slice_bytes,
             detect_logical_filesystem
         ])
         .run(tauri::generate_context!())

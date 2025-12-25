@@ -15,11 +15,13 @@ import { Box, Tooltip, Typography, Paper, Stack, Chip } from "@mui/material";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate } from "react-router";
-import Database from "@tauri-apps/plugin-sql";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import UnixToUTC from "../common/UnixToUTC";
 import { fetchArtifactsByCategory } from "../../../dbutils/sqlite";
 import * as ReactDOM from "react-dom";
 import { ArtifactWithFile } from "../../../dbutils/types";
+import { invoke } from "@tauri-apps/api/core";
+
 /* ------------------------------------------------------------------ */
 /* Utility                                                             */
 /* ------------------------------------------------------------------ */
@@ -86,7 +88,64 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   const [rows] = useState<ArtifactWithFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const AUTOSIZE_COLS = [
+    "identifier",
+    "tag",
+    "sig_mime",
+    "artifact_name",
+    "absolute_path",
+    "size",
+    "created",
+    "modified",
+    "accessed",
+    "permissions",
+    "group",
+    "owner",
+    "actions",
+  ];
 
+  const runAutosize = React.useCallback(() => {
+    apiRef.current?.autosizeColumns({
+      columns: AUTOSIZE_COLS,
+      includeHeaders: true,
+      includeOutliers: true,
+      disableColumnVirtualization: true, // if you want off-screen columns measured too
+    });
+  }, [apiRef]);
+
+  useEffect(() => {
+    if (loading) return;
+
+    let raf1 = 0;
+    let raf2 = 0;
+
+    const schedule = () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          runAutosize();
+        });
+      });
+    };
+
+    // Re-run autosize whenever the viewport inner size changes (e.g. tab becomes visible)
+    const unsubscribe = apiRef.current?.subscribeEvent?.(
+      "viewportInnerSizeChange",
+      ({ width }: { width: number }) => {
+        if (width > 0) schedule();
+      },
+    );
+
+    // Also try once (if already visible)
+    schedule();
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      unsubscribe?.();
+    };
+  }, [apiRef, loading, runAutosize]);
   /* Data fetch */
   const loadArtifacts = useCallback(async () => {
     setLoading(true);
@@ -97,11 +156,12 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         evidence_id,
         partition_id,
       )) as ArtifactWithFile[];
+      const dataWithId = data.map((r) => ({ ...r, id: r.artifact_id }));
 
       /* Flush the row update synchronously so the DOM is updated immediately */
       ReactDOM.flushSync(() => {
         setLoading(false);
-        apiRef.current?.updateRows(data);
+        apiRef.current?.updateRows(dataWithId);
       });
 
       /* Defer autosizing to the next macrotask so the grid has time to render the new content */
@@ -124,8 +184,9 @@ const Artifacts: React.FC<ArtifactsProps> = ({
           "owner",
           "actions",
         ],
-        includeOutliers: true,
         includeHeaders: true,
+        includeOutliers: true,
+        disableColumnVirtualization: true,
       });
     } catch (err) {
       setLoading(false);
@@ -237,7 +298,18 @@ const Artifacts: React.FC<ArtifactsProps> = ({
             key="view"
             icon={<VisibilityIcon />}
             label="View file"
-            onClick={() => navigate(`/viewer/${row.file_id}`)}
+            onClick={async () => {
+              try {
+                await invoke("new_fileviewer");
+              } catch (error) {
+                console.error("Error opening the file viewer:", error);
+              } finally {
+                await emitTo("fileviewer", "message", {
+                  fileId: row.identifier,
+                  fileSize: row.size,
+                });
+              }
+            }}
             showInMenu={false}
           />,
           <Tooltip key="info" title={row.description} arrow>

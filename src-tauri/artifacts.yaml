@@ -319,7 +319,7 @@ artifacts:
       - '\Windows\System32\winevt\Logs\Security.evtx'
       - '\Windows\System32\winevt\Logs\System.evtx'
       - '\Windows\System32\winevt\Logs\Application.evtx'
-    parser: "evtx"
+    parser: "windows_evtx"
     tag: "logs"
     category: "system"
 

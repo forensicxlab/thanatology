@@ -71,7 +71,7 @@ function useTauriFileReader(
 interface RawViewerProps {
   /** File identifier understood by your backend (same as before) */
   fileId: number;
-
+  fileSize: number;
   /** Height of the editor viewport in px */
   height?: number | string;
   /** Width of the editor viewport in px */

@@ -42,3 +42,15 @@ TBD
 # Join the community
 
 We intend to build a community to participate to the creation of this tool. Join the Discord server [here](Discord) !
+
+# Testing
+
+The Thanatology project is not production and not release is published yet. However you can test the application using the following commands:
+
+```
+git clone --recurse-submodules https://github.com/forensicxlab/exhume
+git clone https://github.com/forensicxlab/thanatology
+cd thanatology
+npm install
+npm run tauri dev
+```

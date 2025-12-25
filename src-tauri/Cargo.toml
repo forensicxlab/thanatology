@@ -31,6 +31,8 @@ exhume_body = "=0.3.4"
 exhume_partitions = { path = "../../exhume/members/exhume_partitions" }
 exhume_lvm = { path = "../../exhume/members/exhume_lvm" }
 exhume_filesystem = { path = "../../exhume/members/exhume_filesystem" }
+exhume_artefacts = { path = "../../exhume/members/exhume_artefacts" }
+
 env_logger = "0.10"
 log = "0.4"
 file_type = "0.8.8"
@@ -47,3 +49,4 @@ tauri-plugin-shell = "2"
 tauri-plugin-pty = "0.1.0"
 tauri-plugin-os = "2.3.0"
 regex = "1.12.2"
+anyhow = "1.0.100"

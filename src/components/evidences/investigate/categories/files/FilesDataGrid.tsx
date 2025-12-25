@@ -16,10 +16,8 @@ import { useNavigate } from "react-router";
 import UnixToISO8601UTC from "../../../common/UnixToUTC";
 import { getFiles } from "../../../../../dbutils/sqlite";
 import { File } from "../../../../../dbutils/types";
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { emitTo } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 interface FileDataGridProps {
   evidence_id: number;
@@ -125,9 +123,17 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
             key="view"
             icon={<VisibilityIcon />}
             label="View file"
-            onClick={() => {
-              onRowActivate?.(row);
-              navigate(`/viewer/${row.file_id}`);
+            onClick={async () => {
+              try {
+                await invoke("new_fileviewer");
+              } catch (error) {
+                console.error("Error opening the file viewer:", error);
+              } finally {
+                await emitTo("fileviewer", "message", {
+                  fileId: row.identifier,
+                  fileSize: row.size,
+                });
+              }
             }}
             showInMenu={false}
           />,
@@ -162,15 +168,23 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     });
 
     onRowsLoaded?.(newRows);
-
-    // Allow the grid to render the new rows before autosizing
-    await sleep(0);
     if (apiRef.current) {
       apiRef.current.autosizeColumns({
+        columns: [
+          "sig_mime",
+          "permissions",
+          "group",
+          "owner",
+          "created",
+          "modified",
+          "accessed",
+          "size",
+          "actions",
+        ],
+
         includeHeaders: true,
         includeOutliers: true,
         disableColumnVirtualization: true,
-        expand: true,
       });
     }
   }, [paginationModel, partition_id, apiRef, onRowsLoaded, queryOptions]);

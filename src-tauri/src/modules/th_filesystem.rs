@@ -94,6 +94,25 @@ pub fn read_file_prefix(
 }
 
 #[tauri::command]
+pub fn read_file_slice_bytes(
+    state: State<'_, SharedState>,
+    file_id: u64,
+    offset: u64,
+    length: usize,
+) -> Result<Vec<u8>, String> {
+    let mut lock = state
+        .lock()
+        .map_err(|_| "Failed to lock state".to_string())?;
+    let fs = lock.as_mut().ok_or("No filesystem loaded")?;
+
+    let file = fs.get_file(file_id).map_err(|e| e.to_string())?;
+    let content = fs
+        .read_file_slice(&file, offset, length)
+        .map_err(|e| e.to_string())?;
+    Ok(content)
+}
+
+#[tauri::command]
 pub fn read_file_bytes(state: State<'_, SharedState>, file_id: u64) -> Result<Vec<u8>, String> {
     let mut lock = state
         .lock()
