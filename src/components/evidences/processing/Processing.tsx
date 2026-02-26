@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import CircularProgress from "@mui/material/CircularProgress";
 import { useSnackbar } from "../../SnackbarProvider";
 import DiskImageProcessing from "./DiskImageProcessing";
+import FolderProcessing from "./FolderProcessing";
 import EvidenceDetails from "./EvidenceDetails";
 import { Evidence } from "../../../dbutils/types";
 import { getEvidence } from "../../../dbutils/sqlite";
@@ -46,7 +47,9 @@ const Processing: React.FC = () => {
           {evidence && evidence.status < 3 && (
             <EvidenceDetails evidence={evidence} />
           )}
-          {evidence && (
+          {evidence && evidence.type === "Folder" ? (
+            <FolderProcessing evidence={evidence} setEvidence={setEvidence} />
+          ) : evidence && (
             <DiskImageProcessing
               evidence={evidence}
               setEvidence={setEvidence}

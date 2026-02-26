@@ -9,8 +9,9 @@ import {
   GPTPartitionEntry,
   LogicalPartitionEntry,
 } from "./types";
-import type { TimestampType, TimestampCount } from "./types";
+import type { TimestampType, TimestampCount, ArtifactObjectRow } from "./types";
 import { getEvidenceDb } from "./db";
+import { CLASS_FLEX_CENTER } from "yet-another-react-lightbox";
 
 export async function createUser(username: string, db: Database | null) {
   if (!db) {
@@ -573,6 +574,7 @@ export async function getTimestampCountsByType(
     /** Range boundaries; accept ms or seconds (we normalize) */
     start?: number | null;
     end?: number | null;
+    filterModel?: FilterModel;
   },
 ): Promise<TimestampCount[]> {
   const db = await getEvidenceDb(evidenceId);
@@ -598,6 +600,9 @@ export async function getTimestampCountsByType(
         return `CAST(ts AS INTEGER)`;
     }
   })();
+  const built = buildFiltersWithDollarPlaceholders(opts?.filterModel, 4);
+
+  const extraWhere = built.where ? ` AND (${built.where})` : "";
 
   const rows = await db.select<{
     type: TimestampType;
@@ -605,28 +610,31 @@ export async function getTimestampCountsByType(
     count: number;
   }>(
     `
-      WITH events AS (
-        SELECT 'created'  AS type, created  AS ts
-        FROM system_files
-        WHERE evidence_id = $1 AND partition_id = $2
-          AND created IS NOT NULL
-          AND ($3 IS NULL OR created >= $3)
-          AND ($4 IS NULL OR created <= $4)
-        UNION ALL
-        SELECT 'accessed' AS type, accessed AS ts
-        FROM system_files
-        WHERE evidence_id = $1 AND partition_id = $2
-          AND accessed IS NOT NULL
-          AND ($3 IS NULL OR accessed >= $3)
-          AND ($4 IS NULL OR accessed <= $4)
-        UNION ALL
-        SELECT 'modified' AS type, modified AS ts
-        FROM system_files
-        WHERE evidence_id = $1 AND partition_id = $2
-          AND modified IS NOT NULL
-          AND ($3 IS NULL OR modified >= $3)
-          AND ($4 IS NULL OR modified <= $4)
-      ),
+    WITH events AS (
+      SELECT 'created' AS type, created AS ts
+      FROM system_files
+      WHERE evidence_id = $1 AND partition_id = $2
+        AND created IS NOT NULL
+        AND ($3 IS NULL OR created >= $3)
+        AND ($4 IS NULL OR created <= $4)
+        ${extraWhere}
+      UNION ALL
+      SELECT 'accessed' AS type, accessed AS ts
+      FROM system_files
+      WHERE evidence_id = $1 AND partition_id = $2
+        AND accessed IS NOT NULL
+        AND ($3 IS NULL OR accessed >= $3)
+        AND ($4 IS NULL OR accessed <= $4)
+        ${extraWhere}
+      UNION ALL
+      SELECT 'modified' AS type, modified AS ts
+      FROM system_files
+      WHERE evidence_id = $1 AND partition_id = $2
+        AND modified IS NOT NULL
+        AND ($3 IS NULL OR modified >= $3)
+        AND ($4 IS NULL OR modified <= $4)
+        ${extraWhere}
+    ),
       norm AS (
         SELECT type, ${bucketExpr} AS ts_sec
         FROM events
@@ -636,7 +644,7 @@ export async function getTimestampCountsByType(
       GROUP BY type, ts_sec
       ORDER BY ts_sec ASC, type ASC
     `,
-    [evidenceId, partitionId, startSec, endSec],
+    [evidenceId, partitionId, startSec, endSec, ...built.params],
   );
 
   return rows
@@ -854,22 +862,67 @@ export async function getFiles(
   offset: number,
   limit: number,
   filterModel?: FilterModel,
+  timelineFilter?: TimelineFileFilter,
 ): Promise<{ rows: File[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
 
   // $1 is always the partition_id
   const base = `partition_id = $1`;
 
-  const built = buildFiltersWithDollarPlaceholders(
-    filterModel,
-    /* startIndex */ 1,
-  );
+  const built = buildFiltersWithDollarPlaceholders(filterModel, 1);
 
-  // Next placeholders after dynamic filters:
-  const limitIndex = built.lastIndex + 1;
-  const offsetIndex = built.lastIndex + 2;
+  // We'll append extra filters after built.where
+  let p = built.lastIndex;
+  const dynamicParams = [...built.params];
+  const extraClauses: string[] = [];
 
-  const whereSql = [base, built.where].filter(Boolean).join(" AND ");
+  // ---- Timeline filter (created/accessed/modified in range)
+  const hasTimelineBounds =
+    timelineFilter &&
+    (timelineFilter.start != null || timelineFilter.end != null) &&
+    (timelineFilter.types?.length ?? 0) > 0;
+
+  if (hasTimelineBounds) {
+    const startSec =
+      timelineFilter!.start != null
+        ? toEpochSecondsFloor(timelineFilter!.start)
+        : null;
+    const endSec =
+      timelineFilter!.end != null
+        ? toEpochSecondsFloor(timelineFilter!.end)
+        : null;
+
+    // Only apply if at least one bound exists
+    if (startSec != null || endSec != null) {
+      const phStart = `$${++p}`;
+      const phEnd = `$${++p}`;
+      dynamicParams.push(startSec, endSec);
+
+      const COL: Record<TimestampType, string> = {
+        created: "created",
+        accessed: "accessed",
+        modified: "modified",
+      };
+
+      const perType = timelineFilter!.types.map((t) => {
+        const col = COL[t];
+        return `(
+          ${col} IS NOT NULL
+          AND (${phStart} IS NULL OR ${col} >= ${phStart})
+          AND (${phEnd}   IS NULL OR ${col} <= ${phEnd})
+        )`;
+      });
+
+      extraClauses.push(`(${perType.join(" OR ")})`);
+    }
+  }
+
+  const whereSql = [base, built.where, ...extraClauses]
+    .filter(Boolean)
+    .join(" AND ");
+
+  const limitIndex = p + 1;
+  const offsetIndex = p + 2;
 
   const rowsSql = `
     SELECT *
@@ -885,7 +938,6 @@ export async function getFiles(
     WHERE ${whereSql}
   `;
 
-  const dynamicParams = built.params; // corresponds to $2..$N depending on how many were created
   const rowsParams = [partition_id, ...dynamicParams, limit, offset];
   const countParams = [partition_id, ...dynamicParams];
 
@@ -898,6 +950,14 @@ export async function getFiles(
 
   return { rows, rowCount };
 }
+
+export type TimelineFileFilter = {
+  /** boundaries can be ms or seconds */
+  start?: number | null;
+  end?: number | null;
+  /** which timestamp columns participate (OR-ed together) */
+  types: TimestampType[];
+};
 
 export async function deleteEvidence(
   evidenceId: number,
@@ -1006,4 +1066,626 @@ export async function deleteEvidences(evidenceIds: number[]): Promise<void> {
     await db.execute("ROLLBACK");
     throw error;
   }
+}
+
+export async function fetchParsedArtefactObjects(params: {
+  evidenceId: number;
+  partitionId: number;
+  fileId: number;
+}): Promise<ArtifactObjectRow[]> {
+  const db = await getEvidenceDb(params.evidenceId);
+
+  const rows = await db.select<ArtifactObjectRow[]>(
+    `
+    SELECT
+      id,
+      evidence_id,
+      partition_id,
+      artifact_id,
+      file_id,
+      parser,
+      kind,
+      text,
+      json
+    FROM artifact_objects
+    WHERE evidence_id = $1
+      AND partition_id = $2
+      AND file_id = $3
+    ORDER BY id ASC
+    `,
+    [params.evidenceId, params.partitionId, params.fileId],
+  );
+
+  return rows ?? [];
+}
+
+import type { WindowsEventRow, WindowsEventCount } from "./types";
+
+// ---------------- Windows Events filtering ----------------
+
+export type TimelineWindowsEventFilter = {
+  /** boundaries can be ms or seconds */
+  start?: number | null;
+  end?: number | null;
+};
+
+const WIN_EVT_FIELD_MAP: Record<string, string> = {
+  id: "ao.id",
+  evidence_id: "ao.evidence_id",
+  partition_id: "sf.partition_id",
+  file_id: "ao.file_id",
+
+  event_record_id:
+    "CAST(json_extract(ao.json, '$.event_record_id') AS INTEGER)",
+
+  // NEW: filterable timestamp fields
+  timestamp_unix_ms: winEvtTsMsExpr(),
+  timestamp_unix: "CAST(json_extract(ao.json, '$.timestamp_unix') AS INTEGER)",
+  timestamp: "json_extract(ao.json, '$.timestamp')",
+
+  event_id:
+    "CAST(json_extract(ao.json, '$.event.Event.System.EventID') AS INTEGER)",
+  provider_name:
+    "json_extract(ao.json, '$.event.Event.System.Provider.#attributes.Name')",
+  provider_guid:
+    "json_extract(ao.json, '$.event.Event.System.Provider.#attributes.Guid')",
+  channel: "json_extract(ao.json, '$.event.Event.System.Channel')",
+  computer: "json_extract(ao.json, '$.event.Event.System.Computer')",
+  level: "CAST(json_extract(ao.json, '$.event.Event.System.Level') AS INTEGER)",
+  task: "CAST(json_extract(ao.json, '$.event.Event.System.Task') AS INTEGER)",
+  opcode:
+    "CAST(json_extract(ao.json, '$.event.Event.System.Opcode') AS INTEGER)",
+  keywords: "json_extract(ao.json, '$.event.Event.System.Keywords')",
+  user_sid:
+    "json_extract(ao.json, '$.event.Event.System.Security.#attributes.UserID')",
+  process_id:
+    "CAST(json_extract(ao.json, '$.event.Event.System.Execution.#attributes.ProcessID') AS INTEGER)",
+  thread_id:
+    "CAST(json_extract(ao.json, '$.event.Event.System.Execution.#attributes.ThreadID') AS INTEGER)",
+};
+
+const WIN_EVT_QUICK_FILTER_COLUMNS: string[] = [
+  // keep human timestamp (nice for search)
+  "COALESCE(json_extract(ao.json, '$.timestamp'), '')",
+  // NEW: allow searching unix ms/sec too
+  `COALESCE(CAST(json_extract(ao.json, '$.timestamp_unix_ms') AS TEXT), '')`,
+  `COALESCE(CAST(json_extract(ao.json, '$.timestamp_unix') AS TEXT), '')`,
+
+  "COALESCE(json_extract(ao.json, '$.event.Event.System.Provider.#attributes.Name'), '')",
+  "COALESCE(json_extract(ao.json, '$.event.Event.System.Channel'), '')",
+  "COALESCE(json_extract(ao.json, '$.event.Event.System.Computer'), '')",
+  "COALESCE(json_extract(ao.json, '$.event.Event.System.Security.#attributes.UserID'), '')",
+  "COALESCE(CAST(json_extract(ao.json, '$.event.Event.System.EventID') AS TEXT), '')",
+  "COALESCE(json_extract(ao.json, '$.event.Event.System.Keywords'), '')",
+];
+
+function winEvtIsTextLikeField(field: string): boolean {
+  return [
+    "timestamp",
+    "provider_name",
+    "provider_guid",
+    "channel",
+    "computer",
+    "keywords",
+    "user_sid",
+  ].includes(field);
+}
+
+function winEvtEscapeLike(raw: string): string {
+  return raw.replace(/[%_\\]/g, (m) => "\\" + m);
+}
+
+/**
+ * Build WHERE + params from a DataGridPro-like filter model,
+ * but mapping fields to JSON-extract expressions.
+ */
+function buildWinEvtFiltersWithDollarPlaceholders(
+  model: FilterModel | undefined,
+  startIndex: number,
+) {
+  const items = model?.items ?? [];
+  const logic = (model?.logicOperator ?? "and").toLowerCase() as LogicOperator;
+  const qfValues = model?.quickFilterValues ?? [];
+  const qfLogic = (
+    model?.quickFilterLogicOperator ?? "and"
+  ).toLowerCase() as LogicOperator;
+
+  let p = startIndex;
+  const params: any[] = [];
+  const clauses: string[] = [];
+
+  const itemClauses: string[] = [];
+
+  for (const item of items) {
+    const mapped = WIN_EVT_FIELD_MAP[item.field];
+    if (!mapped) continue;
+
+    const op = item.operator;
+    const valRaw = item.value;
+
+    const likeOp =
+      op === "contains" ||
+      op === "doesNotContain" ||
+      op === "startsWith" ||
+      op === "endsWith";
+
+    const exprBase =
+      likeOp && !winEvtIsTextLikeField(item.field)
+        ? `LOWER(CAST(${mapped} AS TEXT))`
+        : likeOp
+          ? `LOWER(${mapped})`
+          : mapped;
+
+    switch (op) {
+      case "contains": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${winEvtEscapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "doesNotContain": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        const expr = `COALESCE(${exprBase}, '')`;
+        itemClauses.push(`${expr} NOT LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${winEvtEscapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "equals": {
+        const ph = `$${++p}`;
+        itemClauses.push(`${mapped} = ${ph}`);
+        params.push(valRaw);
+        break;
+      }
+      case "startsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`${winEvtEscapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "endsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${winEvtEscapeLike(v.toLowerCase())}`);
+        break;
+      }
+      case "isEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NULL OR TRIM(CAST(${mapped} AS TEXT)) = '')`,
+        );
+        break;
+      }
+      case "isNotEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NOT NULL AND TRIM(CAST(${mapped} AS TEXT)) <> '')`,
+        );
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (itemClauses.length) {
+    clauses.push(`(${itemClauses.join(` ${logic.toUpperCase()} `)})`);
+  }
+
+  if (qfValues.length) {
+    const perValueGroups: string[] = [];
+    for (const raw of qfValues) {
+      const v = String(raw ?? "").toLowerCase();
+      const perColumn: string[] = [];
+      for (const colExpr of WIN_EVT_QUICK_FILTER_COLUMNS) {
+        const ph = `$${++p}`;
+        perColumn.push(`LOWER(${colExpr}) LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${winEvtEscapeLike(v)}%`);
+      }
+      perValueGroups.push(`(${perColumn.join(" OR ")})`);
+    }
+    clauses.push(`(${perValueGroups.join(` ${qfLogic.toUpperCase()} `)})`);
+  }
+
+  return {
+    where: clauses.length ? clauses.join(" AND ") : "",
+    params,
+    lastIndex: p,
+  };
+}
+
+// ---- Windows EVTX: timestamp helpers (JSON contains unix ms)
+function toEpochMs(ts: number): number {
+  // seconds are ~1e9, ms are ~1e12
+  return ts < 1e11 ? ts * 1000 : ts;
+}
+
+function winEvtTsMsExpr() {
+  // Stored by backend as integer ms
+  return `CAST(json_extract(ao.json, '$.timestamp_unix_ms') AS INTEGER)`;
+}
+
+function winEvtTsSecExpr() {
+  // Derive seconds for bucketing
+  return `CAST((${winEvtTsMsExpr()} / 1000) AS INTEGER)`;
+}
+
+// ---------------- Windows Events: grid rows ----------------
+
+export async function getWindowsEvents(
+  evidenceId: number,
+  partitionId: number,
+  offset: number,
+  limit: number,
+  filterModel?: FilterModel,
+  timelineFilter?: TimelineWindowsEventFilter,
+): Promise<{ rows: WindowsEventRow[]; rowCount: number }> {
+  const db = await getEvidenceDb(evidenceId);
+
+  const baseWhere = `
+    ao.evidence_id = $1
+    AND sf.partition_id = $2
+    AND ao.kind = 'windows.evtx.event'
+  `;
+
+  const built = buildWinEvtFiltersWithDollarPlaceholders(filterModel, 2);
+
+  let p = built.lastIndex;
+  const paramsDyn = [...built.params];
+  const extraClauses: string[] = [];
+
+  const tsMsExpr = winEvtTsMsExpr();
+
+  // Timeline bounds (based on JSON unix ms)
+  if (
+    timelineFilter &&
+    (timelineFilter.start != null || timelineFilter.end != null)
+  ) {
+    const startMs =
+      timelineFilter.start != null ? toEpochMs(timelineFilter.start) : null;
+    const endMs =
+      timelineFilter.end != null ? toEpochMs(timelineFilter.end) : null;
+
+    const phStart = `$${++p}`;
+    const phEnd = `$${++p}`;
+    paramsDyn.push(startMs, endMs);
+
+    extraClauses.push(
+      `(
+        ${tsMsExpr} IS NOT NULL
+        AND (${phStart} IS NULL OR ${tsMsExpr} >= ${phStart})
+        AND (${phEnd}   IS NULL OR ${tsMsExpr} <= ${phEnd})
+      )`,
+    );
+  }
+
+  const whereSql = [baseWhere, built.where, ...extraClauses]
+    .filter(Boolean)
+    .join(" AND ");
+
+  const limitIndex = p + 1;
+  const offsetIndex = p + 2;
+
+  const selectSql = `
+    SELECT
+      ao.id AS id,
+      ao.evidence_id AS evidence_id,
+      sf.partition_id AS partition_id,
+      ao.file_id AS file_id,
+
+      CAST(json_extract(ao.json, '$.event_record_id') AS INTEGER) AS event_record_id,
+
+      json_extract(ao.json, '$.timestamp') AS timestamp_iso,
+      ${tsMsExpr} AS ts,
+
+      CAST(json_extract(ao.json, '$.event.Event.System.EventID') AS INTEGER) AS event_id,
+      json_extract(ao.json, '$.event.Event.System.Provider.#attributes.Name') AS provider_name,
+      json_extract(ao.json, '$.event.Event.System.Provider.#attributes.Guid') AS provider_guid,
+
+      json_extract(ao.json, '$.event.Event.System.Channel') AS channel,
+      json_extract(ao.json, '$.event.Event.System.Computer') AS computer,
+
+      CAST(json_extract(ao.json, '$.event.Event.System.Level') AS INTEGER) AS level,
+      CAST(json_extract(ao.json, '$.event.Event.System.Task') AS INTEGER) AS task,
+      CAST(json_extract(ao.json, '$.event.Event.System.Opcode') AS INTEGER) AS opcode,
+      json_extract(ao.json, '$.event.Event.System.Keywords') AS keywords,
+
+      json_extract(ao.json, '$.event.Event.System.Security.#attributes.UserID') AS user_sid,
+      CAST(json_extract(ao.json, '$.event.Event.System.Execution.#attributes.ProcessID') AS INTEGER) AS process_id,
+      CAST(json_extract(ao.json, '$.event.Event.System.Execution.#attributes.ThreadID') AS INTEGER) AS thread_id,
+
+      ao.json AS json_raw
+    FROM artifact_objects ao
+    JOIN system_files sf ON sf.id = ao.file_id
+    WHERE ${whereSql}
+    ORDER BY ts ASC, ao.id ASC
+    LIMIT $${limitIndex}
+    OFFSET $${offsetIndex}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*) AS count
+    FROM artifact_objects ao
+    JOIN system_files sf ON sf.id = ao.file_id
+    WHERE ${whereSql}
+  `;
+
+  const rowsParams = [evidenceId, partitionId, ...paramsDyn, limit, offset];
+  const countParams = [evidenceId, partitionId, ...paramsDyn];
+
+  const rows = (await db.select(selectSql, rowsParams)) as WindowsEventRow[];
+  const countResult = (await db.select(countSql, countParams)) as Array<{
+    count: number;
+  }>;
+
+  return { rows, rowCount: Number(countResult?.[0]?.count ?? 0) };
+}
+
+// ---------------- Windows Events: chart counts ----------------
+
+export async function getWindowsEventCounts(
+  evidenceId: number,
+  partitionId: number,
+  opts?: {
+    bucket?: "second" | "minute" | "hour" | "day";
+    start?: number | null; // ms or sec
+    end?: number | null; // ms or sec
+    filterModel?: FilterModel;
+  },
+): Promise<WindowsEventCount[]> {
+  const db = await getEvidenceDb(evidenceId);
+
+  const bucket = opts?.bucket ?? "minute";
+
+  const startMs = opts?.start != null ? toEpochMs(opts.start) : null;
+  const endMs = opts?.end != null ? toEpochMs(opts.end) : null;
+
+  const tsMsExpr = winEvtTsMsExpr();
+  const tsSecExpr = winEvtTsSecExpr(); // ms -> sec
+
+  // bucket in epoch seconds, then convert back to ms for chart
+  const bucketExpr = (() => {
+    switch (bucket) {
+      case "minute":
+        return `(CAST(ts_sec AS INTEGER) / 60) * 60`;
+      case "hour":
+        return `(CAST(ts_sec AS INTEGER) / 3600) * 3600`;
+      case "day":
+        return `(CAST(ts_sec AS INTEGER) / 86400) * 86400`;
+      default:
+        return `CAST(ts_sec AS INTEGER)`;
+    }
+  })();
+
+  const built = buildWinEvtFiltersWithDollarPlaceholders(opts?.filterModel, 4);
+  const extraWhere = built.where ? ` AND (${built.where})` : "";
+
+  const rows = await db.select<{ ts_bucket: number; count: number }>(
+    `
+    WITH base AS (
+      SELECT ${tsSecExpr} AS ts_sec, ${tsMsExpr} AS ts_ms
+      FROM artifact_objects ao
+      JOIN system_files sf ON sf.id = ao.file_id
+      WHERE ao.evidence_id = $1
+        AND sf.partition_id = $2
+        AND ao.kind = 'windows.evtx.event'
+        AND (${tsMsExpr} IS NOT NULL)
+        AND ($3 IS NULL OR ${tsMsExpr} >= $3)
+        AND ($4 IS NULL OR ${tsMsExpr} <= $4)
+        ${extraWhere}
+    ),
+    buck AS (
+      SELECT ${bucketExpr} AS ts_bucket
+      FROM base
+    )
+    SELECT ts_bucket, COUNT(*) AS count
+    FROM buck
+    GROUP BY ts_bucket
+    ORDER BY ts_bucket ASC
+    `,
+    [evidenceId, partitionId, startMs, endMs, ...built.params],
+  );
+
+  return rows
+    .map((r) => ({ ts: r.ts_bucket * 1000, count: r.count }))
+    .filter((r) => Number.isFinite(r.ts) && r.ts > 0 && r.count > 0);
+}
+
+// ---------------- PML Events ----------------
+
+export const PML_FIELD_MAP: Record<string, string> = {
+  time: `CAST(json_extract(ao.json, '$.timestamp_unix_ms') AS INTEGER)`,
+  process: "json_extract(ao.json, '$.details.process_name')",
+  pid: "CAST(json_extract(ao.json, '$.details.pid') AS INTEGER)",
+  operation: "json_extract(ao.json, '$.operation')",
+  path: "COALESCE(json_extract(ao.json, '$.details.path'), json_extract(ao.json, '$.details.raw'))",
+  result: "COALESCE(json_extract(ao.json, '$.result_text'), json_extract(ao.json, '$.result'))",
+};
+
+export const PML_QUICK_FILTER_COLUMNS: string[] = [
+  "COALESCE(CAST(json_extract(ao.json, '$.timestamp_unix_ms') AS TEXT), '')",
+  "COALESCE(json_extract(ao.json, '$.details.process_name'), '')",
+  "COALESCE(CAST(json_extract(ao.json, '$.details.pid') AS TEXT), '')",
+  "COALESCE(json_extract(ao.json, '$.operation'), '')",
+  "COALESCE(json_extract(ao.json, '$.details.path'), json_extract(ao.json, '$.details.raw'), '')",
+  "COALESCE(json_extract(ao.json, '$.result_text'), json_extract(ao.json, '$.result'), '')",
+];
+
+export function buildPmlFiltersWithDollarPlaceholders(
+  model: FilterModel | undefined,
+  startIndex: number,
+) {
+  const items = model?.items ?? [];
+  const logic = (model?.logicOperator ?? "and").toLowerCase() as LogicOperator;
+  const qfValues = model?.quickFilterValues ?? [];
+  const qfLogic = (
+    model?.quickFilterLogicOperator ?? "and"
+  ).toLowerCase() as LogicOperator;
+
+  let p = startIndex;
+  const params: any[] = [];
+  const clauses: string[] = [];
+
+  const itemClauses: string[] = [];
+  for (const item of items) {
+    const mapped = PML_FIELD_MAP[item.field];
+    if (!mapped) continue;
+
+    const op = item.operator;
+    const valRaw = item.value;
+
+    const isTextField = ["process", "operation", "path", "result"].includes(
+      item.field
+    );
+
+    const likeOp =
+      op === "contains" ||
+      op === "doesNotContain" ||
+      op === "startsWith" ||
+      op === "endsWith";
+
+    const exprBase =
+      likeOp && !isTextField
+        ? `LOWER(CAST(${mapped} AS TEXT))`
+        : likeOp
+          ? `LOWER(${mapped})`
+          : mapped;
+
+    switch (op) {
+      case "contains": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "doesNotContain": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        const expr = `COALESCE(${exprBase}, '')`;
+        itemClauses.push(`${expr} NOT LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "equals": {
+        const ph = `$${++p}`;
+        itemClauses.push(`${mapped} = ${ph}`);
+        params.push(valRaw);
+        break;
+      }
+      case "startsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "endsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}`);
+        break;
+      }
+      case "isEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NULL OR TRIM(CAST(${mapped} AS TEXT)) = '')`,
+        );
+        break;
+      }
+      case "isNotEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NOT NULL AND TRIM(CAST(${mapped} AS TEXT)) <> '')`,
+        );
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (itemClauses.length) {
+    clauses.push(`(${itemClauses.join(` ${logic.toUpperCase()} `)})`);
+  }
+
+  if (qfValues.length) {
+    const perValueGroups: string[] = [];
+    for (const raw of qfValues) {
+      const v = String(raw ?? "").toLowerCase();
+      const perColumn: string[] = [];
+      for (const colExpr of PML_QUICK_FILTER_COLUMNS) {
+        const ph = `$${++p}`;
+        perColumn.push(`LOWER(${colExpr}) LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v)}%`);
+      }
+      perValueGroups.push(`(${perColumn.join(" OR ")})`);
+    }
+    clauses.push(`(${perValueGroups.join(` ${qfLogic.toUpperCase()} `)})`);
+  }
+
+  return {
+    where: clauses.length ? clauses.join(" AND ") : "",
+    params,
+    lastIndex: p,
+  };
+}
+
+export async function getPmlEvents(
+  evidenceId: number,
+  partitionId: number,
+  fileId: number,
+  offset: number,
+  limit: number,
+  filterModel?: FilterModel,
+): Promise<{ rows: any[]; rowCount: number }> {
+  const db = await getEvidenceDb(evidenceId);
+
+  const baseWhere = `
+    ao.evidence_id = $1
+    AND ao.partition_id = $2
+    AND ao.file_id = $3
+    AND ao.parser = 'windows_pml'
+  `;
+
+  // startIndex is 3, so built filters start at $4
+  const built = buildPmlFiltersWithDollarPlaceholders(filterModel, 3);
+
+  let p = built.lastIndex;
+  const paramsDyn = [...built.params];
+
+  const whereSql = [baseWhere, built.where]
+    .filter(Boolean)
+    .join(" AND ");
+
+  const limitIndex = p + 1;
+  const offsetIndex = p + 2;
+
+  const selectSql = `
+    SELECT ao.json
+    FROM artifact_objects ao
+    WHERE ${whereSql}
+    ORDER BY ao.id ASC
+    LIMIT $${limitIndex}
+    OFFSET $${offsetIndex}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*) AS count
+    FROM artifact_objects ao
+    WHERE ${whereSql}
+  `;
+
+  const rowsParams = [evidenceId, partitionId, fileId, ...paramsDyn, limit, offset];
+  const countParams = [evidenceId, partitionId, fileId, ...paramsDyn];
+
+  const rows = (await db.select(selectSql, rowsParams)) as any[];
+  const countResult = (await db.select(countSql, countParams)) as Array<{
+    count: number;
+  }>;
+
+  // Since db.select returns an array of objects representing rows: [{ json: "{\"key\": \"val\"}" }, ...]
+  const parsedRows = rows.map((row) => JSON.parse(row.json));
+
+  return { rows: parsedRows, rowCount: Number(countResult?.[0]?.count ?? 0) };
 }

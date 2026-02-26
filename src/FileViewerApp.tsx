@@ -19,12 +19,45 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import HexViewerWindow from "./HexViewerWindow";
 import { HexViewerHandle } from "./HexViewer";
 import RawViewer from "./RawViewer";
+import { save } from "@tauri-apps/plugin-dialog";
+import { PeViewer } from "./components/PeViewer";
+import { PmlViewer } from "./components/PmlViewer";
 import { listen } from "@tauri-apps/api/event";
+import WindowsEventsTimeliner from "./components/evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  CircularProgress,
+  TextField,
+} from "@mui/material";
+type ViewerTab = "raw" | "hex" | "artefacts" | "sqlite" | "pe" | "pml";
 
-type ViewerTab = "raw" | "hex" | "other";
-type FileOpenPayload = { fileId: number; fileSize: number };
+type FileOpenPayload = {
+  Identifier: number;
+  fileId: number;
+  fileSize: number;
+  evidenceId: number;
+  partitionId: number;
+  path: string;
+};
+
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
+import SqliteViewer from "./components/SqliteViewer";
+import { invoke } from "@tauri-apps/api/core";
+import { getEvidenceDbPath } from "./dbutils/db";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+// optional default:
+dayjs.tz.setDefault("UTC");
 
 const RIGHT_PANEL_WIDTH = 420;
+const toSqliteUrl = (p: string) =>
+  p.startsWith("sqlite:") ? p : `sqlite:${p}`;
 
 const FileViewer: React.FC = () => {
   const hexRef = useRef<HexViewerHandle>(null);
@@ -34,25 +67,183 @@ const FileViewer: React.FC = () => {
   // Right panel open/close
   const [rightOpen, setRightOpen] = useState(true);
 
+  const [isSqlite, setIsSqlite] = useState(false);
+
+  // Hash Dialog State
+  const [hashOpen, setHashOpen] = useState(false);
+  const [hashLoading, setHashLoading] = useState(false);
+  const [hashes, setHashes] = useState<{ md5: string; sha256: string }>({
+    md5: "",
+    sha256: "",
+  });
+
+  // Artefacts data
+  const [peData, setPeData] = useState<any>(null);
+  const [pmlData, setPmlData] = useState<boolean>(false);
+  const [evtxData, setEvtxData] = useState<boolean>(false);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     (async () => {
       unlisten = await listen<FileOpenPayload>("message", (event) => {
-        console.log(event.payload);
+        // console.log("File loaded:", event.payload);
         setFile(event.payload);
+        void checkIfSqlite(
+          event.payload.Identifier,
+          event.payload.path,
+          event.payload.fileId,
+          event.payload.evidenceId,
+          event.payload.partitionId,
+        ); // Pass DB ID
       });
     })();
 
     return () => unlisten?.();
   }, []);
 
-  const handleDump = () => {
-    console.log("dump file");
+  const checkArtifacts = async (
+    evidenceId: number,
+    partitionId: number,
+    fileDbId: number,
+    path: string,
+  ) => {
+    // console.log(`[checkArtifacts] Called with dbId: ${dbId}, path: "${path}"`);
+    // Reset
+    setPeData(null);
+    setPmlData(false);
+    setEvtxData(false);
+
+    // Simple heuristic based on extension or magic bytes (we can do better later)
+    if (!path) {
+      // console.warn("[checkArtifacts] No path provided, skipping.");
+      return;
+    }
+    if (evidenceId <= 0 || partitionId <= 0 || fileDbId <= 0) {
+      return;
+    }
+
+    console.log(
+      `Checking artifacts for evidence=${evidenceId}, partition=${partitionId}, file=${fileDbId}, path=${path}`,
+    );
+
+    const evidenceDbPath = await getEvidenceDbPath(evidenceId);
+    const dbPath = toSqliteUrl(evidenceDbPath);
+
+    const [peResult, pmlResult, evtxResult] = await Promise.allSettled([
+      invoke("parse_pe", {
+        dbPath,
+        evidenceId,
+        partitionId,
+        fileId: fileDbId,
+      }),
+      invoke<boolean>("has_pml_data", {
+        dbPath,
+        evidenceId,
+        partitionId,
+        fileId: fileDbId,
+      }),
+      invoke<boolean>("has_evtx_data", {
+        dbPath,
+        evidenceId,
+        partitionId,
+        fileId: fileDbId,
+      }),
+    ]);
+
+    if (peResult.status === "fulfilled" && peResult.value) {
+      setPeData(peResult.value);
+    }
+
+    if (pmlResult.status === "fulfilled" && pmlResult.value) {
+      setPmlData(true);
+    }
+
+    if (evtxResult.status === "fulfilled" && evtxResult.value) {
+      setEvtxData(true);
+    }
+
+    if (evtxResult.status === "fulfilled" && evtxResult.value) {
+      setTab("artefacts");
+    } else if (pmlResult.status === "fulfilled" && pmlResult.value) {
+      setTab("pml");
+    } else if (peResult.status === "fulfilled" && peResult.value) {
+      setTab("pe");
+    }
   };
 
-  const handleHash = () => {
-    console.log("compute hash");
+  const checkIfSqlite = async (
+    fsId: number,
+    path: string,
+    dbId: number,
+    evidenceId: number,
+    partitionId: number,
+  ) => {
+    try {
+      // Read first 16 bytes for magic "SQLite format 3\0"
+      const prefix = await invoke<string>("read_file_prefix", {
+        fileId: fsId,
+        length: 16,
+        path: path,
+      });
+      if (prefix.startsWith("SQLite format 3")) {
+        setIsSqlite(true);
+        setTab("sqlite");
+      } else {
+        setIsSqlite(false);
+        setTab("raw");
+      }
+    } catch (err) {
+      console.error("Error checking SQLite magic:", err);
+      setIsSqlite(false);
+      setTab("raw");
+    } finally {
+      // Always check for artefacts regardless of file read success
+      void checkArtifacts(evidenceId, partitionId, dbId, path);
+    }
+  };
+
+  const handleDump = async () => {
+    if (!file) return;
+    try {
+      const path = await save({
+        defaultPath: "dumped_file.bin",
+      });
+      if (path) {
+        await invoke("dump_file_to_disk", {
+          fileId: file.Identifier,
+          destinationPath: path,
+          path: file.path,
+        });
+        // Ideally show a snackbar here
+      }
+    } catch (err) {
+      console.error("Failed to dump file:", err);
+    }
+  };
+
+  const handleHash = async () => {
+    if (!file) return;
+    setHashOpen(true);
+    setHashLoading(true);
+    setHashes({ md5: "", sha256: "" });
+    try {
+      const md5 = await invoke<string>("compute_hash", {
+        fileId: file.Identifier,
+        algorithm: "md5",
+        path: file.path,
+      });
+      const sha256 = await invoke<string>("compute_hash", {
+        fileId: file.Identifier,
+        algorithm: "sha256",
+        path: file.path,
+      });
+      setHashes({ md5, sha256 });
+    } catch (err) {
+      console.error("Failed to compute hash:", err);
+    } finally {
+      setHashLoading(false);
+    }
   };
 
   return (
@@ -95,7 +286,7 @@ const FileViewer: React.FC = () => {
 
       {/* Main content row */}
       <Box display="flex" flex={1} minHeight={0} minWidth={0}>
-        {/* Left: main viewer (expands when right panel is closed) */}
+        {/* Left: main viewer */}
         <Box
           flex={1}
           minWidth={0}
@@ -117,7 +308,12 @@ const FileViewer: React.FC = () => {
             >
               <Tab value="raw" label="RawViewer" />
               <Tab value="hex" label="HexViewer" />
-              <Tab value="other" label="Other (placeholder)" />
+              {isSqlite && <Tab value="sqlite" label="SQLite Viewer" />}
+              {peData && <Tab value="pe" label="PE Analysis" />}
+              {pmlData && <Tab value="pml" label="Procmon Events" />}
+              {evtxData && (
+                <Tab value="artefacts" label="Parsed Artefacts" />
+              )}
             </Tabs>
           </Paper>
 
@@ -128,14 +324,39 @@ const FileViewer: React.FC = () => {
                 <Box height="100%" minHeight={0}>
                   {file && (
                     <RawViewer
-                      fileId={file.fileId}
+                      fileId={file.Identifier}
                       fileSize={file.fileSize}
-                      height={"90vh"}
+                      path={file.path}
+                      height={"100%"}
                       language="plaintext"
                       theme="vs-dark"
                     />
                   )}
                 </Box>
+              </Paper>
+            )}
+
+            {tab === "sqlite" && (
+              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
+                <Box height="100%" minHeight={0}>
+                  {file && <SqliteViewer fileId={file.Identifier} />}
+                </Box>
+              </Paper>
+            )}
+
+            {tab === "pe" && peData && (
+              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
+                <PeViewer data={peData} />
+              </Paper>
+            )}
+
+            {tab === "pml" && pmlData && file && (
+              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
+                <PmlViewer
+                  evidenceId={file.evidenceId}
+                  partitionId={file.partitionId}
+                  fileId={file.fileId}
+                />
               </Paper>
             )}
 
@@ -145,8 +366,9 @@ const FileViewer: React.FC = () => {
                   {file ? (
                     <HexViewerWindow
                       ref={hexRef}
-                      fileId={file.fileId}
+                      fileId={file.Identifier}
                       fileSize={file.fileSize}
+                      path={file.path}
                     />
                   ) : (
                     <Box p={2}>
@@ -159,17 +381,34 @@ const FileViewer: React.FC = () => {
               </Paper>
             )}
 
-            {tab === "other" && (
-              <Paper variant="outlined" sx={{ height: "100%", p: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Placeholder for future viewers.
-                </Typography>
+            {tab === "artefacts" && evtxData && (
+              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
+                <Box height="100%" minHeight={0}>
+                  {file ? (
+                    <WindowsEventsTimeliner
+                      evidenceId={file.evidenceId}
+                      partitionId={file.partitionId}
+                    />
+                  ) : (
+                    // <ArtefactObjectsGrid
+                    //   evidenceId={file.evidenceId}
+                    //   fileId={file.fileId}
+                    //   height="100%"
+                    //   persistKeyPrefix="thanatology:grid:fileviewer:artefacts"
+                    // />
+                    <Box p={2}>
+                      <Typography variant="body2" color="text.secondary">
+                        No file loaded.
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               </Paper>
             )}
           </Box>
         </Box>
 
-        {/* Right: closable panel (metadata + AI prompt) */}
+        {/* Right: closable panel */}
         <Collapse in={rightOpen} orientation="horizontal" unmountOnExit>
           <Box display="flex" height="100%" minHeight={0}>
             <Divider orientation="vertical" flexItem />
@@ -236,6 +475,43 @@ const FileViewer: React.FC = () => {
           </Box>
         </Collapse>
       </Box>
+      <Dialog
+        open={hashOpen}
+        onClose={() => setHashOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>File Hashes</DialogTitle>
+        <DialogContent>
+          {hashLoading ? (
+            <Box display="flex" justifyContent="center" p={3}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField
+                label="MD5"
+                value={hashes.md5}
+                InputProps={{ readOnly: true }}
+                fullWidth
+                size="small"
+                variant="outlined"
+              />
+              <TextField
+                label="SHA256"
+                value={hashes.sha256}
+                InputProps={{ readOnly: true }}
+                fullWidth
+                size="small"
+                variant="outlined"
+              />
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHashOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

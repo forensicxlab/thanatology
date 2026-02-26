@@ -3,61 +3,13 @@ use crate::modules::utils::th_progress::{
 };
 use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
-use exhume_filesystem::filesystem::{DirectoryCommon, FileCommon};
+use exhume_filesystem::folder_impl::FolderFS;
 use exhume_filesystem::{File, Filesystem};
 use log::{error, info};
 use sqlx::sqlite::SqlitePool;
 use sqlx::types::Json;
-use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use tauri::AppHandle;
-fn collect_files<T: Filesystem>(
-    fs: &mut T,
-    app: &AppHandle,
-    evidence_id: &i64,
-) -> Result<Vec<File>, Box<dyn std::error::Error>>
-where
-    T::DirectoryType: DirectoryCommon,
-{
-    let mut files = Vec::<File>::new();
-    let mut seen: HashSet<u64> = HashSet::new();
-    let mut queue: VecDeque<(u64, String)> = VecDeque::new();
-
-    let root_id = fs.get_root_file_id();
-
-    queue.push_back((root_id, fs.path_separator()));
-
-    while let Some((record_id, path)) = queue.pop_front() {
-        if !seen.insert(record_id) {
-            continue;
-        }
-
-        let record = fs.get_file(record_id)?;
-        let file_obj = fs.record_to_file(&record, record_id, &path);
-        files.push(file_obj.clone());
-
-        emit_progress_event(
-            evidence_id,
-            ProgressMessageLevel::Module,
-            ProgressMessageType::Info,
-            format!("Discovered {} files", files.len()),
-            app,
-        );
-
-        if record.is_dir() {
-            for entry in fs.list_dir(&record)? {
-                let child_id = entry.file_id();
-                let child_path = if path == fs.path_separator() {
-                    format!("{}{}", fs.path_separator(), entry.name())
-                } else {
-                    format!("{}{}{}", path, fs.path_separator(), entry.name())
-                };
-                queue.push_back((child_id, child_path));
-            }
-        }
-    }
-
-    Ok(files)
-}
 
 async fn index_filesystem<T: Filesystem>(
     fs: &mut T,
@@ -65,9 +17,7 @@ async fn index_filesystem<T: Filesystem>(
     partition_id: i64,
     app: &AppHandle,
     pool: &SqlitePool,
-) where
-    T::DirectoryType: DirectoryCommon,
-{
+) {
     info!("Starting filesystem indexation…");
 
     if let Err(e) = sqlx::query(
@@ -92,23 +42,43 @@ async fn index_filesystem<T: Filesystem>(
         return;
     }
 
-    //--------------------------------------------------------------
-    // 1) Walk the filesystem and gather every File struct.
-    //--------------------------------------------------------------
-    let files = match collect_files(fs, app, &evidence_id) {
-        Ok(v) => v,
-        Err(e) => {
+    let mut files = Vec::<File>::new();
+    let mut discovered = 0;
+    
+    if let Err(e) = fs.walk_fs(&mut |event| match event {
+        exhume_filesystem::filesystem::WalkEvent::File(f) => {
+            files.push(f);
+            discovered += 1;
+            if discovered % 1000 == 0 {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Info,
+                    format!("Discovered {} files", discovered),
+                    app,
+                );
+            }
+        },
+        exhume_filesystem::filesystem::WalkEvent::Status(msg) => {
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Module,
-                ProgressMessageType::Error,
-                format!("Failed to walk filesystem: {e}"),
+                ProgressMessageType::Info,
+                msg,
                 app,
             );
-            error!("Failed to walk filesystem: {e}");
-            return;
         }
-    };
+    }) {
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::Error,
+            format!("Failed to walk filesystem: {e}"),
+            app,
+        );
+        error!("Failed to walk filesystem: {e}");
+        return;
+    }
 
     //--------------------------------------------------------------
     // 2) Persist them in one transaction.
@@ -253,5 +223,17 @@ pub async fn index_partition(
         }
     };
 
+    index_filesystem(&mut fs, evidence_id, partition_id, app, pool).await
+}
+
+pub async fn index_folder(
+    evidence_id: i64,
+    partition_id: i64,
+    folder_path: String,
+    pool: &SqlitePool,
+    app: &AppHandle,
+) {
+    let path = PathBuf::from(folder_path);
+    let mut fs = FolderFS::new(path);
     index_filesystem(&mut fs, evidence_id, partition_id, app, pool).await
 }

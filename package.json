@@ -26,6 +26,7 @@
     "@tauri-apps/plugin-os": "^2.2.0",
     "@tauri-apps/plugin-shell": "^2.3.1",
     "@tauri-apps/plugin-sql": "^2.3.0",
+    "@types/sql.js": "^1.4.9",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "dayjs": "^1.11.13",
@@ -36,6 +37,7 @@
     "react-router": "^7.6.2",
     "react-terminal": "^1.4.5",
     "react-window": "^1.8.11",
+    "sql.js": "^1.14.0",
     "tauri-pty": "^0.1.0",
     "yet-another-react-lightbox": "^3.25.0"
   },

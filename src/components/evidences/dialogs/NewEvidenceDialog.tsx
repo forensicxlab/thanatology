@@ -30,6 +30,7 @@ const NewEvidenceDialog: React.FC<NewEvidenceDialogProps> = ({
     | "Procmon dump"
     | "Physical Disk image"
     | "Logical Disk image"
+    | "Folder"
   >("Physical Disk image");
   const [evidenceLocation, setEvidenceLocation] = useState("");
   const [evidenceDescription, setEvidenceDescription] = useState("");

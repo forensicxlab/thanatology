@@ -14,10 +14,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 export interface NewEvidenceFormProps {
   evidenceName: string;
   evidenceType:
-    | "Physical Disk image"
-    | "Logical Disk image"
-    | "Memory Image"
-    | "Procmon dump";
+  | "Physical Disk image"
+  | "Logical Disk image"
+  | "Memory Image"
+  | "Procmon dump"
+  | "Folder";
   evidenceLocation: string;
   evidenceDescription: string;
   // Handlers for controlled fields:
@@ -27,7 +28,8 @@ export interface NewEvidenceFormProps {
       | "Physical Disk image"
       | "Logical Disk image"
       | "Memory Image"
-      | "Procmon dump",
+      | "Procmon dump"
+      | "Folder",
   ) => void;
   onEvidenceLocationChange: (value: string) => void;
   onEvidenceDescriptionChange: (value: string) => void;
@@ -56,7 +58,7 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
       // Open the file dialog; adjust filters as needed.
       const selected = await open({
         multiple: false,
-        directory: false,
+        directory: evidenceType === "Folder",
       });
 
       // When multiple is false, selected is either a string or null.
@@ -96,15 +98,17 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
           onChange={(e) =>
             onEvidenceTypeChange(
               e.target.value as
-                | "Physical Disk image"
-                | "Logical Disk image"
-                | "Memory Image"
-                | "Procmon dump",
+              | "Physical Disk image"
+              | "Logical Disk image"
+              | "Memory Image"
+              | "Procmon dump"
+              | "Folder",
             )
           }
         >
           <MenuItem value="Physical Disk image">Physical Disk image</MenuItem>
           <MenuItem value="Logical Disk image">Logical Disk image</MenuItem>
+          <MenuItem value="Folder">Folder</MenuItem>
 
           <MenuItem value="Memory Image" disabled>
             Memory Image

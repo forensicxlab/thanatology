@@ -266,6 +266,30 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "add_folder_to_evidence_type",
+            sql: r#"
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE evidence_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    case_id     INTEGER NOT NULL,
+                    name        TEXT NOT NULL,
+                    type        TEXT NOT NULL CHECK (type IN ('Physical Disk image', 'Logical Disk image', 'Memory Image', 'Procmon dump', 'Folder')),
+                    path        TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    status      INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (case_id)
+                        REFERENCES cases(id)
+                        ON DELETE CASCADE
+                );
+                INSERT INTO evidence_new SELECT * FROM evidence;
+                DROP TABLE evidence;
+                ALTER TABLE evidence_new RENAME TO evidence;
+                PRAGMA foreign_keys=ON;
+            "#,
+            kind: MigrationKind::Up,
+        },
     ];
 
     thanatology_lib::run(init_migrations);

@@ -2,13 +2,14 @@ import * as React from "react";
 import Stack from "@mui/material/Stack";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
-import TimelineScatter from "./TimelineScatter";
-import FileDataGrid from "../files/FilesDataGrid";
+
 import type { GridFilterModel } from "@mui/x-data-grid-pro";
-import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
+import type { TimelineWindowsEventFilter } from "../../../../../dbutils/sqlite";
+
+import WindowsEventTimelineScatter from "./WindowsEventTimelineScatter";
+import WindowsEventsDataGrid from "./WindowsEventsDataGrid";
 
 function stableStringifyFilterModel(m: GridFilterModel | undefined) {
-  // normalize ordering to avoid spurious "pending" state
   const items = [...(m?.items ?? [])]
     .map((it) => ({
       field: it.field,
@@ -33,7 +34,7 @@ function stableStringifyFilterModel(m: GridFilterModel | undefined) {
   });
 }
 
-export default function Timeliner({
+export default function WindowsEventsTimeliner({
   evidenceId,
   partitionId,
 }: {
@@ -41,16 +42,16 @@ export default function Timeliner({
   partitionId: number;
 }) {
   const [timelineFilter, setTimelineFilter] =
-    React.useState<TimelineFileFilter | null>(null);
+    React.useState<TimelineWindowsEventFilter | null>(null);
 
-  // Grid filter: draft (drives grid UI + grid querying)
+  // Draft grid filters (drive grid query + UI)
   const [gridFilterDraft, setGridFilterDraft] = React.useState<GridFilterModel>(
     {
       items: [],
     },
   );
 
-  // Grid filter: applied to timeline (drives chart querying)
+  // Applied to chart (drive chart query)
   const [gridFilterAppliedToChart, setGridFilterAppliedToChart] =
     React.useState<GridFilterModel>({ items: [] });
 
@@ -66,7 +67,6 @@ export default function Timeliner({
   const gridHasPendingChanges = draftKey !== appliedKey;
 
   const applyGridFiltersToChart = React.useCallback(() => {
-    // clone to avoid accidental mutation surprises
     setGridFilterAppliedToChart(structuredClone(gridFilterDraft));
   }, [gridFilterDraft]);
 
@@ -76,11 +76,10 @@ export default function Timeliner({
 
   return (
     <Stack gap={2}>
-      <TimelineScatter
+      <WindowsEventTimelineScatter
         evidenceId={evidenceId}
         partitionId={partitionId}
-        onFilesFilterChange={setTimelineFilter}
-        // IMPORTANT: chart uses the APPLIED grid filters, not draft
+        onEventsFilterChange={setTimelineFilter}
         gridFilterModel={gridFilterAppliedToChart}
       />
 
@@ -107,9 +106,9 @@ export default function Timeliner({
         </Stack>
       )}
 
-      <FileDataGrid
-        evidence_id={evidenceId}
-        partition_id={partitionId}
+      <WindowsEventsDataGrid
+        evidenceId={evidenceId}
+        partitionId={partitionId}
         timelineFilter={timelineFilter}
         onClearTimelineFilter={() => setTimelineFilter(null)}
         filterModel={gridFilterDraft}

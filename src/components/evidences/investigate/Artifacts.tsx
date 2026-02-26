@@ -305,8 +305,12 @@ const Artifacts: React.FC<ArtifactsProps> = ({
                 console.error("Error opening the file viewer:", error);
               } finally {
                 await emitTo("fileviewer", "message", {
-                  fileId: row.identifier,
+                  evidenceId: evidence_id,
+                  partitionId: partition_id,
+                  Identifier: row.identifier,
+                  fileId: row.file_id,
                   fileSize: row.size,
+                  path: row.absolute_path,
                 });
               }
             }}

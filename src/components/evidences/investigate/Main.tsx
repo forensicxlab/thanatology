@@ -21,7 +21,10 @@ import {
 import Summary from "./categories/summary/Summary";
 import System from "./categories/system/System";
 import Timeliner from "./categories/timeline/Timeliner";
-
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+// optional if you want timezone support:
+import timezone from "dayjs/plugin/timezone";
 import Network from "./categories/network/Network";
 import { PartitionSelection } from "./PartitionSelection";
 import Users from "./categories/users/Users";
@@ -34,6 +37,11 @@ interface TabPanelProps {
   index: number;
   value: number;
 }
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+// optional default:
+dayjs.tz.setDefault("UTC");
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;

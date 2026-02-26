@@ -27,6 +27,7 @@ export interface ByteRange {
 export interface HexViewerProps {
   fileId: number;
   fileSize: number;
+  path: string;
 
   /** Height of the viewer (default "100%") */
   height?: number | string;
@@ -68,7 +69,7 @@ const isPrintable = (b: number) => b >= 32 && b <= 126;
 /* ───────────────────────────── LRU cache ────────────────────────────────── */
 class LRU<K, V> {
   readonly #map = new Map<K, V>();
-  constructor(private readonly capacity: number) {}
+  constructor(private readonly capacity: number) { }
   get(key: K): V | undefined {
     const v = this.#map.get(key);
     if (v !== undefined) {
@@ -82,7 +83,7 @@ class LRU<K, V> {
     this.#map.set(key, value);
     if (this.#map.size > this.capacity) {
       const first = this.#map.keys().next().value;
-      this.#map.delete(first);
+      if (first !== undefined) this.#map.delete(first);
     }
   }
 }
@@ -386,6 +387,7 @@ const HexViewer = forwardRef(
     const {
       fileId,
       fileSize,
+      path,
       height = "100%",
       onSelectionChange,
       selectionDebounceMs = 120,
@@ -419,13 +421,14 @@ const HexViewer = forwardRef(
           fileId,
           offset: chunkStart,
           length,
+          path,
         });
 
         const buf = Uint8Array.from(data);
         cacheRef.current.set(chunkStart, buf);
         return buf;
       },
-      [fileId, fileSize],
+      [fileId, fileSize, path],
     );
 
     const getRowSlice = useCallback(

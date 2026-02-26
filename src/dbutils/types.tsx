@@ -7,10 +7,11 @@ export interface Evidence {
   case_id: number;
   name: string;
   type:
-    | "Physical Disk image"
-    | "Logical Disk image"
-    | "Memory Image"
-    | "Procmon dump";
+  | "Physical Disk image"
+  | "Logical Disk image"
+  | "Memory Image"
+  | "Procmon dump"
+  | "Folder";
   path: string;
   description: string;
   status: number;
@@ -139,6 +140,7 @@ export interface ProcessedEvidenceMetadata {
   selectedMbrPartitions?: MBRPartitionEntry[];
   selectedGptPartitions?: GPTPartitionEntry[];
   selectedLogicalPartition?: LogicalPartition;
+  logicalFilesystem?: string;
 }
 
 /* Other helper types (unchanged) … */
@@ -200,7 +202,6 @@ export interface ArtifactWithFile {
   sig_exts: string;
 }
 
-// types.ts
 export type TimestampType = "created" | "accessed" | "modified";
 
 export interface TimestampCount {
@@ -208,3 +209,50 @@ export interface TimestampCount {
   ts: number; // epoch ms (what the chart expects)
   count: number; // number of files with this (bucketed) timestamp
 }
+
+export type ArtifactObjectRow = {
+  id: number;
+  evidence_id: number;
+  partition_id: number;
+  artifact_id: number;
+  file_id: number | null;
+  parser: string | null;
+  kind: string | null;
+  text: string | null;
+  json: string | null;
+};
+
+export type WindowsEventRow = {
+  id: number; // artifact_objects.id
+
+  evidence_id: number;
+  partition_id: number;
+  file_id: number;
+
+  event_record_id: number | null;
+  ts: number | null; // epoch ms (derived from JSON timestamp)
+  timestamp_iso: string | null;
+
+  event_id: number | null;
+  provider_name: string | null;
+  provider_guid: string | null;
+
+  channel: string | null;
+  computer: string | null;
+
+  level: number | null;
+  task: number | null;
+  opcode: number | null;
+  keywords: string | null;
+
+  user_sid: string | null;
+  process_id: number | null;
+  thread_id: number | null;
+
+  json_raw: string | null;
+};
+
+export type WindowsEventCount = {
+  ts: number; // epoch ms (bucket start)
+  count: number;
+};

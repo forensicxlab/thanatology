@@ -105,9 +105,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
       {evidence.status > 1 ? (
         <Grid size={6}>
           <ProcessingTask
-            status={evidence.status}
-            evidenceName={evidence.name}
-            evidenceId={evidence.id}
+            evidence={evidence}
           />
           <Divider />
         </Grid>

@@ -12,6 +12,7 @@ import type * as monacoEditor from "monaco-editor";
 function useTauriFileReader(
   fileId: number,
   fileSize: number,
+  path?: string,
   chunkSize = 64 * 1024, // 64 KB default, tweak as needed
 ) {
   const [offset, setOffset] = useState(0);
@@ -22,7 +23,7 @@ function useTauriFileReader(
   useEffect(() => {
     setOffset(0);
     setHasMore(true);
-  }, [fileId, fileSize, chunkSize]);
+  }, [fileId, fileSize, chunkSize, path]);
 
   const readNextChunk = useCallback(async () => {
     if (isReading || !hasMore) return "";
@@ -41,14 +42,16 @@ function useTauriFileReader(
       if (offset === 0) {
         // First read – prefix
         text = await invoke<string>("read_file_prefix", {
-          fileId,
+          fileId: fileId,
           length,
+          path,
         });
       } else {
         text = await invoke<string>("read_file_slice", {
-          fileId,
+          fileId: fileId,
           offset,
           length,
+          path,
         });
       }
 
@@ -63,7 +66,7 @@ function useTauriFileReader(
     } finally {
       setIsReading(false);
     }
-  }, [fileId, fileSize, chunkSize, offset, isReading, hasMore]);
+  }, [fileId, fileSize, chunkSize, offset, isReading, hasMore, path]);
 
   return { readNextChunk, hasMore, isReading, offset };
 }
@@ -72,6 +75,7 @@ interface RawViewerProps {
   /** File identifier understood by your backend (same as before) */
   fileId: number;
   fileSize: number;
+  path?: string;
   /** Height of the editor viewport in px */
   height?: number | string;
   /** Width of the editor viewport in px */
@@ -103,7 +107,8 @@ interface RawViewerProps {
 const RawViewer: React.FC<RawViewerProps> = ({
   fileId,
   fileSize,
-  height = "100",
+  path,
+  height = "100%",
   width = "100%",
   chunkSize = 64 * 1024,
   language = "plaintext",
@@ -115,6 +120,7 @@ const RawViewer: React.FC<RawViewerProps> = ({
   const { readNextChunk, hasMore, isReading } = useTauriFileReader(
     fileId,
     fileSize,
+    path,
     chunkSize,
   );
 
@@ -248,8 +254,8 @@ const RawViewer: React.FC<RawViewerProps> = ({
   }, [isEditorReady, loadMore]);
 
   return (
-    <Card className={className} sx={{ maxWidth: width, ...sx }}>
-      <CardContent sx={{ p: 0, position: "relative" }}>
+    <Card className={className} sx={{ maxWidth: width, height: "100%", ...sx }}>
+      <CardContent sx={{ p: 0, position: "relative", height: "100%" }}>
         <Editor
           height={height}
           width="100%"

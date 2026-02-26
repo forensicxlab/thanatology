@@ -194,9 +194,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
       {evidence.status === 2 && (
         <ProcessingTask
-          status={evidence.status}
-          evidenceName={evidence.name}
-          evidenceId={evidence.id}
+          evidence={evidence}
           onComplete={fetchEvidence}
         />
       )}

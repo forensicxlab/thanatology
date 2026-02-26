@@ -1,7 +1,7 @@
 use crate::modules::utils::th_progress::{
     emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use exhume_artefacts::parsers::ParserRegistry;
 use exhume_artefacts::{ObjectParsed, Parser as ArtefactParser, ParserInput};
 use exhume_filesystem::filesystem::{FileCommon, FsFileReadSeek};
@@ -11,8 +11,11 @@ use log::{error, info};
 use regex::escape;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;
 use std::fs;
+
+use serde_json::Value;
 use tauri::AppHandle;
 
 /// Category assigned to an artifact.
@@ -137,6 +140,53 @@ pub async fn identify_artefacts(
     let artifact_set: ArtifactSet = ArtifactSet::from_yaml_str(&yaml_text).unwrap();
     info!("Loaded {} artifact(s):", artifact_set.artifacts.len());
 
+    // Make identify pass idempotent for this partition.
+    if let Err(err) = sqlx::query(
+        r#"
+        DELETE FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?;
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .execute(pool)
+    .await
+    {
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Error,
+            format!("Failed to clear existing parsed artefacts: {err}"),
+            app,
+        );
+        error!("Failed to clear existing parsed artefacts: {err}");
+        return;
+    }
+
+    if let Err(err) = sqlx::query(
+        r#"
+        DELETE FROM artifacts
+        WHERE evidence_id = ?
+          AND partition_id = ?;
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .execute(pool)
+    .await
+    {
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Error,
+            format!("Failed to clear existing artefacts: {err}"),
+            app,
+        );
+        error!("Failed to clear existing artefacts: {err}");
+        return;
+    }
+
     for artifact in &artifact_set.artifacts {
         for path_spec in &artifact.paths {
             // Build the final regex pattern for this path entry
@@ -207,12 +257,21 @@ fn extract_artefact<F: Filesystem>(
     fs: &mut F,
     parser: &dyn ArtefactParser,
     fs_identifier: u64,
+    absolute_path: &str,
 ) -> Result<Vec<ObjectParsed>>
 where
     F::FileType: FileCommon,
 {
     // Fetch FS record
-    let record = fs.get_file(fs_identifier).unwrap();
+    let record = match fs.get_file(fs_identifier) {
+        Ok(r) => r,
+        Err(_) => {
+            // Fallback: try to get by path if ID lookup failed (e.g. empty FolderFS cache)
+            fs.get_file_by_path(absolute_path, fs_identifier)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?
+        }
+    };
+
     // Adapter: Read+Seek backed by Filesystem::read_file_slice
     let rs = FsFileReadSeek::new(fs, record);
 
@@ -342,7 +401,7 @@ pub async fn extract_artefacts<F: Filesystem>(
             continue;
         };
 
-        let objs = match extract_artefact(fs, &**parser, fs_identifier_i64 as u64) {
+        let objs = match extract_artefact(fs, &**parser, fs_identifier_i64 as u64, &abs_path) {
             Ok(v) => v,
             Err(e) => {
                 emit_progress_event(
@@ -438,4 +497,203 @@ pub async fn extract_artefacts<F: Filesystem>(
         "Artefact extraction done evidence_id={evidence_id} partition_id={partition_id}: \
          processed={total} emitted={emitted_objects}"
     );
+}
+
+#[tauri::command]
+pub async fn parse_pe(
+    db_path: String,
+    evidence_id: i64,
+    partition_id: i64,
+    file_id: i64,
+) -> Result<Value, String> {
+    info!("Fetching PE for evidence={evidence_id} partition={partition_id} file={file_id}");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_path)
+        .await
+        .map_err(|e| format!("DB connection error: {e}"))?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT json
+        FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?
+          AND file_id = ?
+          AND parser = 'windows_pe'
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .bind(file_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Some(row) = row {
+        info!("Found PE data for file_id {}", file_id);
+        let json_str: String = row.get("json");
+        let json_val: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+        Ok(json_val)
+    } else {
+        info!("No PE data found for file_id {}", file_id);
+        Err("No PE data found for this file".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn has_pml_data(
+    db_path: String,
+    evidence_id: i64,
+    partition_id: i64,
+    file_id: i64,
+) -> Result<bool, String> {
+    info!("Checking PML for evidence={evidence_id} partition={partition_id} file={file_id}");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_path)
+        .await
+        .map_err(|e| format!("DB connection error: {e}"))?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT 1
+        FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?
+          AND file_id = ?
+          AND parser = 'windows_pml'
+        LIMIT 1
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .bind(file_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.is_some())
+}
+
+#[tauri::command]
+pub async fn has_evtx_data(
+    db_path: String,
+    evidence_id: i64,
+    partition_id: i64,
+    file_id: i64,
+) -> Result<bool, String> {
+    info!("Checking EVTX for evidence={evidence_id} partition={partition_id} file={file_id}");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_path)
+        .await
+        .map_err(|e| format!("DB connection error: {e}"))?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT 1
+        FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?
+          AND file_id = ?
+          AND parser = 'windows_evtx'
+        LIMIT 1
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .bind(file_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.is_some())
+}
+
+#[tauri::command]
+pub async fn get_pml_events_count(
+    db_path: String,
+    evidence_id: i64,
+    partition_id: i64,
+    file_id: i64,
+) -> Result<i64, String> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_path)
+        .await
+        .map_err(|e| format!("DB connection error: {e}"))?;
+
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(*) as count
+        FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?
+          AND file_id = ?
+          AND parser = 'windows_pml'
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .bind(file_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.get("count"))
+}
+
+#[tauri::command]
+pub async fn get_pml_events(
+    db_path: String,
+    evidence_id: i64,
+    partition_id: i64,
+    file_id: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Value>, String> {
+    info!("Fetching PML slice for evidence={evidence_id} partition={partition_id} file={file_id} offset={offset} limit={limit}");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_path)
+        .await
+        .map_err(|e| format!("DB connection error: {e}"))?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT json
+        FROM artifact_objects
+        WHERE evidence_id = ?
+          AND partition_id = ?
+          AND file_id = ?
+          AND parser = 'windows_pml'
+        ORDER BY id ASC
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(evidence_id)
+    .bind(partition_id)
+    .bind(file_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        let json_str: String = row.get("json");
+        // Deserialize each row's JSON string into a Value
+        let json_val: Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+        results.push(json_val);
+    }
+
+    Ok(results)
 }

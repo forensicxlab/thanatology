@@ -618,3 +618,35 @@ artifacts:
     parser: "chrome_history"
     tag: "browser"
     category: "application"
+
+  - name: "SQLite Databases"
+    description: "Generic search for SQLite database files"
+    paths:
+      - path: '.*\.sqlite$'
+        regexp: true
+      - path: '.*\.db$'
+        regexp: true
+      - path: '.*\.s3db$'
+        regexp: true
+    parser: "sqlite"
+    tag: "database"
+    category: "system"
+
+  - name: "Procmon Log (PML)"
+    description: "Process Monitor Log files"
+    paths:
+      - path: '.*\.PML$'
+        regexp: true
+    parser: "windows_pml"
+    tag: "logs"
+    category: "system"
+
+  - name: "Portable Executable (PE)"
+    description: "Windows Executables/DLLs/Drivers"
+    paths:
+      - path: '.*\.(exe|dll|sys)$'
+        regexp: true
+    parser: "windows_pe"
+    tag: "executables"
+    category: "system"
+

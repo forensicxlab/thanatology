@@ -1,3 +1,4 @@
+// FilesDataGrid.tsx (only the relevant edits shown)
 import * as React from "react";
 import * as ReactDOM from "react-dom";
 import {
@@ -9,23 +10,25 @@ import {
   GridFilterModel,
   GridRowParams,
 } from "@mui/x-data-grid-pro";
-import { Chip, Tooltip } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { InfoOutlined } from "@mui/icons-material";
-import { useNavigate } from "react-router";
 import UnixToISO8601UTC from "../../../common/UnixToUTC";
 import { getFiles } from "../../../../../dbutils/sqlite";
 import { File } from "../../../../../dbutils/types";
 import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
+import { Chip, Tooltip, Stack, Typography } from "@mui/material";
 
 interface FileDataGridProps {
   evidence_id: number;
   partition_id: number;
-  /** Called each time the grid fetches a new page of rows. */
   onRowsLoaded?: (rows: File[]) => void;
-  /** Called when a user double-clicks a row or uses the "View file" action. */
   onRowActivate?: (row: File) => void;
+  filterModel?: GridFilterModel;
+  onFilterModelChange?: (m: GridFilterModel) => void;
+  timelineFilter?: TimelineFileFilter | null;
+  onClearTimelineFilter?: () => void;
 }
 
 const pageSizeDefault = 30;
@@ -35,8 +38,11 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   partition_id,
   onRowsLoaded,
   onRowActivate,
+  filterModel,
+  onFilterModelChange,
+  timelineFilter,
+  onClearTimelineFilter,
 }) => {
-  const navigate = useNavigate();
   const apiRef = useGridApiRef();
 
   const [rows, setRows] = React.useState<File[]>([]);
@@ -130,8 +136,12 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
                 console.error("Error opening the file viewer:", error);
               } finally {
                 await emitTo("fileviewer", "message", {
-                  fileId: row.identifier,
+                  evidenceId: evidence_id,
+                  Identifier: row.identifier,
+                  fileId: row.id,
                   fileSize: row.size,
+                  partitionId: partition_id,
+                  path: row.absolute_path,
                 });
               }
             }}
@@ -143,10 +153,8 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         ],
       },
     ],
-    [onRowActivate],
+    [evidence_id],
   );
-
-  const [queryOptions, setQueryOptions] = React.useState({});
 
   const fetchData = React.useCallback(async () => {
     const { page, pageSize } = paginationModel;
@@ -158,7 +166,8 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
       partition_id,
       offset,
       pageSize,
-      queryOptions.filterModel as any, // matches FilterModel shape used above
+      filterModel as any, // your sqlite builder already tolerates the GridFilterModel shape
+      timelineFilter ?? undefined,
     );
 
     ReactDOM.flushSync(() => {
@@ -168,44 +177,74 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     });
 
     onRowsLoaded?.(newRows);
-    if (apiRef.current) {
-      apiRef.current.autosizeColumns({
-        columns: [
-          "sig_mime",
-          "permissions",
-          "group",
-          "owner",
-          "created",
-          "modified",
-          "accessed",
-          "size",
-          "actions",
-        ],
 
-        includeHeaders: true,
-        includeOutliers: true,
-        disableColumnVirtualization: true,
-      });
-    }
-  }, [paginationModel, partition_id, apiRef, onRowsLoaded, queryOptions]);
+    apiRef.current?.autosizeColumns({
+      columns: [
+        "sig_mime",
+        "permissions",
+        "group",
+        "owner",
+        "created",
+        "modified",
+        "accessed",
+        "size",
+        "actions",
+      ],
+      includeHeaders: true,
+      includeOutliers: true,
+      disableColumnVirtualization: true,
+    });
+  }, [
+    paginationModel,
+    evidence_id,
+    partition_id,
+    apiRef,
+    onRowsLoaded,
+    filterModel,
+    timelineFilter,
+  ]);
 
   React.useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  React.useEffect(() => {
+    setPaginationModel((prev) => ({ ...prev, page: 0 }));
+  }, [timelineFilter]);
+
   const handleRowDoubleClick = React.useCallback(
-    (params: GridRowParams) => {
-      onRowActivate?.(params.row as File);
-    },
+    (params: GridRowParams) => onRowActivate?.(params.row as File),
     [onRowActivate],
   );
 
-  const onFilterChange = React.useCallback((filterModel: GridFilterModel) => {
-    setQueryOptions({ filterModel: { ...filterModel } });
-  }, []);
-
   return (
     <div style={{ width: "100%" }}>
+      {timelineFilter?.start != null && timelineFilter?.end != null && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={1}
+          sx={{ mb: 1, flexWrap: "wrap" }}
+        >
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            Timeline filter:
+          </Typography>
+
+          <Chip
+            size="small"
+            variant="outlined"
+            label={
+              <>
+                <UnixToISO8601UTC timestamp={timelineFilter.start} /> →{" "}
+                <UnixToISO8601UTC timestamp={timelineFilter.end} /> (
+                {timelineFilter.types.join(", ")})
+              </>
+            }
+            onDelete={onClearTimelineFilter}
+          />
+        </Stack>
+      )}
+
       <DataGridPro
         apiRef={apiRef}
         rows={rows}
@@ -227,11 +266,12 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         onPaginationModelChange={setPaginationModel}
         pageSizeOptions={[10, 20, 50]}
         rowHeight={50}
-        onFilterModelChange={onFilterChange}
         density="compact"
-        showToolbar={true}
+        showToolbar
         onRowDoubleClick={handleRowDoubleClick}
         autosizeOnMount={false}
+        filterModel={filterModel}
+        onFilterModelChange={(m) => onFilterModelChange?.(m)}
       />
     </div>
   );

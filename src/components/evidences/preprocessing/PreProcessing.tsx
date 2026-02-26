@@ -17,6 +17,7 @@ import Database from "@tauri-apps/plugin-sql";
 import { Evidence } from "../../../dbutils/types";
 import { getEvidence } from "../../../dbutils/sqlite";
 import DiskImage from "./DiskImage";
+import FolderImage from "./FolderImage";
 import LogicalImage from "./LogicalImage";
 import { useSnackbar } from "../../SnackbarProvider";
 
@@ -62,6 +63,8 @@ const PreProcessing: React.FC<PreProcessingProps> = ({ database }) => {
     switch (evidence.type) {
       case "Logical Disk image":
         return <LogicalImage database={database} evidenceData={evidence} />;
+      case "Folder":
+        return <FolderImage database={database} evidenceData={evidence} />;
       default:
         // Fallback to DiskImage for physical/raw disk images, memory dumps, etc.
         return <DiskImage database={database} evidenceData={evidence} />;

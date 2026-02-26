@@ -9,22 +9,26 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePo
 use sqlx::Row;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub mod modules;
 
 use exhume_artefacts::parsers::build_registry;
-use modules::th_artifacts::{extract_artefacts, identify_artefacts};
+use modules::th_artifacts::{extract_artefacts, identify_artefacts, parse_pe, get_pml_events_count, get_pml_events, has_pml_data, has_evtx_data};
 use modules::th_evidences::create_case_with_evidence;
 use modules::th_filesystem::{
     get_fs_info, read_file_bytes, read_file_prefix, read_file_slice, read_file_slice_bytes,
+    dump_file_to_disk, compute_hash,
 };
 
 use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 use modules::th_identifier::identify_file_types;
-use modules::th_index::index_partition;
+
+use modules::th_index::{index_folder, index_partition};
 
 use std::{
     fs::File,
@@ -235,6 +239,19 @@ pub struct ExtractionModule {
     pub id: String,
     pub name: String,
     pub description: String,
+}
+
+pub struct ProcessingState {
+    pub tokens: Mutex<HashMap<i64, Arc<AtomicBool>>>,
+}
+
+#[tauri::command]
+fn cancel_processing(evidence_id: i64, state: tauri::State<'_, ProcessingState>) {
+    if let Ok(tokens) = state.tokens.lock() {
+        if let Some(token) = tokens.get(&evidence_id) {
+            token.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 /// Check if the evidence file exists at the given path.
@@ -621,7 +638,28 @@ fn process_partitions(
 
         // Indexation (writes ONLY to evidence DB)
         let total = work.len() as u64;
+
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+            tokens.insert(evidence_id, cancel_token.clone());
+        }
+
         for (idx, p) in work.iter().enumerate() {
+            if cancel_token.load(Ordering::Relaxed) {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Info,
+                    "Partition processing cancelled by user.",
+                    &app,
+                );
+                update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                    tokens.remove(&evidence_id);
+                }
+                return;
+            }
+
             emit_progress_event(
                 &evidence_id,
                 ProgressMessageLevel::Main,
@@ -664,6 +702,21 @@ fn process_partitions(
 
         // Post-index modules (also writes to evidence DB)
         for p in work {
+            if cancel_token.load(Ordering::Relaxed) {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Info,
+                    "Post-index processing cancelled by user.",
+                    &app,
+                );
+                update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                    tokens.remove(&evidence_id);
+                }
+                return;
+            }
+
             let mut body = Body::new(evidence_path.clone(), "auto");
 
             let bytes_len = match p.kind {
@@ -701,6 +754,255 @@ fn process_partitions(
                 .await
                 .ok();
         }
+
+        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+            tokens.remove(&evidence_id);
+        }
+    });
+}
+
+#[tauri::command]
+fn process_folder(
+    evidence_id: i64,
+    main_db_path: String,
+    evidence_db_path: String,
+    folder_path: String,
+    app: AppHandle,
+) {
+    tauri::async_runtime::spawn(async move {
+         // Ensure per-evidence DB folder exists
+         if let Some(parent) = std::path::Path::new(&evidence_db_path).parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to create evidence DB directory: {e}"),
+                    &app,
+                );
+                error!("Failed to create evidence DB directory: {e}");
+                return;
+            }
+        }
+
+        // Connect pools
+        let main_pool = match open_pool(&main_db_path).await {
+            Ok(p) => p,
+            Err(err) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Main DB connection error: {err:?}"),
+                    &app,
+                );
+                error!("Main DB connection error: {err:?}");
+
+                return;
+            }
+        };
+
+        let evidence_pool = match open_pool(&evidence_db_path).await {
+            Ok(p) => p,
+            Err(err) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Evidence DB connection error: {err:?}"),
+                    &app,
+                );
+                error!("Evidence DB connection error: {err:?}");
+
+                return;
+            }
+        };
+
+        // Initialize evidence DB schema once (copy from main)
+        match has_user_tables(&evidence_pool).await {
+            Ok(false) => {
+                if let Err(err) = copy_schema_from_main(&main_pool, &evidence_pool).await {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        format!("Failed to initialize evidence DB schema: {err:?}"),
+                        &app,
+                    );
+                    error!("Failed to initialize evidence DB schema: {err:?}");
+
+                    return;
+                }
+            }
+            Ok(true) => {}
+            Err(err) => {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed checking evidence DB schema: {err:?}"),
+                    &app,
+                );
+                error!("Failed checking evidence DB schema: {err:?}");
+
+                return;
+            }
+        }
+
+        // Attach main DB (filesystem path) and copy evidence rows into evidence DB
+        if let Err(err) = attach_main_db(&evidence_pool, &main_db_path).await {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to attach main DB: {err:?}"),
+                &app,
+            );
+            error!("Failed to attach main DB: {err:?}");
+            return;
+        }
+
+        if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to copy evidence rows into evidence DB: {err:?}"),
+                &app,
+            );
+            error!("Failed to copy evidence rows into evidence DB: {err:?}");
+            return;
+        }
+        
+         // Create logical partition entry (in evidence DB) if none exist
+         // For folders, we treat it as one logical partition
+        let mut logical_rows =
+            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
+                .bind(evidence_id)
+                .fetch_all(&evidence_pool)
+                .await
+                .unwrap_or_default();
+        
+        if logical_rows.is_empty() {
+             // Fake size or calculate it? 0 is fine for folder root usually or we can scan.
+             if let Err(err) = sqlx::query(
+                "INSERT INTO logical_partition_entries (evidence_id, size) VALUES (?, ?)",
+            )
+            .bind(evidence_id)
+            .bind(0)
+            .execute(&evidence_pool)
+            .await
+            {
+                let msg = format!("Failed to create logical partition entry: {err:?}");
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    msg.clone(),
+                    &app,
+                );
+                error!("{msg}");
+                return;
+            }
+             logical_rows =
+                sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
+                    .bind(evidence_id)
+                    .fetch_all(&evidence_pool)
+                    .await
+                    .unwrap_or_default();
+        }
+        
+        let partition_id = logical_rows[0].get::<i64, _>("id");
+
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+            tokens.insert(evidence_id, cancel_token.clone());
+        }
+
+        if cancel_token.load(Ordering::Relaxed) {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Info,
+                "Folder processing cancelled by user.",
+                &app,
+            );
+            update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                tokens.remove(&evidence_id);
+            }
+            return;
+        }
+
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Info,
+            format!("Indexing Folder..."),
+            &app,
+        );
+
+        index_folder(evidence_id, partition_id, folder_path.clone(), &evidence_pool, &app).await;
+        
+        // Update main DB status for UI completion screen
+        if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to update main evidence status to 3: {err:?}"),
+                &app,
+            );
+            return;
+        }
+
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            "Successfully indexed folder.",
+            &app,
+        );
+        
+        // Post index modules?
+        // Identify artefacts etc.
+        // Similar to process_partitions but using FolderFS
+
+        if cancel_token.load(Ordering::Relaxed) {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Info,
+                "Folder post-index processing cancelled by user.",
+                &app,
+            );
+            update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                tokens.remove(&evidence_id);
+            }
+            return;
+        }
+        
+        let fs = exhume_filesystem::folder_impl::FolderFS::new(std::path::PathBuf::from(&folder_path));
+        let mut detected_fs: DetectedFs<BodySlice> = DetectedFs::Folder(fs);
+        
+        identify_artefacts(evidence_id, partition_id, &app, &evidence_pool).await;
+        let registry = build_registry();
+        extract_artefacts(evidence_id, partition_id, &app, &evidence_pool, &mut detected_fs, &registry).await;
+
+        update_evidence_status(&evidence_pool, evidence_id, 4)
+            .await
+            .ok();
+
+        identify_file_types(&mut detected_fs, evidence_id, partition_id, &app, evidence_pool.clone()).await;
+        update_evidence_status(&evidence_pool, evidence_id, 5)
+            .await
+            .ok();
+
+        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+            tokens.remove(&evidence_id);
+        }
+            
     });
 }
 
@@ -797,6 +1099,9 @@ pub fn run(init_migrations: Vec<Migration>) {
         .init();
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(None::<DetectedFs<BodySlice>>)))
+        .manage(ProcessingState {
+            tokens: Mutex::new(HashMap::new()),
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -823,10 +1128,19 @@ pub fn run(init_migrations: Vec<Migration>) {
             file_size,
             read_file_slice,
             read_file_prefix,
-            read_file_bytes,
             read_file_slice_bytes,
-            detect_logical_filesystem
+            read_file_bytes,
+            process_partitions,
+            process_folder,
+            detect_logical_filesystem,
+            dump_file_to_disk,
+            compute_hash,
+            parse_pe,
+            has_evtx_data,
+            has_pml_data,
+            cancel_processing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

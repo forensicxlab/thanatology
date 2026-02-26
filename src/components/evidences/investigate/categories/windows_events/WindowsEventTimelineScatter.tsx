@@ -1,64 +1,87 @@
-// components/TimelineScatter.tsx
 import * as React from "react";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import Slider from "@mui/material/Slider";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import CircularProgress from "@mui/material/CircularProgress";
-import Checkbox from "@mui/material/Checkbox";
-import FormGroup from "@mui/material/FormGroup";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";
 import Divider from "@mui/material/Divider";
 import Button from "@mui/material/Button";
-import { ScatterChartPro } from "@mui/x-charts-pro/ScatterChartPro";
-import { getTimestampCountsByType } from "../../../../../dbutils/sqlite";
-import type { TimestampType } from "../../../../../dbutils/types";
+import {
+  ChartsTooltipContainer,
+  useItemTooltip,
+} from "@mui/x-charts/ChartsTooltip";
 
-import UnixToISO8601UTC from "../../../common/UnixToUTC";
 import dayjs, { Dayjs } from "dayjs";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DateTimeRangePicker } from "@mui/x-date-pickers-pro/DateTimeRangePicker";
 import { MultiInputDateTimeRangeField } from "@mui/x-date-pickers-pro/MultiInputDateTimeRangeField";
+
+import { ScatterChartPro } from "@mui/x-charts-pro/ScatterChartPro";
 import type { GridFilterModel } from "@mui/x-data-grid-pro";
-import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
+
+import UnixToISO8601UTC from "../../../common/UnixToUTC";
+import { getWindowsEventCounts } from "../../../../../dbutils/sqlite";
+import type { TimelineWindowsEventFilter } from "../../../../../dbutils/sqlite";
+
 type Props = {
   evidenceId: number;
   partitionId: number;
   bucket?: "second" | "minute" | "hour" | "day";
   gridFilterModel?: GridFilterModel;
-  onFilesFilterChange?: (filter: TimelineFileFilter | null) => void;
+  onEventsFilterChange?: (filter: TimelineWindowsEventFilter | null) => void;
 };
 
 type Bucket = NonNullable<Props["bucket"]>;
-
-const COLORS: Record<TimestampType, string> = {
-  created: "#4caf50",
-  accessed: "#2196f3",
-  modified: "#ff9800",
-};
-const ALL_TYPES: TimestampType[] = ["created", "accessed", "modified"];
-
-function toISO8601UTCString(ts: number): string {
-  if (ts.toString().length === 10) ts *= 1000;
-  const d = new Date(ts);
-  const pad = (n: number, w = 2) => n.toString().padStart(w, "0");
-  const micro = (ms: number) => (ms * 1000).toString().padStart(6, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(
-    d.getUTCHours(),
-  )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${micro(d.getUTCMilliseconds())}Z`;
-}
 
 const BUCKET_MS: Record<Bucket, number> = {
   second: 1000,
   minute: 60_000,
   hour: 3_600_000,
   day: 86_400_000,
+};
+
+function WindowsEventsTooltip() {
+  const item = useItemTooltip(); // null when closed
+
+  // You MUST keep the container so it can position/open the Popper.
+  return (
+    <ChartsTooltipContainer trigger="item">
+      {!item
+        ? null
+        : (() => {
+            const v: any = item.value; // scatter value is typically { x, y }
+            const ts = typeof v?.x === "number" ? v.x : null;
+            const count = typeof v?.y === "number" ? v.y : null;
+
+            return (
+              <Paper sx={{ p: 1.5, maxWidth: 380 }}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ fontWeight: 600, mb: 0.5 }}
+                >
+                  {count ?? "—"} event(s) —{" "}
+                  {ts != null ? <UnixToISO8601UTC timestamp={ts} /> : "—"}
+                </Typography>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="body2" color="text.secondary">
+                  Click to filter the grid to this bucket.
+                </Typography>
+              </Paper>
+            );
+          })()}
+    </ChartsTooltipContainer>
+  );
+}
+
+const formatUtcTick = (v: number | Date) => {
+  const ms = v instanceof Date ? v.getTime() : v;
+  // "2016-06-21 13:17:50Z" style (UTC)
+  return new Date(ms).toISOString().replace("T", " ").replace(".000Z", "Z");
 };
 
 function stableStringifyFilterModel(m: GridFilterModel | undefined) {
@@ -86,22 +109,17 @@ function stableStringifyFilterModel(m: GridFilterModel | undefined) {
   });
 }
 
-function makeRangeFilter(
-  startMs: number | null,
-  endMs: number | null,
-  types: TimestampType[],
-): TimelineFileFilter | null {
-  if (!startMs || !endMs || types.length === 0) return null;
-  return { start: startMs, end: endMs, types };
+function makeRangeFilter(startMs: number | null, endMs: number | null) {
+  if (!startMs || !endMs) return null;
+  return { start: startMs, end: endMs } as TimelineWindowsEventFilter;
 }
 
-// Tooltip showing "{count} file(s) — <timestamp>" prominently
 type ItemPoint = {
   seriesId: string;
   color: string;
-  value: { x: number; y: number };
-  label?: string;
+  value: { x: number | Date; y: number };
 };
+
 function TooltipContent(props: {
   item?: ItemPoint | null;
   items?: ItemPoint[];
@@ -109,62 +127,34 @@ function TooltipContent(props: {
   const item = props.item ?? props.items?.[0] ?? null;
   if (!item) return null;
 
-  const seriesLabel =
-    item.label ??
-    (typeof item.seriesId === "string"
-      ? item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)
-      : String(item.seriesId));
-
-  const ts = item.value?.x;
+  const x = item.value?.x;
+  const tsMs = x instanceof Date ? x.getTime() : x;
   const count = item.value?.y ?? "";
 
   return (
     <Paper sx={{ p: 1.5, maxWidth: 380 }}>
-      {/* Header: count + timestamp */}
       <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-        {count} file(s) — <UnixToISO8601UTC timestamp={ts} />
+        {count} event(s) — <UnixToISO8601UTC timestamp={tsMs} />
       </Typography>
-
       <Divider sx={{ my: 1 }} />
-
-      {/* Series badge */}
-      <Stack direction="row" alignItems="center" gap={1}>
-        <Box
-          sx={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            bgcolor: item.color,
-          }}
-        />
-        <Typography variant="body2">{seriesLabel}</Typography>
-      </Stack>
+      <Typography variant="body2" color="text.secondary">
+        Click to filter the grid to this bucket.
+      </Typography>
     </Paper>
   );
 }
 
-export default function TimelineScatter({
+export default function WindowsEventTimelineScatter({
   evidenceId,
   partitionId,
-  bucket = "second",
-  onFilesFilterChange,
+  bucket = "minute",
   gridFilterModel,
+  onEventsFilterChange,
 }: Props) {
-  const [markerSize, setMarkerSize] = React.useState(3);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [seriesData, setSeriesData] = React.useState<
-    { type: TimestampType; x: number; y: number }[]
-  >([]);
+  const [points, setPoints] = React.useState<{ x: number; y: number }[]>([]);
 
-  const [visibleTypes, setVisibleTypes] = React.useState<
-    Record<TimestampType, boolean>
-  >({
-    created: true,
-    accessed: true,
-    modified: true,
-  });
-  // Pending vs Applied controls
   const [bucketPending, setBucketPending] = React.useState<Bucket>(bucket);
   const [rangePending, setRangePending] = React.useState<
     [Dayjs | null, Dayjs | null]
@@ -189,6 +179,7 @@ export default function TimelineScatter({
 
   React.useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
         setError(null);
@@ -197,7 +188,7 @@ export default function TimelineScatter({
         const start = rangeApplied[0]?.valueOf() ?? null;
         const end = rangeApplied[1]?.valueOf() ?? null;
 
-        const rows = await getTimestampCountsByType(evidenceId, partitionId, {
+        const rows = await getWindowsEventCounts(evidenceId, partitionId, {
           bucket: bucketApplied,
           start,
           end,
@@ -207,27 +198,20 @@ export default function TimelineScatter({
         if (cancelled) return;
 
         const data = rows
-          .filter(
-            (r) =>
-              Number.isFinite(r.ts) &&
-              Number.isFinite(r.count) &&
-              r.ts > 0 &&
-              r.count > 0,
-          )
-          .map((r) => ({ type: r.type, x: r.ts, y: r.count }));
+          .filter((r) => Number.isFinite(r.ts) && r.ts > 0 && r.count > 0)
+          .map((r) => ({ x: r.ts, y: r.count }));
 
-        setSeriesData(data);
+        setPoints(data);
 
-        const xs = data.map((d) => d.x);
-        if ((!rangeApplied[0] || !rangeApplied[1]) && xs.length > 0) {
-          const min = Math.min(...xs);
-          const max = Math.max(...xs);
-          setRangePending([dayjs(min), dayjs(max)]);
+        // If no explicit range applied, auto-fill pending range from data extents
+        if ((!rangeApplied[0] || !rangeApplied[1]) && data.length > 0) {
+          const xs = data.map((d) => d.x);
+          setRangePending([dayjs(Math.min(...xs)), dayjs(Math.max(...xs))]);
         }
       } catch (e: any) {
         if (!cancelled) {
           setError(e?.message ?? String(e));
-          setSeriesData([]);
+          setPoints([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -237,7 +221,6 @@ export default function TimelineScatter({
     return () => {
       cancelled = true;
     };
-    // IMPORTANT: depend on gridFilterKey (APPLIED), not raw model
   }, [
     evidenceId,
     partitionId,
@@ -247,52 +230,13 @@ export default function TimelineScatter({
     gridFilterKey,
   ]);
 
-  const enabledTypes = ALL_TYPES.filter((t) => visibleTypes[t]);
-
-  const chartSeries = enabledTypes.map((t) => ({
-    id: t,
-    label: t.charAt(0).toUpperCase() + t.slice(1),
-    color: COLORS[t],
-    data: seriesData
-      .filter((d) => d.type === t)
-      .map((d, idx) => ({ id: idx, x: d.x, y: d.y })), // add id for robust click behavior
-    preview: { markerSize },
-    valueFormatter: (v: { x: number; y: number } | null) =>
-      v ? `${v.y} file(s) — ${toISO8601UTCString(v.x)}` : "",
-  }));
-
-  const handlePointClick = React.useCallback(
-    (_event: unknown, scatterItemIdentifier: any) => {
-      const { seriesId, dataIndex } = scatterItemIdentifier ?? {};
-      if (seriesId == null || dataIndex == null) return;
-
-      const type = seriesId as TimestampType;
-      const s = chartSeries.find((cs) => cs.id === type);
-      const pt = s?.data?.[dataIndex];
-      if (!pt) return;
-
-      const bucketStart = pt.x as number;
-      const bucketEnd = bucketStart + BUCKET_MS[bucketApplied] - 1;
-
-      onFilesFilterChange?.({
-        start: bucketStart,
-        end: bucketEnd,
-        types: [type],
-      });
-    },
-    [chartSeries, bucketApplied, onFilesFilterChange],
-  );
-
-  const xMin = rangeApplied[0]?.valueOf() ?? undefined;
-  const xMax = rangeApplied[1]?.valueOf() ?? undefined;
-
   const applyChanges = () => {
     setBucketApplied(bucketPending);
     setRangeApplied(rangePending);
 
     const startMs = rangePending[0]?.valueOf() ?? null;
     const endMs = rangePending[1]?.valueOf() ?? null;
-    onFilesFilterChange?.(makeRangeFilter(startMs, endMs, enabledTypes));
+    onEventsFilterChange?.(makeRangeFilter(startMs, endMs));
   };
 
   const cancelPending = () => {
@@ -303,17 +247,44 @@ export default function TimelineScatter({
   const clearFiltersAndReload = () => {
     setRangePending([null, null]);
     setRangeApplied([null, null]);
-    onFilesFilterChange?.(null);
+    onEventsFilterChange?.(null);
   };
+
+  const handlePointClick = React.useCallback(
+    (_event: unknown, scatterItemIdentifier: any) => {
+      const { dataIndex } = scatterItemIdentifier ?? {};
+      if (dataIndex == null) return;
+
+      const pt = points[dataIndex];
+      if (!pt) return;
+
+      const bucketStart = pt.x;
+      const bucketEnd = bucketStart + BUCKET_MS[bucketApplied] - 1;
+
+      onEventsFilterChange?.({ start: bucketStart, end: bucketEnd });
+    },
+    [points, bucketApplied, onEventsFilterChange],
+  );
+
+  const xMin = rangeApplied[0]?.valueOf() ?? undefined;
+  const xMax = rangeApplied[1]?.valueOf() ?? undefined;
+
+  const chartData = points.map((p, idx) => ({
+    id: idx,
+    // give the chart a Date for time scale
+    x: new Date(p.x),
+    y: p.y,
+    // keep ms around for tooltip/click logic if you want
+    xMs: p.x,
+  }));
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Stack gap={2}>
         <Typography variant="h6" sx={{ alignSelf: "center" }}>
-          File Timestamps Timeline (Created / Accessed / Modified)
+          Windows Events Timeline (count over time)
         </Typography>
 
-        {/* Controls */}
         <Stack
           direction={{ xs: "column", sm: "row" }}
           gap={2}
@@ -321,7 +292,6 @@ export default function TimelineScatter({
           justifyContent="center"
           sx={{ flexWrap: "wrap" }}
         >
-          {/* Bucket selector (pending) */}
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="bucket-select-label">Bucket</InputLabel>
             <Select
@@ -338,66 +308,8 @@ export default function TimelineScatter({
             </Select>
           </FormControl>
 
-          {/* Type visibility toggles */}
-          <FormControl component="fieldset" variant="standard" sx={{ ml: 1 }}>
-            <FormGroup row>
-              {ALL_TYPES.map((t) => (
-                <FormControlLabel
-                  key={t}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={visibleTypes[t]}
-                      onChange={(e) =>
-                        setVisibleTypes((prev) => ({
-                          ...prev,
-                          [t]: e.target.checked,
-                        }))
-                      }
-                    />
-                  }
-                  label={
-                    <Stack direction="row" gap={1} alignItems="center">
-                      <Box
-                        sx={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          bgcolor: COLORS[t],
-                        }}
-                      />
-                      <span style={{ textTransform: "capitalize" }}>{t}</span>
-                    </Stack>
-                  }
-                />
-              ))}
-            </FormGroup>
-          </FormControl>
-
-          {/* Marker size */}
-          <Stack direction="row" gap={2} alignItems="center">
-            <Typography
-              id="marker-size-slider"
-              variant="body2"
-              sx={{ whiteSpace: "nowrap" }}
-            >
-              Marker size: {markerSize}
-            </Typography>
-            <Slider
-              size="small"
-              min={1}
-              max={10}
-              step={1}
-              aria-labelledby="marker-size-slider"
-              value={markerSize}
-              onChange={(_, v) => setMarkerSize(v as number)}
-              sx={{ width: 200 }}
-              disabled={loading}
-            />
-          </Stack>
-
-          {/* Date & Time range picker (pending) */}
           <DateTimeRangePicker
+            timezone="UTC"
             value={rangePending}
             onChange={(newValue) => setRangePending(newValue)}
             slots={{ field: MultiInputDateTimeRangeField }}
@@ -405,7 +317,6 @@ export default function TimelineScatter({
             disabled={loading}
           />
 
-          {/* Action buttons */}
           <Stack direction="row" gap={1} alignItems="center">
             <Button
               variant="contained"
@@ -440,7 +351,6 @@ export default function TimelineScatter({
           </Typography>
         )}
 
-        {/* Chart area */}
         {error ? (
           <Typography color="error" sx={{ alignSelf: "center" }}>
             {error}
@@ -449,7 +359,7 @@ export default function TimelineScatter({
           <Stack
             alignItems="center"
             justifyContent="center"
-            sx={{ height: 600 }}
+            sx={{ height: 520 }}
           >
             <CircularProgress />
             <Typography variant="body2" sx={{ mt: 1 }}>
@@ -464,35 +374,40 @@ export default function TimelineScatter({
                 id: "time",
                 scaleType: "time",
                 label: "Timestamp (UTC)",
-                valueFormatter: (v: number | null) =>
-                  v == null ? "" : toISO8601UTCString(v),
-                min: xMin,
-                max: xMax,
+                // pass Dates for min/max too
+                min: xMin != null ? new Date(xMin) : undefined,
+                max: xMax != null ? new Date(xMax) : undefined,
+                // force tick labels to UTC
+                valueFormatter: formatUtcTick,
                 zoom: { slider: { enabled: true, preview: true } },
               },
             ]}
             yAxis={[{ id: "count", label: "Events", min: 0 }]}
+            slotProps={{ tooltip: { trigger: "item" } }}
             series={[
               {
                 id: "events",
                 label: "Events",
-                data: points.map((p, idx) => ({ id: idx, x: p.x, y: p.y })),
-                valueFormatter: (v) =>
-                  v ? `${v.y} event(s) — ${toISO8601UTCString(v.x)}` : "",
+                data: chartData,
+                valueFormatter: (v) => {
+                  if (!v) return "";
+                  const xVal = v.x as unknown as Date | number;
+                  const ms =
+                    xVal instanceof Date ? xVal.getTime() : Number(xVal);
+                  return `${v.y} event(s) — ${new Date(ms).toISOString()}`;
+                },
               },
             ]}
             onItemClick={handlePointClick}
-            slots={{ tooltip: TooltipContent as any }}
+            slots={{ tooltip: WindowsEventsTooltip }}
           />
         )}
 
         <Typography variant="caption" sx={{ alignSelf: "center" }}>
-          Bucket (applied): {bucketApplied}. Range:{" "}
+          Bucket (applied): {bucketApplied}.{" "}
           {rangeApplied[0] && rangeApplied[1]
-            ? `${toISO8601UTCString(rangeApplied[0].valueOf())} → ${toISO8601UTCString(
-                rangeApplied[1].valueOf(),
-              )}`
-            : "none (full dataset)"}
+            ? `Range: ${rangeApplied[0].toISOString()} → ${rangeApplied[1].toISOString()}`
+            : "Range: none (full dataset)"}
         </Typography>
       </Stack>
     </LocalizationProvider>

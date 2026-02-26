@@ -4,24 +4,26 @@ import ListItemText from "@mui/material/ListItemText";
 import ListItemAvatar from "@mui/material/ListItemAvatar";
 import { listen } from "@tauri-apps/api/event";
 import Avatar from "@mui/material/Avatar";
-import { CircularProgress } from "@mui/material";
+import { CircularProgress, Tooltip } from "@mui/material";
 import IconButton from "@mui/material/IconButton";
 
-import { Check, Preview } from "@mui/icons-material";
+import { Check, Preview, StopCircle } from "@mui/icons-material";
+import { invoke } from "@tauri-apps/api/core";
+import { Evidence } from "../../../dbutils/types";
+import Typography from "@mui/material/Typography";
 
 interface ProcessingTaskProps {
-  evidenceId: number;
-  evidenceName: string;
-  status: number;
+  evidence: Evidence;
   onComplete?: () => void;
 }
 
 const ProcessingTask: React.FC<ProcessingTaskProps> = ({
-  evidenceId,
-  evidenceName,
-  status,
+  evidence,
   onComplete,
 }) => {
+  const evidenceId = evidence.id;
+  const evidenceName = evidence.name;
+  const status = evidence.status;
   const [mainProgress, setMainProgress] = useState("");
   const [mainColor, setMainColor] = useState<
     "info" | "secondary" | "error" | "success"
@@ -78,24 +80,50 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
     };
   }, [evidenceId, onComplete]);
 
+  const handleCancel = async () => {
+    try {
+      await invoke("cancel_processing", { evidenceId });
+      setModuleProgress("Cancellation requested...");
+      setModuleColor("error");
+    } catch (err) {
+      console.error("Failed to cancel processing", err);
+    }
+  };
+
   return status < 5 ? (
-    <ListItem>
+    <ListItem
+      secondaryAction={
+        <Tooltip title="Cancel Processing">
+          <IconButton edge="end" aria-label="cancel" onClick={handleCancel}>
+            <StopCircle color="error" />
+          </IconButton>
+        </Tooltip>
+      }
+    >
       <ListItemAvatar>
         <Avatar sx={{ background: "transparent" }}>
           <CircularProgress />
         </Avatar>
       </ListItemAvatar>
       <ListItemText
-        primary={mainProgress}
-        secondary={moduleProgress}
-        slotProps={{
-          primary: {
-            color: mainColor,
-          },
-          secondary: {
-            color: moduleColor,
-          },
-        }}
+        primary={
+          <Typography variant="subtitle1" fontWeight="bold">
+            {evidenceName} ({evidence.type})
+          </Typography>
+        }
+        secondary={
+          <React.Fragment>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Path: {evidence.path}
+            </Typography>
+            <Typography variant="body2" color={mainColor}>
+              {mainProgress}
+            </Typography>
+            <Typography variant="body2" color={moduleColor}>
+              {moduleProgress}
+            </Typography>
+          </React.Fragment>
+        }
       />
     </ListItem>
   ) : (

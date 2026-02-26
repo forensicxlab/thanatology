@@ -19,9 +19,21 @@ export default function Terminal() {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminalRef.current);
-    fitAddon.fit();
 
-    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    const safeFit = () => {
+      try {
+        if (terminalRef.current && terminalRef.current.clientWidth > 0 && terminalRef.current.clientHeight > 0) {
+          fitAddon.fit();
+        }
+      } catch (e) {
+        console.warn("Terminal fit failed:", e);
+      }
+    };
+
+    // Use a small timeout or rAF to ensure the DOM has updated
+    requestAnimationFrame(safeFit);
+
+    const resizeObserver = new ResizeObserver(() => safeFit());
     resizeObserver.observe(terminalRef.current);
     const shell =
       platform() === "windows"
