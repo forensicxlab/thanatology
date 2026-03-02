@@ -86,6 +86,27 @@ const FileViewer: React.FC = () => {
     let unlisten: (() => void) | undefined;
 
     (async () => {
+      // 1. Read any immediately pending payload from localStorage (solves race condition on new window)
+      const pendingPayloadStr = localStorage.getItem("pending_fileviewer_payload");
+      if (pendingPayloadStr) {
+        try {
+          const payload = JSON.parse(pendingPayloadStr) as FileOpenPayload;
+          setFile(payload);
+          void checkIfSqlite(
+            payload.Identifier,
+            payload.path,
+            payload.fileId,
+            payload.evidenceId,
+            payload.partitionId,
+          );
+          // Clear it so we don't accidentally load it again on refresh
+          localStorage.removeItem("pending_fileviewer_payload");
+        } catch (err) {
+          console.error("Failed to parse pending fileviewer payload from localStorage", err);
+        }
+      }
+
+      // 2. Set up listener for subsequent open requests
       unlisten = await listen<FileOpenPayload>("message", (event) => {
         // console.log("File loaded:", event.payload);
         setFile(event.payload);

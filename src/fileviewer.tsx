@@ -1,4 +1,4 @@
-import ReactDOM from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import FileViewerApp from "./FileViewerApp";
 import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
@@ -10,7 +10,7 @@ import React from "react";
 
 import CssBaseline from "@mui/material/CssBaseline";
 
-ReactDOM.createRoot(
+createRoot(
   document.getElementById("fileviewer") as HTMLElement,
 ).render(
   <React.StrictMode>

@@ -130,19 +130,23 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
             icon={<VisibilityIcon />}
             label="View file"
             onClick={async () => {
+              const payload = {
+                evidenceId: evidence_id,
+                Identifier: row.identifier,
+                fileId: row.id,
+                fileSize: row.size,
+                partitionId: partition_id,
+                path: row.absolute_path,
+              };
+
+              localStorage.setItem("pending_fileviewer_payload", JSON.stringify(payload));
+
               try {
                 await invoke("new_fileviewer");
               } catch (error) {
                 console.error("Error opening the file viewer:", error);
               } finally {
-                await emitTo("fileviewer", "message", {
-                  evidenceId: evidence_id,
-                  Identifier: row.identifier,
-                  fileId: row.id,
-                  fileSize: row.size,
-                  partitionId: partition_id,
-                  path: row.absolute_path,
-                });
+                await emitTo("fileviewer", "message", payload);
               }
             }}
             showInMenu={false}

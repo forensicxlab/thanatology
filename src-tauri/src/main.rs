@@ -290,6 +290,14 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "add_display_to_system_files",
+            sql: r#"
+                ALTER TABLE system_files ADD COLUMN display TEXT;
+            "#,
+            kind: MigrationKind::Up,
+        },
     ];
 
     thanatology_lib::run(init_migrations);

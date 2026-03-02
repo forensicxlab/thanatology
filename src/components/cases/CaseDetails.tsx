@@ -145,6 +145,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
           <EvidenceList
             evidences={evidences}
             onSelectionChange={setSelectionModel}
+            onEvidenceChange={fetchCaseData}
           />
         </Grid>
       </Grid>

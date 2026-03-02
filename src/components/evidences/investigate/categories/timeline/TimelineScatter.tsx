@@ -178,9 +178,9 @@ export default function TimelineScatter({
   const hasPendingChanges =
     bucketPending !== bucketApplied ||
     (rangePending[0]?.valueOf() ?? null) !==
-      (rangeApplied[0]?.valueOf() ?? null) ||
+    (rangeApplied[0]?.valueOf() ?? null) ||
     (rangePending[1]?.valueOf() ?? null) !==
-      (rangeApplied[1]?.valueOf() ?? null);
+    (rangeApplied[1]?.valueOf() ?? null);
 
   const gridFilterKey = React.useMemo(
     () => stableStringifyFilterModel(gridFilterModel),
@@ -472,15 +472,7 @@ export default function TimelineScatter({
               },
             ]}
             yAxis={[{ id: "count", label: "Events", min: 0 }]}
-            series={[
-              {
-                id: "events",
-                label: "Events",
-                data: points.map((p, idx) => ({ id: idx, x: p.x, y: p.y })),
-                valueFormatter: (v) =>
-                  v ? `${v.y} event(s) — ${toISO8601UTCString(v.x)}` : "",
-              },
-            ]}
+            series={chartSeries as any}
             onItemClick={handlePointClick}
             slots={{ tooltip: TooltipContent as any }}
           />
@@ -490,8 +482,8 @@ export default function TimelineScatter({
           Bucket (applied): {bucketApplied}. Range:{" "}
           {rangeApplied[0] && rangeApplied[1]
             ? `${toISO8601UTCString(rangeApplied[0].valueOf())} → ${toISO8601UTCString(
-                rangeApplied[1].valueOf(),
-              )}`
+              rangeApplied[1].valueOf(),
+            )}`
             : "none (full dataset)"}
         </Typography>
       </Stack>

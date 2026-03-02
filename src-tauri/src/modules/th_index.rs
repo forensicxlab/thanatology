@@ -125,8 +125,9 @@ async fn index_filesystem<T: Filesystem>(
             permissions,
             owner,
             "group",
+            display,
             metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#;
 
     for f in &files {
@@ -148,6 +149,7 @@ async fn index_filesystem<T: Filesystem>(
             .bind(&f.permissions)
             .bind(&f.owner)
             .bind(&f.group)
+            .bind(&f.display)
             .bind(Json(&f.metadata))
             .execute(&mut *tx)
             .await

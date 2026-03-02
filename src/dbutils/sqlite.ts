@@ -11,7 +11,7 @@ import {
 } from "./types";
 import type { TimestampType, TimestampCount, ArtifactObjectRow } from "./types";
 import { getEvidenceDb } from "./db";
-import { CLASS_FLEX_CENTER } from "yet-another-react-lightbox";
+// import { CLASS_FLEX_CENTER } from "yet-another-react-lightbox";
 
 export async function createUser(username: string, db: Database | null) {
   if (!db) {
@@ -512,12 +512,197 @@ export async function searchMedia(
   return { rows, rowCount };
 }
 
+const ARTIFACT_FIELD_MAP: Record<string, string> = {
+  artifact_name: "artifacts.name",
+  description: "artifacts.description",
+  parser: "artifacts.parser",
+  tag: "artifacts.tag",
+  category: "artifacts.category",
+  identifier: "system_files.identifier",
+  absolute_path: "system_files.absolute_path",
+  file_name: "system_files.name",
+  ftype: "system_files.ftype",
+  size: "system_files.size",
+  created: "system_files.created",
+  modified: "system_files.modified",
+  accessed: "system_files.accessed",
+  permissions: "system_files.permissions",
+  owner: "system_files.owner",
+  group: `system_files."group"`,
+  sig_name: "system_files.sig_name",
+  sig_mime: "system_files.sig_mime",
+  sig_exts: "system_files.sig_exts",
+};
+
+const ARTIFACT_QUICK_FILTER_COLUMNS: string[] = [
+  "artifacts.name",
+  "artifacts.description",
+  "artifacts.parser",
+  "artifacts.tag",
+  "artifacts.category",
+  "system_files.absolute_path",
+  "system_files.name",
+  "system_files.ftype",
+  "system_files.permissions",
+  "system_files.owner",
+  `system_files."group"`,
+  "system_files.sig_name",
+  "system_files.sig_mime",
+  "system_files.sig_exts",
+  // numeric -> cast to text for LIKE
+  "CAST(system_files.identifier AS TEXT)",
+  "CAST(system_files.size AS TEXT)",
+];
+
+function isArtifactTextLikeField(field: string): boolean {
+  return [
+    "artifact_name",
+    "description",
+    "parser",
+    "tag",
+    "category",
+    "absolute_path",
+    "file_name",
+    "ftype",
+    "permissions",
+    "owner",
+    "group",
+    "sig_name",
+    "sig_mime",
+    "sig_exts",
+  ].includes(field);
+}
+
+function buildArtifactFiltersWithDollarPlaceholders(
+  model: FilterModel | undefined,
+  startIndex: number,
+) {
+  const items = model?.items ?? [];
+  const logic = (model?.logicOperator ?? "and").toLowerCase() as LogicOperator;
+  const qfValues = model?.quickFilterValues ?? [];
+  const qfLogic = (
+    model?.quickFilterLogicOperator ?? "and"
+  ).toLowerCase() as LogicOperator;
+
+  let p = startIndex;
+  const params: any[] = [];
+  const clauses: string[] = [];
+
+  const itemClauses: string[] = [];
+  for (const item of items) {
+    const mapped = ARTIFACT_FIELD_MAP[item.field];
+    if (!mapped) continue;
+
+    const op = item.operator;
+    const valRaw = item.value;
+
+    const likeOp =
+      op === "contains" ||
+      op === "doesNotContain" ||
+      op === "startsWith" ||
+      op === "endsWith";
+
+    const exprBase =
+      likeOp && !isArtifactTextLikeField(item.field)
+        ? `LOWER(CAST(${mapped} AS TEXT))`
+        : likeOp
+          ? `LOWER(${mapped})`
+          : mapped;
+
+    switch (op) {
+      case "contains": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "doesNotContain": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        const expr =
+          exprBase.startsWith("LOWER(") || exprBase.startsWith("COALESCE(")
+            ? `COALESCE(${exprBase}, '')`
+            : `COALESCE(LOWER(CAST(${mapped} AS TEXT)), '')`;
+        itemClauses.push(`${expr} NOT LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "equals": {
+        const ph = `$${++p}`;
+        itemClauses.push(`${mapped} = ${ph}`);
+        params.push(valRaw);
+        break;
+      }
+      case "startsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`${escapeLike(v.toLowerCase())}%`);
+        break;
+      }
+      case "endsWith": {
+        const v = String(valRaw ?? "");
+        const ph = `$${++p}`;
+        itemClauses.push(`${exprBase} LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v.toLowerCase())}`);
+        break;
+      }
+      case "isEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NULL OR TRIM(CAST(${mapped} AS TEXT)) = '')`,
+        );
+        break;
+      }
+      case "isNotEmpty": {
+        itemClauses.push(
+          `(${mapped} IS NOT NULL AND TRIM(CAST(${mapped} AS TEXT)) <> '')`,
+        );
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  if (itemClauses.length) {
+    clauses.push(`(${itemClauses.join(` ${logic.toUpperCase()} `)})`);
+  }
+
+  if (qfValues.length) {
+    const perValueGroups: string[] = [];
+    for (const raw of qfValues) {
+      const v = String(raw ?? "").toLowerCase();
+      const perColumn: string[] = [];
+      for (const col of ARTIFACT_QUICK_FILTER_COLUMNS) {
+        const ph = `$${++p}`;
+        perColumn.push(`LOWER(${col}) LIKE ${ph} ESCAPE '\\'`);
+        params.push(`%${escapeLike(v)}%`);
+      }
+      perValueGroups.push(`(${perColumn.join(" OR ")})`);
+    }
+    clauses.push(`(${perValueGroups.join(` ${qfLogic.toUpperCase()} `)})`);
+  }
+
+  return {
+    where: clauses.length ? clauses.join(" AND ") : "",
+    params,
+    lastIndex: p,
+  };
+}
+
 export async function fetchArtifactsByCategory(
   category: string,
   evidenceId: number,
   partitionId: number,
-): Promise<any[]> {
+  offset: number,
+  limit: number,
+  filterModel?: FilterModel,
+): Promise<{ rows: any[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
+
+  const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, 3);
+  const extraWhere = built.where ? ` AND (${built.where})` : "";
 
   const query = `
     SELECT
@@ -551,15 +736,33 @@ export async function fetchArtifactsByCategory(
       artifacts.category = $1 AND
       artifacts.evidence_id = $2 AND
       artifacts.partition_id = $3
+      ${extraWhere}
+    LIMIT $${built.params.length + 4} OFFSET $${built.params.length + 5}
   `;
 
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM artifacts
+    INNER JOIN system_files ON artifacts.file_id = system_files.id
+    WHERE
+      artifacts.category = $1 AND
+      artifacts.evidence_id = $2 AND
+      artifacts.partition_id = $3
+      ${extraWhere}
+  `;
+
+  const queryParams = [category, evidenceId, partitionId, ...built.params];
+
+  const countResult = (await db.select(countQuery, queryParams)) as any[];
+  const rowCount = countResult[0].count;
+
   const rows = (await db.select(query, [
-    category,
-    evidenceId,
-    partitionId,
+    ...queryParams,
+    limit,
+    offset,
   ])) as any[];
-  console.log(rows);
-  return rows;
+
+  return { rows, rowCount };
 }
 
 /**
@@ -604,11 +807,11 @@ export async function getTimestampCountsByType(
 
   const extraWhere = built.where ? ` AND (${built.where})` : "";
 
-  const rows = await db.select<{
+  const rows = await db.select<Array<{
     type: TimestampType;
     ts_sec: number;
     count: number;
-  }>(
+  }>>(
     `
     WITH events AS (
       SELECT 'created' AS type, created AS ts
@@ -648,12 +851,12 @@ export async function getTimestampCountsByType(
   );
 
   return rows
-    .map((r) => ({
+    .map((r: any) => ({
       type: r.type,
       ts: r.ts_sec * 1000, // seconds → ms for chart
       count: r.count,
     }))
-    .filter((r) => Number.isFinite(r.ts) && r.ts > 0 && r.count > 0);
+    .filter((r: any) => Number.isFinite(r.ts) && r.ts > 0 && r.count > 0);
 }
 
 /*  SERVER-SIDE FILTERING FOR FILES Exploration */
@@ -676,7 +879,7 @@ type FilterItem = {
   value?: string | number | null;
 };
 
-type FilterModel = {
+export type FilterModel = {
   items?: FilterItem[];
   logicOperator?: LogicOperator;
   quickFilterValues?: (string | number)[];
@@ -884,12 +1087,12 @@ export async function getFiles(
 
   if (hasTimelineBounds) {
     const startSec =
-      timelineFilter!.start != null
-        ? toEpochSecondsFloor(timelineFilter!.start)
+      timelineFilter?.start != null
+        ? (timelineFilter.start < 1e11 ? timelineFilter.start : Math.floor(timelineFilter.start / 1000))
         : null;
     const endSec =
-      timelineFilter!.end != null
-        ? toEpochSecondsFloor(timelineFilter!.end)
+      timelineFilter?.end != null
+        ? (timelineFilter.end < 1e11 ? timelineFilter.end : Math.floor(timelineFilter.end / 1000))
         : null;
 
     // Only apply if at least one bound exists
@@ -1438,8 +1641,8 @@ export async function getWindowsEventCounts(
 
   const bucket = opts?.bucket ?? "minute";
 
-  const startMs = opts?.start != null ? toEpochMs(opts.start) : null;
-  const endMs = opts?.end != null ? toEpochMs(opts.end) : null;
+  const startMs = opts?.start != null ? (opts.start < 1e11 ? opts.start * 1000 : opts.start) : null;
+  const endMs = opts?.end != null ? (opts.end < 1e11 ? opts.end * 1000 : opts.end) : null;
 
   const tsMsExpr = winEvtTsMsExpr();
   const tsSecExpr = winEvtTsSecExpr(); // ms -> sec
@@ -1461,7 +1664,7 @@ export async function getWindowsEventCounts(
   const built = buildWinEvtFiltersWithDollarPlaceholders(opts?.filterModel, 4);
   const extraWhere = built.where ? ` AND (${built.where})` : "";
 
-  const rows = await db.select<{ ts_bucket: number; count: number }>(
+  const rows = await db.select<Array<{ ts_bucket: number; count: number }>>(
     `
     WITH base AS (
       SELECT ${tsSecExpr} AS ts_sec, ${tsMsExpr} AS ts_ms

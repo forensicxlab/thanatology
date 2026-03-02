@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/react-dom": "^19.2.3",
     "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.5.1",
     "typescript": "~5.8.3",

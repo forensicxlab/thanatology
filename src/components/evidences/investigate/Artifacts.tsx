@@ -15,7 +15,7 @@ import { Box, Tooltip, Typography, Paper, Stack, Chip } from "@mui/material";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate } from "react-router";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { emitTo } from "@tauri-apps/api/event";
 import UnixToUTC from "../common/UnixToUTC";
 import { fetchArtifactsByCategory } from "../../../dbutils/sqlite";
 import * as ReactDOM from "react-dom";
@@ -85,9 +85,20 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   const navigate = useNavigate();
 
   /* Keep a stable, empty array reference as rows prop (grid will be driven through `updateRows`) */
-  const [rows] = useState<ArtifactWithFile[]>([]);
+  const [rows, setRows] = useState<ArtifactWithFile[]>([]);
+  const [rowCount, setRowCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [paginationModel, setPaginationModel] = useState({
+    page: 0,
+    pageSize: 20,
+  });
+
+  const [filterModel, setFilterModel] = useState<any>({
+    items: [],
+  });
+
   const AUTOSIZE_COLS = [
     "identifier",
     "tag",
@@ -146,22 +157,31 @@ const Artifacts: React.FC<ArtifactsProps> = ({
       unsubscribe?.();
     };
   }, [apiRef, loading, runAutosize]);
+
   /* Data fetch */
   const loadArtifacts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = (await fetchArtifactsByCategory(
+      const { page, pageSize } = paginationModel;
+      const offset = page * pageSize;
+
+      const { rows: data, rowCount: total } = await fetchArtifactsByCategory(
         category,
         evidence_id,
         partition_id,
-      )) as ArtifactWithFile[];
-      const dataWithId = data.map((r) => ({ ...r, id: r.artifact_id }));
+        offset,
+        pageSize,
+        filterModel
+      );
+
+      const dataWithId = data.map((r: any) => ({ ...r, id: r.artifact_id })) as ArtifactWithFile[];
 
       /* Flush the row update synchronously so the DOM is updated immediately */
       ReactDOM.flushSync(() => {
+        setRowCount(total);
+        setRows(dataWithId);
         setLoading(false);
-        apiRef.current?.updateRows(dataWithId);
       });
 
       /* Defer autosizing to the next macrotask so the grid has time to render the new content */
@@ -193,12 +213,16 @@ const Artifacts: React.FC<ArtifactsProps> = ({
       setError((err as Error).message || "Unknown error");
       console.log(error);
     }
-  }, [apiRef, category, evidence_id, partition_id]);
+  }, [apiRef, category, evidence_id, partition_id, paginationModel, filterModel]);
 
   /* Initial load + refresh when deps change */
   useEffect(() => {
     loadArtifacts();
   }, [loadArtifacts]);
+
+  useEffect(() => {
+    setPaginationModel((prev) => ({ ...prev, page: 0 }));
+  }, [filterModel]);
 
   /* Columns */
   const columns: GridColDef[] = useMemo(
@@ -299,19 +323,23 @@ const Artifacts: React.FC<ArtifactsProps> = ({
             icon={<VisibilityIcon />}
             label="View file"
             onClick={async () => {
+              const payload = {
+                evidenceId: evidence_id,
+                partitionId: partition_id,
+                Identifier: row.identifier,
+                fileId: row.file_id,
+                fileSize: row.size,
+                path: row.absolute_path,
+              };
+
+              localStorage.setItem("pending_fileviewer_payload", JSON.stringify(payload));
+
               try {
                 await invoke("new_fileviewer");
               } catch (error) {
                 console.error("Error opening the file viewer:", error);
               } finally {
-                await emitTo("fileviewer", "message", {
-                  evidenceId: evidence_id,
-                  partitionId: partition_id,
-                  Identifier: row.identifier,
-                  fileId: row.file_id,
-                  fileSize: row.size,
-                  path: row.absolute_path,
-                });
+                await emitTo("fileviewer", "message", payload);
               }
             }}
             showInMenu={false}
@@ -351,14 +379,23 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         rowHeight={50}
         showToolbar
         disableRowSelectionOnClick
+        pagination
+        paginationMode="server"
+        paginationModel={paginationModel}
+        onPaginationModelChange={setPaginationModel}
+        filterMode="server"
+        filterModel={filterModel}
+        onFilterModelChange={setFilterModel}
+        rowCount={rowCount}
+        pageSizeOptions={[25, 50, 100]}
         getDetailPanelContent={getDetailPanelContent}
         getDetailPanelHeight={getDetailPanelHeight}
         initialState={{
           pinnedColumns: { left: [GRID_DETAIL_PANEL_TOGGLE_FIELD] },
           columns: {
             columnVisibilityModel: {
-              permissions: false, // Hide 'age' column by default
-              group: false, // Hide 'fullName' column by default
+              permissions: false,
+              group: false,
               modified: false,
               accessed: false,
             },

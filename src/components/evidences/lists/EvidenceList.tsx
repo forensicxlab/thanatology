@@ -19,17 +19,24 @@ import {
 import Tooltip from "@mui/material/Tooltip";
 import { useNavigate } from "react-router";
 import { Evidence } from "../../../dbutils/types";
+import { RestartAlt } from "@mui/icons-material";
+import { invoke } from "@tauri-apps/api/core";
+import { appLocalDataDir } from "@tauri-apps/api/path";
+import { useSnackbar } from "../../SnackbarProvider";
 
 interface EvidenceListProps {
   evidences: Evidence[];
   onSelectionChange: (selectionModel: GridRowSelectionModel) => void;
+  onEvidenceChange?: () => void;
 }
 
 const EvidenceList: React.FC<EvidenceListProps> = ({
   evidences,
   onSelectionChange,
+  onEvidenceChange,
 }) => {
   const navigate = useNavigate();
+  const { display_message } = useSnackbar();
   const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>({
     type: "include",
     ids: new Set(),
@@ -40,6 +47,28 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
   ) => {
     setSelectionModel(newSelection);
     onSelectionChange(newSelection);
+  };
+
+  const handleRestart = async (evidenceId: number) => {
+    try {
+      const baseDir = await appLocalDataDir();
+      const mainDbPath = `${baseDir}/thanatology.db`;
+      const evidenceDbPath = `${baseDir}/evidences/${evidenceId}.db`;
+
+      await invoke("reset_evidence", {
+        evidenceId,
+        mainDbPath,
+        evidenceDbPath,
+      });
+
+      display_message("success", "Evidence processing restarted.");
+      if (onEvidenceChange) {
+        onEvidenceChange();
+      }
+    } catch (err) {
+      console.error("Failed to restart evidence:", err);
+      display_message("error", `Failed to restart evidence: ${err}`);
+    }
   };
 
   const columns: GridColDef[] = [
@@ -177,6 +206,13 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
                 icon={<PlayArrow />}
                 label="Investigate the evidence"
                 onClick={() => navigate(`/evidences/investigate/${params.id}`)}
+              />
+            </Tooltip>,
+            <Tooltip key="restart" title="Restart processing">
+              <GridActionsCellItem
+                icon={<RestartAlt />}
+                label="Restart processing"
+                onClick={() => handleRestart(params.row.id)}
               />
             </Tooltip>,
           ];

@@ -254,6 +254,45 @@ fn cancel_processing(evidence_id: i64, state: tauri::State<'_, ProcessingState>)
     }
 }
 
+#[tauri::command]
+async fn reset_evidence(
+    evidence_id: i64,
+    main_db_path: String,
+    evidence_db_path: String,
+) -> Result<(), String> {
+    // Connect to main pool to reset status to 1 (Pending Start)
+    // so we don't have to repeat partition discovery/selection.
+    let main_pool = open_pool(&main_db_path)
+        .await
+        .map_err(|e| format!("Failed to open main DB: {}", e))?;
+
+    update_evidence_status(&main_pool, evidence_id, 1)
+        .await
+        .map_err(|e| format!("Failed to update evidence status: {}", e))?;
+
+    // Delete the evidence specific database file if it exists
+    let e_path = std::path::Path::new(&evidence_db_path);
+    if e_path.exists() {
+        if let Err(e) = std::fs::remove_file(e_path) {
+            error!("Failed to delete evidence DB {}: {}", evidence_db_path, e);
+            return Err(format!("Failed to delete evidence DB: {}", e));
+        }
+        
+        // Also cleanup sqlite-wal and sqlite-shm if they exist
+        let wal_path = format!("{}-wal", evidence_db_path);
+        if std::path::Path::new(&wal_path).exists() {
+             std::fs::remove_file(&wal_path).ok();
+        }
+        let shm_path = format!("{}-shm", evidence_db_path);
+        if std::path::Path::new(&shm_path).exists() {
+             std::fs::remove_file(&shm_path).ok();
+        }
+    }
+
+    info!("Successfully reset evidence ID {}", evidence_id);
+    Ok(())
+}
+
 /// Check if the evidence file exists at the given path.
 #[tauri::command]
 fn check_evidence_exists(path: String) -> Result<bool, String> {
@@ -523,10 +562,10 @@ fn process_partitions(
 
         // Create logical partition entry (in evidence DB) if none exist
         if mbr_rows.is_empty() && gpt_rows.is_empty() && logical_rows.is_empty() {
-            let file_len = match std::fs::metadata(&evidence_path) {
-                Ok(m) => m.len(),
+            let file_len = match Body::new(evidence_path.clone(), "auto").seek(std::io::SeekFrom::End(0)) {
+                Ok(size) => size,
                 Err(err) => {
-                    let msg = format!("Failed to stat evidence file: {err}");
+                    let msg = format!("Failed to determine evidence file size: {err}");
                     emit_progress_event(
                         &evidence_id,
                         ProgressMessageLevel::Main,
@@ -1139,6 +1178,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             has_evtx_data,
             has_pml_data,
             cancel_processing,
+            reset_evidence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
