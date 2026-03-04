@@ -12,8 +12,10 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import RemoveOutlinedIcon from "@mui/icons-material/RemoveOutlined";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
 
 import Terminal from "../Terminal";
+import AgentChatDrawer from "../evidences/investigate/AgentChatDrawer";
 
 interface TermDescriptor {
   id: number;
@@ -22,6 +24,7 @@ interface TermDescriptor {
 
 export default function BottomActionBar() {
   const [open, setOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [height, setHeight] = useState<number>(window.innerHeight * 0.5);
   const [full, setFull] = useState(false);
 
@@ -123,8 +126,14 @@ export default function BottomActionBar() {
       >
         <Toolbar
           variant="dense"
-          sx={{ minHeight: 28, justifyContent: "flex-end", px: 1 }}
+          sx={{ minHeight: 28, justifyContent: "flex-end", px: 1, gap: 1 }}
         >
+          <IconButton size="small" onClick={() => setAgentOpen(!agentOpen)}>
+            <SmartToyIcon
+              fontSize="small"
+              color={agentOpen ? "primary" : "inherit"}
+            />
+          </IconButton>
           <IconButton size="small" onClick={handleToolbarToggle}>
             <TerminalIcon
               fontSize="small"
@@ -230,6 +239,9 @@ export default function BottomActionBar() {
           ))}
         </Box>
       </Drawer>
+
+      {/* Persistent global Agent Chat Drawer */}
+      <AgentChatDrawer open={agentOpen} onClose={() => setAgentOpen(false)} />
     </>
   );
 }

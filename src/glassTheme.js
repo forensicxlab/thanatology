@@ -1,32 +1,48 @@
 // glassTheme.js
 import { createTheme } from "@mui/material/styles";
 
+const apple = {
+  accentBlue: "#0A84FF",
+  accentGreen: "#30D158",
+  background: "#0b0c10",
+  backgroundElevated: "rgba(28, 28, 30, 0.72)",
+  surface: "rgba(44, 44, 46, 0.72)",
+  surfaceHeader: "rgba(58, 58, 60, 0.8)",
+  surfaceHover: "rgba(72, 72, 74, 0.85)",
+  textPrimary: "rgba(242, 242, 247, 0.95)",
+  textSecondary: "rgba(235, 235, 245, 0.6)",
+};
+
 const glass = {
   // Tweak these to taste
   blur: "14px",
-  bg: "rgba(255, 255, 255, 0.08)",
-  bgElevated: "rgba(255, 255, 255, 0.12)",
-  border: "1px solid rgba(255, 255, 255, 0.18)",
-  shadow: "0 10px 40px rgba(0, 0, 0, 0.35)",
+  bg: "rgba(44, 44, 46, 0.52)",
+  bgElevated: "rgba(58, 58, 60, 0.5)",
+  border: "1px solid rgba(255, 255, 255, 0.12)",
+  shadow: "0 10px 36px rgba(0, 0, 0, 0.45)",
   saturate: "140%",
 };
 
 export const glassTheme = createTheme({
   palette: {
     mode: "dark",
-    primary: { main: "#8AB4F8" },
-    secondary: { main: "#FFB1F3" },
+    primary: { main: apple.accentBlue },
+    secondary: { main: apple.accentGreen },
     background: {
-      default: "#0b0f14",
-      paper: "rgba(255,255,255,0.06)",
+      default: apple.background,
+      paper: apple.backgroundElevated,
     },
 
-    divider: "rgba(255,255,255,0.12)",
+    divider: "rgba(255,255,255,0.14)",
+    text: {
+      primary: apple.textPrimary,
+      secondary: apple.textSecondary,
+    },
   },
   shape: { borderRadius: 12 },
   typography: {
     fontFamily:
-      '"Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial',
+      '"SF Pro Text", "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif',
     h1: { fontWeight: 700, letterSpacing: "-0.02em" },
     h2: { fontWeight: 700, letterSpacing: "-0.02em" },
     h3: { fontWeight: 700, letterSpacing: "-0.02em" },
@@ -38,19 +54,19 @@ export const glassTheme = createTheme({
         root: {
           backdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
-          backgroundColor: "rgba(18, 22, 27, 0.75)", // darker translucent background
+          backgroundColor: apple.surface,
           border: glass.border,
           borderRadius: "16px",
           boxShadow: glass.shadow,
-          color: "rgba(255, 255, 255, 0.92)",
+          color: apple.textPrimary,
           transition: "background-color 0.3s ease, box-shadow 0.3s ease",
         },
 
         // Header
         columnHeaders: {
-          backgroundColor: "rgba(30, 36, 42, 0.85)", // darker header band
-          borderBottom: "1px solid rgba(255,255,255,0.15)",
-          color: "rgba(255, 255, 255, 0.95)",
+          backgroundColor: apple.surfaceHeader,
+          borderBottom: "1px solid rgba(255,255,255,0.16)",
+          color: apple.textPrimary,
           fontWeight: 600,
           backdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
@@ -58,9 +74,9 @@ export const glassTheme = createTheme({
 
         // Rows
         row: {
-          backgroundColor: "rgba(20, 24, 30, 0.65)",
+          backgroundColor: apple.surface,
           "&:hover": {
-            backgroundColor: "rgba(40, 48, 58, 0.85)",
+            backgroundColor: apple.surfaceHover,
           },
         },
 
@@ -71,8 +87,8 @@ export const glassTheme = createTheme({
 
         // Footer
         footerContainer: {
-          backgroundColor: "rgba(28, 32, 38, 0.85)",
-          borderTop: "1px solid rgba(255,255,255,0.12)",
+          backgroundColor: apple.surfaceHeader,
+          borderTop: "1px solid rgba(255,255,255,0.14)",
           backdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
         },
@@ -87,10 +103,10 @@ export const glassTheme = createTheme({
         html: { height: "100%" },
         body: {
           minHeight: "100%",
-          backgroundColor: "#0b0f14",
-          backgroundImage: `radial-gradient(1200px 800px at 10% 0%, rgba(138,180,248,0.12), transparent 60%),
-             radial-gradient(900px 600px at 90% 20%, rgba(255,177,243,0.10), transparent 60%),
-             radial-gradient(700px 500px at 50% 110%, rgba(0,255,194,0.08), transparent 60%),
+          backgroundColor: apple.background,
+          backgroundImage: `radial-gradient(1200px 800px at 8% 0%, rgba(10,132,255,0.16), transparent 60%),
+             radial-gradient(920px 620px at 92% 14%, rgba(48,209,88,0.12), transparent 62%),
+             radial-gradient(720px 520px at 50% 110%, rgba(94,92,230,0.08), transparent 62%),
              linear-gradient(transparent, transparent)`,
           backgroundAttachment: "fixed",
           WebkitFontSmoothing: "antialiased",
@@ -151,7 +167,7 @@ export const glassTheme = createTheme({
       styleOverrides: {
         root: {
           backgroundImage: "none",
-          backgroundColor: "rgba(10,12,16,0.4)",
+          backgroundColor: "rgba(28, 28, 30, 0.5)",
           backdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           borderBottom: glass.border,
@@ -179,7 +195,7 @@ export const glassTheme = createTheme({
     MuiMenu: {
       styleOverrides: {
         paper: {
-          backgroundColor: "rgba(20, 24, 31, 0.6)",
+          backgroundColor: "rgba(44, 44, 46, 0.72)",
           backdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(${glass.blur})`,
           border: glass.border,
@@ -190,7 +206,7 @@ export const glassTheme = createTheme({
     MuiModal: {
       styleOverrides: {
         root: { backdropFilter: "none" },
-        backdrop: { backgroundColor: "rgba(4,6,9,0.55)" },
+        backdrop: { backgroundColor: "rgba(0,0,0,0.55)" },
       },
     },
 
@@ -234,9 +250,9 @@ export const glassTheme = createTheme({
 
         // Secondary Fab style (slightly tinted)
         secondary: {
-          backgroundColor: "rgba(138,180,248,0.18)",
+          backgroundColor: "rgba(48,209,88,0.24)",
           "&:hover": {
-            backgroundColor: "rgba(138,180,248,0.25)",
+            backgroundColor: "rgba(48,209,88,0.32)",
           },
         },
 
@@ -325,19 +341,67 @@ export const glassTheme = createTheme({
     },
 
     MuiTextField: {
-      defaultProps: { variant: "outlined" },
+      defaultProps: { variant: "outlined", size: "small" },
+    },
+    MuiFormControl: {
+      defaultProps: { size: "small" },
     },
     MuiOutlinedInput: {
       styleOverrides: {
         root: {
-          backgroundColor: "rgba(255,255,255,0.06)",
+          backgroundColor: "rgba(58,58,60,0.4)",
           backdropFilter: `saturate(${glass.saturate}) blur(6px)`,
           WebkitBackdropFilter: `saturate(${glass.saturate}) blur(6px)`,
+          fontSize: "0.9rem",
           "& fieldset": { borderColor: "rgba(255,255,255,0.22)" },
           "&:hover fieldset": { borderColor: "rgba(255,255,255,0.34)" },
-          "&.Mui-focused fieldset": { borderColor: "#8AB4F8" },
+          "&.Mui-focused fieldset": { borderColor: apple.accentBlue },
+          "&.MuiInputBase-sizeSmall": {
+            minHeight: 34,
+          },
         },
-        input: { color: "rgba(255,255,255,0.92)" },
+        input: {
+          color: apple.textPrimary,
+          padding: "8px 10px",
+        },
+        inputSizeSmall: {
+          padding: "6px 10px",
+        },
+        inputMultiline: {
+          padding: 0,
+        },
+      },
+    },
+    MuiInputLabel: {
+      styleOverrides: {
+        root: {
+          fontSize: "0.85rem",
+        },
+      },
+    },
+    MuiSelect: {
+      styleOverrides: {
+        select: {
+          minHeight: "unset",
+          paddingTop: 8,
+          paddingBottom: 8,
+        },
+        selectSizeSmall: {
+          paddingTop: 6,
+          paddingBottom: 6,
+        },
+      },
+    },
+    MuiAutocomplete: {
+      defaultProps: {
+        size: "small",
+      },
+      styleOverrides: {
+        inputRoot: {
+          "& .MuiAutocomplete-input": {
+            minWidth: 0,
+          },
+        },
       },
     },
 

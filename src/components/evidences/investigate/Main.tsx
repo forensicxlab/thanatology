@@ -4,7 +4,6 @@ import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
 import { getEvidence } from "../../../dbutils/sqlite";
-import { useSnackbar } from "../../SnackbarProvider";
 import { useParams } from "react-router";
 
 import {
@@ -31,6 +30,7 @@ import Users from "./categories/users/Users";
 import Applications from "./categories/applications/Applications";
 import Media from "./categories/media/Media";
 import FileDataGrid from "./categories/files/FilesDataGrid";
+import { useEvidenceStore } from "../../../store/evidenceStore";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -67,7 +67,6 @@ function a11yProps(index: number) {
 }
 
 const InvestigateLinux: React.FC = () => {
-  const { display_message } = useSnackbar();
   const { id: evidence_id } = useParams<{ id: string }>();
   const [value, setValue] = React.useState(0);
   const [selectedPartition, setSelectedPartition] = useState<number | null>(
@@ -77,6 +76,8 @@ const InvestigateLinux: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { setActiveEvidence, clearActiveEvidence } = useEvidenceStore();
+
   const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
     setValue(newValue);
   };
@@ -84,6 +85,22 @@ const InvestigateLinux: React.FC = () => {
   const handlePartitionChanged = (newId: number | null) => {
     console.log("New partition selected:", newId);
     setSelectedPartition(newId);
+  };
+
+  const compactTabSx = {
+    fontSize: "0.72rem",
+    minHeight: 34,
+    minWidth: 84,
+    px: 1,
+    py: 0.25,
+    justifyContent: "left",
+    textTransform: "none",
+    "& .MuiTab-iconWrapper": {
+      marginRight: 0.75,
+      "& .MuiSvgIcon-root": {
+        fontSize: 18,
+      },
+    },
   };
 
   useEffect(() => {
@@ -109,7 +126,19 @@ const InvestigateLinux: React.FC = () => {
     };
 
     fetchEvidence();
-  }, [evidence_id]);
+
+    // Cleanup when leaving the evidence investigation page
+    return () => {
+      clearActiveEvidence();
+    };
+  }, [evidence_id, setActiveEvidence, clearActiveEvidence]);
+
+  // Synchronize global state when evidence is successfully fetched
+  useEffect(() => {
+    if (evidence) {
+      setActiveEvidence(`sqlite:evidences/${evidence.id}.db`, evidence.id);
+    }
+  }, [evidence, setActiveEvidence]);
 
   // Handle loading and error states
   if (loading) {
@@ -146,9 +175,16 @@ const InvestigateLinux: React.FC = () => {
         {selectedPartition ? (
           <>
             <Tabs
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
               sx={{
+                minHeight: 36,
                 "& .MuiTabs-indicator": {
                   backgroundColor: "success.main",
+                },
+                "& .MuiTabs-scrollButtons": {
+                  width: 28,
                 },
                 "& .MuiTab-root.Mui-selected": {
                   color: "inherit",
@@ -162,99 +198,63 @@ const InvestigateLinux: React.FC = () => {
                 iconPosition="start"
                 label="Summary"
                 {...a11yProps(0)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<List />}
                 iconPosition="start"
                 label="Files"
                 {...a11yProps(1)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<Settings />}
                 iconPosition="start"
                 label="System"
                 {...a11yProps(2)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<Hub />}
                 iconPosition="start"
                 label="Network"
                 {...a11yProps(3)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<Fingerprint />}
                 iconPosition="start"
                 label="Users"
                 {...a11yProps(4)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<PermMedia />}
                 iconPosition="start"
                 label="Multimedia"
                 {...a11yProps(5)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<Apps />}
                 iconPosition="start"
                 label="Applications"
                 {...a11yProps(6)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<Timeline />}
                 iconPosition="start"
                 label="Timeline"
                 {...a11yProps(7)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
               <Tab
                 icon={<BlurOn />}
                 iconPosition="start"
                 label="Explore"
                 {...a11yProps(8)}
-                sx={{
-                  fontSize: "0.75rem",
-                  minHeight: 0,
-                  justifyContent: "left",
-                }}
+                sx={compactTabSx}
               />
             </Tabs>
             <Box

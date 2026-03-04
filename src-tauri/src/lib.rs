@@ -1179,6 +1179,8 @@ pub fn run(init_migrations: Vec<Migration>) {
             has_pml_data,
             cancel_processing,
             reset_evidence,
+            modules::agents::investigate_with_agent,
+            modules::agents::search_files_for_mention,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

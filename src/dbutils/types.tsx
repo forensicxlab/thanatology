@@ -15,6 +15,7 @@ export interface Evidence {
   path: string;
   description: string;
   status: number;
+  db_path: string;
 }
 
 /* -------------------------------------------------------------------------

@@ -26,7 +26,7 @@ serde_yaml = "0.9"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-dialog = "2"
 
-exhume_body = "=0.5.2"
+exhume_body = "=0.5.3"
 #exhume_body = { path = "../../exhume_body" }
 exhume_partitions = { path = "../../exhume/members/exhume_partitions" }
 exhume_lvm = { path = "../../exhume/members/exhume_lvm" }
@@ -51,3 +51,6 @@ regex = "1.12.2"
 anyhow = "1.0.100"
 sha2 = "0.10.9"
 md-5 = "0.10.6"
+rig-core = "0.31.0"
+thiserror = "2.0.18"
+base64 = "0.22.1"
