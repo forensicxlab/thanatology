@@ -75,22 +75,26 @@ export default function WindowsEventsTimeliner({
   }, [gridFilterAppliedToChart]);
 
   return (
-    <Stack gap={2}>
+    <Stack sx={{
+      gap: 2
+    }}>
       <WindowsEventTimelineScatter
         evidenceId={evidenceId}
         partitionId={partitionId}
         onEventsFilterChange={setTimelineFilter}
         gridFilterModel={gridFilterAppliedToChart}
       />
-
       {gridHasPendingChanges && (
         <Stack
           direction="row"
-          gap={1}
-          justifyContent="center"
-          alignItems="center"
-        >
-          <Typography variant="caption" color="text.secondary">
+          sx={{
+            gap: 1,
+            justifyContent: "center",
+            alignItems: "center"
+          }}>
+          <Typography variant="caption" sx={{
+            color: "text.secondary"
+          }}>
             Grid filters changed. Apply them to refresh the timeline.
           </Typography>
           <Button
@@ -105,7 +109,6 @@ export default function WindowsEventsTimeliner({
           </Button>
         </Stack>
       )}
-
       <WindowsEventsDataGrid
         evidenceId={evidenceId}
         partitionId={partitionId}

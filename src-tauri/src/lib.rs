@@ -1,8 +1,10 @@
 use env_logger;
-use exhume_body::{Body, BodySlice};
-use exhume_filesystem::detected_fs::{detect_filesystem, DetectedFs};
+use exhume_body::Body;
+use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::Filesystem;
 use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use exhume_indexer::ensure_tables as ensure_evidence_tables;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
@@ -17,12 +19,22 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 pub mod modules;
 
 use exhume_artefacts::parsers::build_registry;
-use modules::th_artifacts::{extract_artefacts, identify_artefacts, parse_pe, get_pml_events_count, get_pml_events, has_pml_data, has_evtx_data};
+use modules::th_artifacts::{extract_artefacts, identify_artefacts, parse_pe, has_pml_data, has_evtx_data};
 use modules::th_evidences::create_case_with_evidence;
 use modules::th_filesystem::{
     get_fs_info, read_file_bytes, read_file_prefix, read_file_slice, read_file_slice_bytes,
     dump_file_to_disk, compute_hash,
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    pub provider: String,
+    pub api_key: String,
+    pub model: String,
+    pub enable_text_specialist: bool,
+    pub enable_image_specialist: bool,
+    pub enable_audio_specialist: bool,
+}
 
 use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
@@ -37,6 +49,34 @@ use std::{
     path::PathBuf,
 };
 use tauri_plugin_sql::Migration;
+use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, DialogExt};
+
+#[derive(Debug, Clone, Deserialize)]
+struct EvidenceImagePayload {
+    caption: String,
+    file_name: String,
+    mime_type: String,
+    source_kind: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvidenceImageResponse {
+    id: i64,
+    evidence_id: i64,
+    caption: String,
+    file_name: String,
+    mime_type: String,
+    source_kind: String,
+    created_at: String,
+    data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessingStatusPayload {
+    message: String,
+    status: i64,
+}
 
 fn as_sqlite_url(path_or_url: &str) -> String {
     if path_or_url.starts_with("sqlite:") {
@@ -72,90 +112,6 @@ async fn has_user_tables(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
     Ok(count > 0)
 }
 
-async fn copy_schema_from_main(
-    main_pool: &SqlitePool,
-    evidence_pool: &SqlitePool,
-) -> Result<(), sqlx::Error> {
-    // Tables
-    let table_rows = sqlx::query(
-        "SELECT sql FROM sqlite_master
-         WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-         ORDER BY name;",
-    )
-    .fetch_all(main_pool)
-    .await?;
-
-    for r in table_rows {
-        let sql: String = r.get("sql");
-        // If schema already exists, ignore "already exists" errors
-        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
-            let msg = format!("{e:?}");
-            if !msg.contains("already exists") {
-                return Err(e);
-            }
-        }
-    }
-
-    // Indexes
-    let index_rows = sqlx::query(
-        "SELECT sql FROM sqlite_master
-         WHERE type='index' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-         ORDER BY name;",
-    )
-    .fetch_all(main_pool)
-    .await?;
-
-    for r in index_rows {
-        let sql: String = r.get("sql");
-        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
-            let msg = format!("{e:?}");
-            if !msg.contains("already exists") {
-                return Err(e);
-            }
-        }
-    }
-
-    // Triggers
-    let trig_rows = sqlx::query(
-        "SELECT sql FROM sqlite_master
-         WHERE type='trigger' AND sql IS NOT NULL
-         ORDER BY name;",
-    )
-    .fetch_all(main_pool)
-    .await?;
-
-    for r in trig_rows {
-        let sql: String = r.get("sql");
-        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
-            let msg = format!("{e:?}");
-            if !msg.contains("already exists") {
-                return Err(e);
-            }
-        }
-    }
-
-    // Views (optional)
-    let view_rows = sqlx::query(
-        "SELECT sql FROM sqlite_master
-         WHERE type='view' AND sql IS NOT NULL
-         ORDER BY name;",
-    )
-    .fetch_all(main_pool)
-    .await?;
-
-    for r in view_rows {
-        let sql: String = r.get("sql");
-        if let Err(e) = sqlx::query(&sql).execute(evidence_pool).await {
-            let msg = format!("{e:?}");
-            if !msg.contains("already exists") {
-                return Err(e);
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn escape_sqlite_single_quotes(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -175,30 +131,16 @@ async fn copy_evidence_scoped_rows(
     evidence_pool: &SqlitePool,
     evidence_id: i64,
 ) -> Result<(), sqlx::Error> {
-    // 1) Find the case_id for this evidence in main DB
-    let case_id: i64 = sqlx::query_scalar("SELECT case_id FROM main_db.evidence WHERE id = ?;")
-        .bind(evidence_id)
-        .fetch_one(evidence_pool)
-        .await?;
+    // Copy the evidence row into the portable evidence DB.
+    sqlx::query(
+        "INSERT OR REPLACE INTO evidence (id, case_id, name, type, path, description, status)          SELECT id, case_id, name, type, path, description, status FROM main_db.evidence WHERE id = ?;",
+    )
+    .bind(evidence_id)
+    .execute(evidence_pool)
+    .await?;
 
-    // 2) Copy the parent case first (required for FK evidence.case_id -> cases.id)
-    sqlx::query("INSERT OR REPLACE INTO cases SELECT * FROM main_db.cases WHERE id = ?;")
-        .bind(case_id)
-        .execute(evidence_pool)
-        .await?;
-
-    // 3) Copy evidence row
-    sqlx::query("INSERT OR REPLACE INTO evidence SELECT * FROM main_db.evidence WHERE id = ?;")
-        .bind(evidence_id)
-        .execute(evidence_pool)
-        .await?;
-
-    // 4) Copy partitions for this evidence
-    for table in [
-        "mbr_partition_entries",
-        "gpt_partition_entries",
-        "logical_partition_entries",
-    ] {
+    // Copy portable partitions for this evidence.
+    for table in ["partitions"] {
         let del = format!("DELETE FROM {} WHERE evidence_id = ?;", table);
         let ins = format!(
             "INSERT OR REPLACE INTO {t} SELECT * FROM main_db.{t} WHERE evidence_id = ?;",
@@ -246,12 +188,36 @@ pub struct ProcessingState {
 }
 
 #[tauri::command]
-fn cancel_processing(evidence_id: i64, state: tauri::State<'_, ProcessingState>) {
+async fn cancel_processing(
+    evidence_id: i64,
+    state: tauri::State<'_, ProcessingState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     if let Ok(tokens) = state.tokens.lock() {
         if let Some(token) = tokens.get(&evidence_id) {
             token.store(true, Ordering::Relaxed);
+        } else {
+            return Err("No active processing task found for this evidence.".to_string());
         }
+    } else {
+        return Err("Failed to acquire state lock.".to_string());
     }
+
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
+    let main_db_path = format!("{}/thanatology.db", base_dir.display());
+
+    let main_pool = open_pool(&main_db_path)
+        .await
+        .map_err(|e| format!("Failed to open main DB: {}", e))?;
+
+    update_evidence_status(&main_pool, evidence_id, -2)
+        .await
+        .map_err(|e| format!("Failed to update evidence status: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -291,6 +257,130 @@ async fn reset_evidence(
 
     info!("Successfully reset evidence ID {}", evidence_id);
     Ok(())
+}
+
+#[tauri::command]
+async fn save_evidence_images(
+    evidence_id: i64,
+    images: Vec<EvidenceImagePayload>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if images.is_empty() {
+        return Ok(());
+    }
+
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
+    let main_db_path = format!("{}/thanatology.db", base_dir.display());
+
+    let pool = open_pool(&main_db_path)
+        .await
+        .map_err(|e| format!("Failed to open main DB: {}", e))?;
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
+    for image in images {
+        let caption = image.caption.trim();
+        if caption.is_empty() {
+            return Err("Each evidence image requires a caption.".to_string());
+        }
+
+        sqlx::query(
+            "INSERT INTO evidence_images (
+                evidence_id,
+                caption,
+                file_name,
+                mime_type,
+                source_kind,
+                data
+             ) VALUES (?, ?, ?, ?, ?, ?);",
+        )
+        .bind(evidence_id)
+        .bind(caption)
+        .bind(&image.file_name)
+        .bind(&image.mime_type)
+        .bind(&image.source_kind)
+        .bind(&image.bytes)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to save evidence image: {}", e))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit evidence images: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_evidence_images(
+    evidence_id: i64,
+    app: tauri::AppHandle,
+) -> Result<Vec<EvidenceImageResponse>, String> {
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
+    let main_db_path = format!("{}/thanatology.db", base_dir.display());
+
+    let pool = open_pool(&main_db_path)
+        .await
+        .map_err(|e| format!("Failed to open main DB: {}", e))?;
+
+    let rows = sqlx::query(
+        "SELECT id, evidence_id, caption, file_name, mime_type, source_kind, data, created_at
+         FROM evidence_images
+         WHERE evidence_id = ?
+         ORDER BY id",
+    )
+    .bind(evidence_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Failed to fetch evidence images: {}", e))?;
+
+    rows.into_iter()
+        .map(|row| {
+            let mime_type: String = row
+                .try_get("mime_type")
+                .map_err(|e| format!("Failed to decode mime type: {}", e))?;
+            let data: Vec<u8> = row
+                .try_get("data")
+                .map_err(|e| format!("Failed to decode evidence image data: {}", e))?;
+
+            Ok(EvidenceImageResponse {
+                id: row
+                    .try_get("id")
+                    .map_err(|e| format!("Failed to decode image id: {}", e))?,
+                evidence_id: row
+                    .try_get("evidence_id")
+                    .map_err(|e| format!("Failed to decode evidence id: {}", e))?,
+                caption: row
+                    .try_get("caption")
+                    .map_err(|e| format!("Failed to decode caption: {}", e))?,
+                file_name: row
+                    .try_get("file_name")
+                    .map_err(|e| format!("Failed to decode file name: {}", e))?,
+                mime_type: mime_type.clone(),
+                source_kind: row
+                    .try_get("source_kind")
+                    .map_err(|e| format!("Failed to decode source kind: {}", e))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(|e| format!("Failed to decode timestamp: {}", e))?,
+                data_url: format!(
+                    "data:{};base64,{}",
+                    mime_type,
+                    BASE64_STANDARD.encode(data)
+                ),
+            })
+        })
+        .collect()
 }
 
 /// Check if the evidence file exists at the given path.
@@ -336,7 +426,24 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
         None => return Err("Error: Overflow occurred when calculating partition size".to_string()),
     };
 
-    let fs = match detect_filesystem(&mut body, partition.first_byte_addr as u64, partition_size) {
+    let key_material = partition
+        .fvek
+        .as_deref()
+        .map(|hex| {
+            hex::decode(hex)
+                .map(|fvek| exhume_filesystem::detected_fs::KeyMaterial {
+                    bitlocker_fvek: Some(fvek),
+                })
+                .map_err(|e| format!("Invalid BitLocker FVEK: {}", e))
+        })
+        .transpose()?;
+
+    let fs = match detect_filesystem(
+        &mut body,
+        partition.first_byte_addr as u64,
+        partition_size,
+        key_material,
+    ) {
         Ok(_) => true,
         Err(err) => {
             return Err(format!(
@@ -355,7 +462,7 @@ fn detect_logical_filesystem(path: String) -> Result<String, String> {
     let size = std::fs::metadata(&path)
         .map_err(|e| format!("Failed to stat image: {}", e))?
         .len();
-    let fs = match detect_filesystem(&mut body, 0, size) {
+    let fs = match detect_filesystem(&mut body, 0, size, None) {
         Ok(fs) => fs,
         Err(err) => {
             return Err(format!(
@@ -385,7 +492,19 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
         None => return Err("Error: Overflow occurred when calculating partition size".to_string()),
     };
 
-    let fs = match detect_filesystem(&mut body, partition_start, partition_size) {
+    let key_material = partition
+        .fvek
+        .as_deref()
+        .map(|hex| {
+            hex::decode(hex)
+                .map(|fvek| exhume_filesystem::detected_fs::KeyMaterial {
+                    bitlocker_fvek: Some(fvek),
+                })
+                .map_err(|e| format!("Invalid BitLocker FVEK: {}", e))
+        })
+        .transpose()?;
+
+    let fs = match detect_filesystem(&mut body, partition_start, partition_size, key_material) {
         Ok(_) => true,
         Err(err) => {
             return Err(format!(
@@ -453,10 +572,10 @@ fn process_partitions(
             }
         };
 
-        // Initialize evidence DB schema once (copy from main)
+        // Initialize evidence DB schema once using the portable Exhume schema.
         match has_user_tables(&evidence_pool).await {
             Ok(false) => {
-                if let Err(err) = copy_schema_from_main(&main_pool, &evidence_pool).await {
+                if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
                     emit_progress_event(
                         &evidence_id,
                         ProgressMessageLevel::Main,
@@ -531,37 +650,28 @@ fn process_partitions(
         };
 
         let evidence_path: String = evidence_row.get("path");
+        let evidence_status: i64 = evidence_row.try_get("status").unwrap_or(0);
+        let actual_status = if evidence_status < 0 && evidence_status != -2 {
+            evidence_status.abs()
+        } else {
+            evidence_status
+        };
 
         // Sector size reference
         let body_for_info = Body::new(evidence_path.clone(), "auto");
         let sector_size_u64 = body_for_info.get_sector_size() as u64;
 
         // Load partitions FROM EVIDENCE DB (no shared locks with other evidences)
-        let mbr_rows = sqlx::query(
-            "SELECT id, first_byte_addr, size_sectors FROM mbr_partition_entries WHERE evidence_id = ?",
+        let mut partition_rows = sqlx::query(
+            "SELECT id, kind, first_byte_addr, size_sectors, sector_size, size_bytes, fvek FROM partitions WHERE evidence_id = ? ORDER BY id",
         )
         .bind(evidence_id)
         .fetch_all(&evidence_pool)
         .await
         .unwrap_or_default();
-
-        let gpt_rows = sqlx::query(
-            "SELECT id, first_byte_addr, size_sectors FROM gpt_partition_entries WHERE evidence_id = ?",
-        )
-        .bind(evidence_id)
-        .fetch_all(&evidence_pool)
-        .await
-        .unwrap_or_default();
-
-        let mut logical_rows =
-            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
-                .bind(evidence_id)
-                .fetch_all(&evidence_pool)
-                .await
-                .unwrap_or_default();
 
         // Create logical partition entry (in evidence DB) if none exist
-        if mbr_rows.is_empty() && gpt_rows.is_empty() && logical_rows.is_empty() {
+        if partition_rows.is_empty() {
             let file_len = match Body::new(evidence_path.clone(), "auto").seek(std::io::SeekFrom::End(0)) {
                 Ok(size) => size,
                 Err(err) => {
@@ -578,10 +688,18 @@ fn process_partitions(
                 }
             };
 
+            let size_sectors = if sector_size_u64 > 0 {
+                file_len / sector_size_u64
+            } else {
+                0
+            };
+
             if let Err(err) = sqlx::query(
-                "INSERT INTO logical_partition_entries (evidence_id, size) VALUES (?, ?)",
+                "INSERT INTO partitions (evidence_id, kind, first_byte_addr, size_sectors, sector_size, size_bytes) VALUES (?, 'logical', 0, ?, ?, ?)",
             )
             .bind(evidence_id)
+            .bind(size_sectors as i64)
+            .bind(sector_size_u64 as i64)
             .bind(file_len as i64)
             .execute(&evidence_pool)
             .await
@@ -598,12 +716,13 @@ fn process_partitions(
                 return;
             }
 
-            logical_rows =
-                sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
-                    .bind(evidence_id)
-                    .fetch_all(&evidence_pool)
-                    .await
-                    .unwrap_or_default();
+            partition_rows = sqlx::query(
+                "SELECT id, kind, first_byte_addr, size_sectors, sector_size, size_bytes, fvek FROM partitions WHERE evidence_id = ? ORDER BY id",
+            )
+            .bind(evidence_id)
+            .fetch_all(&evidence_pool)
+            .await
+            .unwrap_or_default();
         }
 
         struct WorkPartition {
@@ -612,53 +731,30 @@ fn process_partitions(
             size_sectors: u64,
             size_bytes: u64,
             kind: &'static str,
+            fvek: Option<String>,
         }
 
         let mut work: Vec<WorkPartition> = Vec::new();
 
-        for r in &mbr_rows {
+        for r in &partition_rows {
             let id: i64 = r.get("id");
+            let kind: String = r.get("kind");
             let fba: i64 = r.get("first_byte_addr");
-            let sz: i64 = r.get("size_sectors");
-            let ss = sz as u64;
+            let size_sectors: i64 = r.get("size_sectors");
+            let size_bytes: i64 = r.get("size_bytes");
+            let fvek: Option<String> = r.try_get("fvek").unwrap_or(None);
             work.push(WorkPartition {
                 id,
                 first_byte_addr: fba as u64,
-                size_sectors: ss,
-                size_bytes: ss.saturating_mul(sector_size_u64),
-                kind: "MBR",
-            });
-        }
-
-        for r in &gpt_rows {
-            let id: i64 = r.get("id");
-            let fba: i64 = r.get("first_byte_addr");
-            let sz: i64 = r.get("size_sectors");
-            let ss = sz as u64;
-            work.push(WorkPartition {
-                id,
-                first_byte_addr: fba as u64,
-                size_sectors: ss,
-                size_bytes: ss.saturating_mul(sector_size_u64),
-                kind: "GPT",
-            });
-        }
-
-        for r in &logical_rows {
-            let id: i64 = r.get("id");
-            let size: i64 = r.get("size");
-            let size_u64 = size as u64;
-            let size_sectors = if sector_size_u64 > 0 {
-                size_u64 / sector_size_u64
-            } else {
-                0
-            };
-            work.push(WorkPartition {
-                id,
-                first_byte_addr: 0,
-                size_sectors,
-                size_bytes: size_u64,
-                kind: "LOGICAL",
+                size_sectors: size_sectors as u64,
+                size_bytes: size_bytes as u64,
+                kind: match kind.as_str() {
+                    "mbr" => "MBR",
+                    "gpt" => "GPT",
+                    "folder" => "FOLDER",
+                    _ => "LOGICAL",
+                },
+                fvek,
             });
         }
 
@@ -683,117 +779,203 @@ fn process_partitions(
             tokens.insert(evidence_id, cancel_token.clone());
         }
 
-        for (idx, p) in work.iter().enumerate() {
-            if cancel_token.load(Ordering::Relaxed) {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Info,
-                    "Partition processing cancelled by user.",
-                    &app,
-                );
-                update_evidence_status(&main_pool, evidence_id, -1).await.ok();
-                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                    tokens.remove(&evidence_id);
-                }
-                return;
-            }
-
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Info,
-                format!("Indexing {} partition {}/{}", p.kind, idx + 1, total),
-                &app,
-            );
-
-            index_partition(
-                evidence_id,
-                p.id,
-                p.size_sectors,
-                p.first_byte_addr,
-                evidence_path.clone(),
-                &evidence_pool,
-                &app,
-            )
-            .await;
-        }
-
-        // Update main DB status for UI completion screen
-        if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Failed to update main evidence status to 3: {err:?}"),
-                &app,
-            );
-            return;
-        }
-
-        emit_progress_event(
-            &evidence_id,
-            ProgressMessageLevel::Main,
-            ProgressMessageType::Success,
-            "Successfully indexed all partitions.",
-            &app,
-        );
-
-        // Post-index modules (also writes to evidence DB)
-        for p in work {
-            if cancel_token.load(Ordering::Relaxed) {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Info,
-                    "Post-index processing cancelled by user.",
-                    &app,
-                );
-                update_evidence_status(&main_pool, evidence_id, -1).await.ok();
-                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                    tokens.remove(&evidence_id);
-                }
-                return;
-            }
-
-            let mut body = Body::new(evidence_path.clone(), "auto");
-
-            let bytes_len = match p.kind {
-                "LOGICAL" => p.size_bytes,
-                _ => p.size_sectors.saturating_mul(sector_size_u64),
-            };
-
-            let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len) {
-                Ok(fs) => fs,
-                Err(err) => {
+        if actual_status < 3 {
+            for (idx, p) in work.iter().enumerate() {
+                if cancel_token.load(Ordering::Relaxed) {
                     emit_progress_event(
                         &evidence_id,
                         ProgressMessageLevel::Main,
-                        ProgressMessageType::Error,
-                        format!(
-                            "Could not detect filesystem for {} partition (id {}): {}",
-                            p.kind, p.id, err
-                        ),
+                        ProgressMessageType::Info,
+                        "Partition processing cancelled by user.",
                         &app,
                     );
-                    continue;
+                    update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
                 }
-            };
 
-            identify_artefacts(evidence_id, p.id, &app, &evidence_pool).await;
-            let registry = build_registry();
-            extract_artefacts(evidence_id, p.id, &app, &evidence_pool, &mut fs, &registry).await;
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Info,
+                    format!("Indexing {} partition {}/{}", p.kind, idx + 1, total),
+                    &app,
+                );
+
+                index_partition(
+                    evidence_id,
+                    p.id,
+                    p.size_sectors,
+                    p.first_byte_addr,
+                    evidence_path.clone(),
+                    &evidence_pool,
+                    &app,
+                    Some(cancel_token.clone()),
+                )
+                .await;
+            }
+
+            // Update main DB status for UI completion screen
+            if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to update main evidence status to 3: {err:?}"),
+                    &app,
+                );
+                return;
+            }
+
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                "Successfully indexed all partitions.",
+                &app,
+            );
+        }
+
+        // Post-index file identification (writes to evidence DB)
+        if actual_status < 4 {
+            for p in &work {
+                if cancel_token.load(Ordering::Relaxed) {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Info,
+                        "File identification cancelled by user.",
+                        &app,
+                    );
+                    update_evidence_status(&main_pool, evidence_id, -3).await.ok();
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
+                }
+
+                let mut body = Body::new(evidence_path.clone(), "auto");
+
+                let bytes_len = match p.kind {
+                    "LOGICAL" => p.size_bytes,
+                    _ => p.size_sectors.saturating_mul(sector_size_u64),
+                };
+
+                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+
+                let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material) {
+                    Ok(fs) => fs,
+                    Err(err) => {
+                        emit_progress_event(
+                            &evidence_id,
+                            ProgressMessageLevel::Main,
+                            ProgressMessageType::Error,
+                            format!(
+                                "Could not detect filesystem for {} partition (id {}): {}",
+                                p.kind, p.id, err
+                            ),
+                            &app,
+                        );
+                        continue;
+                    }
+                };
+
+                identify_file_types(&mut fs, evidence_id, p.id, &app, evidence_pool.clone()).await;
+            }
 
             update_evidence_status(&evidence_pool, evidence_id, 4)
                 .await
                 .ok();
+        }
 
-            identify_file_types(&mut fs, evidence_id, p.id, &app, evidence_pool.clone()).await;
+        // Post-index artefact discovery and parsing (also writes to evidence DB)
+        if actual_status < 5 {
+            for p in &work {
+                if cancel_token.load(Ordering::Relaxed) {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Info,
+                        "Artefact identification cancelled by user.",
+                        &app,
+                    );
+                    update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
+                }
+
+                let mut body = Body::new(evidence_path.clone(), "auto");
+
+                let bytes_len = match p.kind {
+                    "LOGICAL" => p.size_bytes,
+                    _ => p.size_sectors.saturating_mul(sector_size_u64),
+                };
+
+                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+
+                if detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material).is_err() {
+                    continue;
+                }
+
+                identify_artefacts(evidence_id, p.id, &app, &evidence_pool).await;
+            }
+
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                ProcessingStatusPayload {
+                    message: "Artefact identification complete.".to_string(),
+                    status: 4,
+                },
+                &app,
+            );
+
+            let registry = build_registry();
+
+            for p in &work {
+                if cancel_token.load(Ordering::Relaxed) {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Info,
+                        "Artefact extraction cancelled by user.",
+                        &app,
+                    );
+                    update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
+                }
+
+                let mut body = Body::new(evidence_path.clone(), "auto");
+
+                let bytes_len = match p.kind {
+                    "LOGICAL" => p.size_bytes,
+                    _ => p.size_sectors.saturating_mul(sector_size_u64),
+                };
+
+                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+
+                let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material) {
+                    Ok(fs) => fs,
+                    Err(_) => continue,
+                };
+
+                extract_artefacts(evidence_id, p.id, &app, &evidence_pool, &mut fs, &registry, Some(cancel_token.clone())).await;
+            }
+
             update_evidence_status(&evidence_pool, evidence_id, 5)
                 .await
                 .ok();
         }
 
+        update_evidence_status(&main_pool, evidence_id, 5).await.ok();
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
             tokens.remove(&evidence_id);
         }
@@ -857,10 +1039,10 @@ fn process_folder(
             }
         };
 
-        // Initialize evidence DB schema once (copy from main)
+        // Initialize evidence DB schema once using the portable Exhume schema.
         match has_user_tables(&evidence_pool).await {
             Ok(false) => {
-                if let Err(err) = copy_schema_from_main(&main_pool, &evidence_pool).await {
+                if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
                     emit_progress_event(
                         &evidence_id,
                         ProgressMessageLevel::Main,
@@ -915,20 +1097,18 @@ fn process_folder(
         
          // Create logical partition entry (in evidence DB) if none exist
          // For folders, we treat it as one logical partition
-        let mut logical_rows =
-            sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
+        let mut partition_rows =
+            sqlx::query("SELECT id FROM partitions WHERE evidence_id = ? AND kind IN ('logical', 'folder') ORDER BY id")
                 .bind(evidence_id)
                 .fetch_all(&evidence_pool)
                 .await
                 .unwrap_or_default();
         
-        if logical_rows.is_empty() {
-             // Fake size or calculate it? 0 is fine for folder root usually or we can scan.
+        if partition_rows.is_empty() {
              if let Err(err) = sqlx::query(
-                "INSERT INTO logical_partition_entries (evidence_id, size) VALUES (?, ?)",
+                "INSERT INTO partitions (evidence_id, kind, first_byte_addr, size_sectors, sector_size, size_bytes) VALUES (?, 'folder', 0, 0, 0, 0)",
             )
             .bind(evidence_id)
-            .bind(0)
             .execute(&evidence_pool)
             .await
             {
@@ -943,15 +1123,15 @@ fn process_folder(
                 error!("{msg}");
                 return;
             }
-             logical_rows =
-                sqlx::query("SELECT id, size FROM logical_partition_entries WHERE evidence_id = ?")
+             partition_rows =
+                sqlx::query("SELECT id FROM partitions WHERE evidence_id = ? AND kind IN ('logical', 'folder') ORDER BY id")
                     .bind(evidence_id)
                     .fetch_all(&evidence_pool)
                     .await
                     .unwrap_or_default();
         }
         
-        let partition_id = logical_rows[0].get::<i64, _>("id");
+        let partition_id = partition_rows[0].get::<i64, _>("id");
 
         let cancel_token = Arc::new(AtomicBool::new(false));
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
@@ -981,7 +1161,7 @@ fn process_folder(
             &app,
         );
 
-        index_folder(evidence_id, partition_id, folder_path.clone(), &evidence_pool, &app).await;
+        index_folder(evidence_id, partition_id, folder_path.clone(), &evidence_pool, &app, Some(cancel_token.clone())).await;
         
         // Update main DB status for UI completion screen
         if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
@@ -1023,17 +1203,43 @@ fn process_folder(
         }
         
         let fs = exhume_filesystem::folder_impl::FolderFS::new(std::path::PathBuf::from(&folder_path));
-        let mut detected_fs: DetectedFs<BodySlice> = DetectedFs::Folder(fs);
+        let mut detected_fs: exhume_filesystem::detected_fs::DetectedFs<exhume_filesystem::detected_fs::ImageStream> = exhume_filesystem::detected_fs::DetectedFs::Folder(fs);
         
-        identify_artefacts(evidence_id, partition_id, &app, &evidence_pool).await;
-        let registry = build_registry();
-        extract_artefacts(evidence_id, partition_id, &app, &evidence_pool, &mut detected_fs, &registry).await;
-
+        identify_file_types(&mut detected_fs, evidence_id, partition_id, &app, evidence_pool.clone()).await;
         update_evidence_status(&evidence_pool, evidence_id, 4)
             .await
             .ok();
 
-        identify_file_types(&mut detected_fs, evidence_id, partition_id, &app, evidence_pool.clone()).await;
+        identify_artefacts(evidence_id, partition_id, &app, &evidence_pool).await;
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            ProcessingStatusPayload {
+                message: "Artefact identification complete.".to_string(),
+                status: 4,
+            },
+            &app,
+        );
+
+        if cancel_token.load(Ordering::Relaxed) {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Info,
+                "Artefact extraction cancelled by user.",
+                &app,
+            );
+            update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                tokens.remove(&evidence_id);
+            }
+            return;
+        }
+
+        let registry = build_registry();
+        extract_artefacts(evidence_id, partition_id, &app, &evidence_pool, &mut detected_fs, &registry, Some(cancel_token.clone())).await;
+
         update_evidence_status(&evidence_pool, evidence_id, 5)
             .await
             .ok();
@@ -1090,16 +1296,22 @@ async fn file_size(path: String) -> Result<u64, String> {
 }
 
 #[tauri::command]
-fn new_whiteboard(app: AppHandle) {
-    tauri::WebviewWindowBuilder::new(
-        &app,
-        "whiteboard",
-        tauri::WebviewUrl::App("escalidraw.html".into()),
-    )
-    .title("Whiteboard")
-    .maximized(true)
-    .build()
-    .unwrap();
+async fn new_whiteboard(app: AppHandle) -> Result<(), String> {
+    let label = "whiteboard";
+
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("escalidraw.html".into()))
+        .title("Whiteboard")
+        .maximized(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1123,12 +1335,41 @@ async fn new_fileviewer(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn new_shell(app: AppHandle) {
-    tauri::WebviewWindowBuilder::new(&app, "shell", tauri::WebviewUrl::App("shell.html".into()))
+async fn new_shell(app: AppHandle) -> Result<(), String> {
+    let label = "shell";
+
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("shell.html".into()))
         .title("Shell")
         .maximized(true)
         .build()
-        .unwrap();
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn new_leechcore(app: AppHandle) -> Result<(), String> {
+    let label = "leechcore";
+
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("leechcore.html".into()))
+        .title("LeechCore")
+        .maximized(true)
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1136,13 +1377,80 @@ pub fn run(init_migrations: Vec<Migration>) {
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .init();
-    tauri::Builder::default()
-        .manage(Arc::new(Mutex::new(None::<DetectedFs<BodySlice>>)))
+    let mut builder = tauri::Builder::default()
+        .manage(modules::th_filesystem::SharedState::default())
         .manage(ProcessingState {
             tokens: Mutex::new(HashMap::new()),
         })
+        .manage(modules::th_memory::MemoryExecutionState::default())
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                if window.label() != "main" {
+                    return;
+                }
+
+                let state_guard = window.state::<ProcessingState>();
+                let is_processing = if let Ok(tokens) = state_guard.tokens.lock() {
+                    !tokens.is_empty()
+                } else {
+                    false
+                };
+
+                if is_processing {
+                    api.prevent_close();
+                    let app_handle = window.app_handle().clone();
+                    window.dialog()
+                        .message("Evidences are currently being processed. Are you sure you want to exit? The current step will be saved and can be resumed later.")
+                        .title("Processing in Progress")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::OkCancelCustom("Exit".to_string(), "Cancel".to_string()))
+                        .show(move |result| {
+                            if result {
+                                let app_clone = app_handle.clone();
+
+                                // Hide main window to simulate immediate close
+                                if let Some(main_win) = app_clone.get_webview_window("main") {
+                                    let _ = main_win.hide();
+                                }
+
+                                // Trigger cancellation for all tasks and collect active evidence IDs
+                                let state_guard = app_clone.state::<ProcessingState>();
+                                let active_evidences: Vec<i64> = if let Ok(tokens) = state_guard.tokens.lock() {
+                                    for (_, token) in tokens.iter() {
+                                        token.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    tokens.keys().cloned().collect()
+                                } else {
+                                    Vec::new()
+                                };
+
+                                // Spawn a targeted task to force DB states to Stopped (-1) and exit immediately
+                                tauri::async_runtime::spawn(async move {
+                                    use tauri::Manager;
+                                    if let Ok(base_dir) = app_clone.path().app_local_data_dir() {
+                                        let main_db_path = format!("{}/thanatology.db", base_dir.display());
+                                        if let Ok(pool) = sqlx::SqlitePool::connect(&format!("sqlite:{}", main_db_path)).await {
+                                            for eid in active_evidences {
+                                                // Force status to "Stopped/Error" (-1)
+                                                let _ = sqlx::query("UPDATE evidence SET status = -1 WHERE id = ? AND status > 0 AND status < 3")
+                                                    .bind(eid)
+                                                    .execute(&pool)
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                    // Kill the app immediately instead of waiting for long operations to gracefully stop
+                                    app_clone.exit(0);
+                                });
+                            }
+                        });
+                }
+            }
+            _ => {}
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations("sqlite:thanatology.db", init_migrations)
@@ -1163,6 +1471,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             new_whiteboard,
             new_fileviewer,
             new_shell,
+            new_leechcore,
             read_chunk,
             file_size,
             read_file_slice,
@@ -1170,6 +1479,8 @@ pub fn run(init_migrations: Vec<Migration>) {
             read_file_slice_bytes,
             read_file_bytes,
             process_partitions,
+            modules::th_memory::discover_memory_dma,
+            modules::th_memory::run_memory_module,
             process_folder,
             detect_logical_filesystem,
             dump_file_to_disk,
@@ -1179,10 +1490,18 @@ pub fn run(init_migrations: Vec<Migration>) {
             has_pml_data,
             cancel_processing,
             reset_evidence,
+            save_evidence_images,
+            get_evidence_images,
             modules::agents::investigate_with_agent,
             modules::agents::search_files_for_mention,
-        ])
+        ]);
+
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

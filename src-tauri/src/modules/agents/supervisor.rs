@@ -3,6 +3,7 @@ use rig::{
     completion::{CompletionModel, Prompt},
 };
 use serde::{Deserialize, Serialize};
+use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -24,16 +25,27 @@ pub struct Report {
 
 pub struct Supervisor<M: CompletionModel> {
     pub agent: Agent<M>,
+    pub evidence_id: i64,
+    pub app: tauri::AppHandle,
 }
 
 impl<M: CompletionModel> Supervisor<M> {
-    pub fn new(agent: Agent<M>) -> Self {
-        Self { agent }
+    pub fn new(agent: Agent<M>, evidence_id: i64, app: tauri::AppHandle) -> Self {
+        Self { agent, evidence_id, app }
     }
 
     /// Entry point for an investigation. The supervisor takes a high-level task,
     /// and uses its Rig agent to determine the steps.
     pub async fn investigate(&self, task: InvestigationTask) -> Result<Report, String> {
+        
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::AgentThought,
+            format!("Starting investigation: {}", task.instruction),
+            &self.app,
+        );
+
         let mut history_block = String::new();
         if !task.history.is_empty() {
             history_block.push_str("=== Conversation History ===\n");
@@ -57,10 +69,26 @@ impl<M: CompletionModel> Supervisor<M> {
             task.instruction
         );
 
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::AgentThought,
+            "Analyzing evidence and thinking about next steps...".to_string(),
+            &self.app,
+        );
+
         let response = match self.agent.prompt(&prompt).max_turns(5).await {
             Ok(resp) => resp,
             Err(e) => return Err(format!("LLM error: {}", e)),
         };
+
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::AgentThought,
+            "Synthesizing final investigation report...".to_string(),
+            &self.app,
+        );
 
         // Attempt to parse the structured JSON from the LLM. 
         // If it returns markdown code blocks, strip them.

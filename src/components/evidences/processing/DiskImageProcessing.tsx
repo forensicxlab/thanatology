@@ -22,6 +22,7 @@ import {
 } from "../../../dbutils/sqlite";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnackbar } from "../../SnackbarProvider";
+import { useNavigate } from "react-router";
 
 interface DiskImageProcessingProps {
   evidence: Evidence;
@@ -33,10 +34,13 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   setEvidence,
 }) => {
   const { display_message } = useSnackbar();
+  const navigate = useNavigate();
 
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
   const [processing, setProcessing] = useState<boolean>(false);
+  const [artefactIdentificationCompleted, setArtefactIdentificationCompleted] =
+    useState(false);
 
   const [mainDbPath, setMainDbPath] = useState<string>("");
   const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
@@ -78,6 +82,10 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     fetchPartitions();
   }, [evidence, display_message]);
 
+  useEffect(() => {
+    setArtefactIdentificationCompleted(false);
+  }, [evidence.id]);
+
   async function fetchEvidence() {
     try {
       const fetchedEvidence: Evidence = await getEvidence(
@@ -92,7 +100,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   }
 
   useEffect(() => {
-    if (evidence.status === 2) setProcessing(true);
+    setProcessing(evidence.status >= 2 && evidence.status < 5);
     return;
   }, [display_message, evidence.status]);
 
@@ -128,11 +136,23 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     setProcessing(true);
     display_message("info", "Processing Started");
 
+
     try {
+      const aiConfig = {
+        provider: localStorage.getItem("aiProvider") || "ollama",
+        endpoint: localStorage.getItem("aiEndpoint") || "http://localhost:11434",
+        model: localStorage.getItem("aiModel") || "llama3.1:latest",
+        api_key: localStorage.getItem("aiApiKey") || "",
+        enable_image_specialist: localStorage.getItem("enableImageSpecialist") === "true",
+        enable_text_specialist: localStorage.getItem("enableTextSpecialist") === "true",
+        enable_audio_specialist: localStorage.getItem("enableAudioSpecialist") === "true",
+      };
+
       await invoke("process_partitions", {
         evidenceId: evidence.id,
         mainDbPath: mainDbPath,
         evidenceDbPath: evidenceDbPath,
+        aiConfig: aiConfig,
       });
     } catch (err) {
       console.error("Error invoking process_partitions", err);
@@ -144,19 +164,65 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     }
   };
 
-  // If processing is complete, display a dedicated completion screen
-  if (evidence.status === 3) {
+  const handleReviewEvidence = async () => {
+    try {
+      const exists: boolean = await invoke("check_evidence_exists", {
+        path: evidence.path,
+      });
+
+      if (!exists) {
+        display_message(
+          "error",
+          "The source evidence file is missing on disk. Please relink it manually.",
+        );
+        return;
+      }
+
+      navigate(`/evidences/investigate/${evidence.id}`);
+    } catch (err) {
+      display_message("error", `Error checking evidence: ${err}`);
+    }
+  };
+
+  const showCompletionScreen =
+    artefactIdentificationCompleted || evidence.status >= 5;
+
+  const processingTask =
+    evidence.status >= 2 && evidence.status < 5 ? (
+      <ProcessingTask
+        evidence={evidence}
+        onComplete={fetchEvidence}
+        onArtefactIdentificationComplete={() =>
+          setArtefactIdentificationCompleted(true)
+        }
+      />
+    ) : null;
+
+  if (showCompletionScreen) {
     return (
-      <Box sx={{ textAlign: "center", mt: 4 }}>
-        <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
-        <Typography variant="h5" gutterBottom>
-          Disk Indexing Completed
-        </Typography>
-        <Typography variant="body1">
-          The indexation process of the evidence is now completed. You can
-          already start your investigation while the other modules are running.
-        </Typography>
-      </Box>
+      <>
+        {evidence.status < 5 && processingTask && (
+          <Box sx={{ display: "none" }}>{processingTask}</Box>
+        )}
+        <Box sx={{ textAlign: "center", mt: 4 }}>
+          <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
+          <Typography variant="h5" gutterBottom>
+            {evidence.status >= 5
+              ? "Disk Indexing Completed"
+              : "Artefact Identification Completed"}
+          </Typography>
+          <Typography variant="body1">
+            {evidence.status >= 5
+              ? "The full processing pipeline is now completed. You can start or continue the investigation."
+              : "Known artefacts have been identified. You can start or continue the investigation while artefact extraction finishes in the background."}
+          </Typography>
+          <Box sx={{ mt: 3 }}>
+            <Button variant="contained" onClick={handleReviewEvidence}>
+              Review Evidence
+            </Button>
+          </Box>
+        </Box>
+      </>
     );
   }
 
@@ -192,12 +258,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
         </Paper>
       )}
 
-      {evidence.status === 2 && (
-        <ProcessingTask
-          evidence={evidence}
-          onComplete={fetchEvidence}
-        />
-      )}
+      {processingTask}
       <Box sx={{ textAlign: "center", mt: 2 }}>
         <Button
           variant="contained"

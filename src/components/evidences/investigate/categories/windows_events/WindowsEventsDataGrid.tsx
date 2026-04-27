@@ -78,7 +78,12 @@ function JsonDetailPanel({ row }: { row: any }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}>
         <Typography variant="subtitle2">Event JSON</Typography>
         <Tooltip title="Copy JSON">
           <IconButton size="small" onClick={copy}>
@@ -86,9 +91,7 @@ function JsonDetailPanel({ row }: { row: any }) {
           </IconButton>
         </Tooltip>
       </Stack>
-
       <Divider sx={{ my: 1 }} />
-
       <Paper
         variant="outlined"
         sx={{
@@ -152,7 +155,12 @@ export default function WindowsEventsDataGrid({
         flex: 1,
         minWidth: 220,
         renderCell: (p) => (
-          <Stack direction="row" gap={1} alignItems="center">
+          <Stack
+            direction="row"
+            sx={{
+              gap: 1,
+              alignItems: "center"
+            }}>
             <span>{String(p.value ?? "unknown")}</span>
             {p.row.provider_guid ? (
               <Tooltip title={String(p.row.provider_guid)} arrow>
@@ -271,10 +279,12 @@ export default function WindowsEventsDataGrid({
       {timelineFilter?.start != null && timelineFilter?.end != null && (
         <Stack
           direction="row"
-          alignItems="center"
-          gap={1}
-          sx={{ mb: 1, flexWrap: "wrap" }}
-        >
+          sx={{
+            alignItems: "center",
+            gap: 1,
+            mb: 1,
+            flexWrap: "wrap"
+          }}>
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Timeline filter:
           </Typography>
@@ -291,7 +301,6 @@ export default function WindowsEventsDataGrid({
           />
         </Stack>
       )}
-
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

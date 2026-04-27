@@ -75,7 +75,9 @@ export default function Timeliner({
   }, [gridFilterAppliedToChart]);
 
   return (
-    <Stack gap={2}>
+    <Stack sx={{
+      gap: 2
+    }}>
       <TimelineScatter
         evidenceId={evidenceId}
         partitionId={partitionId}
@@ -83,15 +85,17 @@ export default function Timeliner({
         // IMPORTANT: chart uses the APPLIED grid filters, not draft
         gridFilterModel={gridFilterAppliedToChart}
       />
-
       {gridHasPendingChanges && (
         <Stack
           direction="row"
-          gap={1}
-          justifyContent="center"
-          alignItems="center"
-        >
-          <Typography variant="caption" color="text.secondary">
+          sx={{
+            gap: 1,
+            justifyContent: "center",
+            alignItems: "center"
+          }}>
+          <Typography variant="caption" sx={{
+            color: "text.secondary"
+          }}>
             Grid filters changed. Apply them to refresh the timeline.
           </Typography>
           <Button
@@ -106,7 +110,6 @@ export default function Timeliner({
           </Button>
         </Stack>
       )}
-
       <FileDataGrid
         evidence_id={evidenceId}
         partition_id={partitionId}

@@ -10,27 +10,33 @@ import Button from "@mui/material/Button";
 import Select from "@mui/material/Select";
 import InputLabel from "@mui/material/InputLabel";
 import FormControl from "@mui/material/FormControl";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import LightModeIcon from "@mui/icons-material/LightMode";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useSnackbar } from "./SnackbarProvider";
+import { useThemeMode } from "../ThemeContext";
 
 const Item = styled(Paper)(({ theme }) => ({
-  backgroundColor: "#fff",
   ...theme.typography.body2,
   padding: theme.spacing(3),
   textAlign: "left",
   color: theme.palette.text.secondary,
-  ...theme.applyStyles("dark", {
-    backgroundColor: "#1A2027",
-  }),
 }));
 
 export default function Settings() {
   const { display_message } = useSnackbar();
+  const { themeMode, setThemeMode } = useThemeMode();
 
   // AI Configuration State
   const [aiProvider, setAiProvider] = useState("ollama");
   const [aiEndpoint, setAiEndpoint] = useState("http://localhost:11434");
   const [aiModel, setAiModel] = useState("llama3.1:latest");
   const [aiApiKey, setAiApiKey] = useState("");
+
+  const [enableImageSpecialist, setEnableImageSpecialist] = useState(false);
+  const [enableTextSpecialist, setEnableTextSpecialist] = useState(false);
+  const [enableAudioSpecialist, setEnableAudioSpecialist] = useState(false);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -45,19 +51,34 @@ export default function Settings() {
 
     const apiKey = localStorage.getItem("aiApiKey");
     if (apiKey) setAiApiKey(apiKey);
+
+    const imgSpec = localStorage.getItem("enableImageSpecialist");
+    if (imgSpec) setEnableImageSpecialist(imgSpec === "true");
+
+    const txtSpec = localStorage.getItem("enableTextSpecialist");
+    if (txtSpec) setEnableTextSpecialist(txtSpec === "true");
+
+    const audSpec = localStorage.getItem("enableAudioSpecialist");
+    if (audSpec) setEnableAudioSpecialist(audSpec === "true");
   }, []);
 
-  // Save to localStorage
   const handleSaveAIConfig = () => {
     localStorage.setItem("aiProvider", aiProvider);
     localStorage.setItem("aiEndpoint", aiEndpoint);
     localStorage.setItem("aiModel", aiModel);
     localStorage.setItem("aiApiKey", aiApiKey);
 
-    // Check if useSnackbar exists in the context
+    localStorage.setItem("enableImageSpecialist", enableImageSpecialist.toString());
+    localStorage.setItem("enableTextSpecialist", enableTextSpecialist.toString());
+    localStorage.setItem("enableAudioSpecialist", enableAudioSpecialist.toString());
+
     if (display_message) {
       display_message("success", "AI Configuration saved to browser storage.");
     }
+  };
+
+  const handleThemeChange = (_: React.MouseEvent<HTMLElement>, newMode: "light" | "dark" | null) => {
+    if (newMode) setThemeMode(newMode);
   };
 
   return (
@@ -68,7 +89,7 @@ export default function Settings() {
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, md: 8 }}>
           <Item>
-            <Typography variant="h6" gutterBottom color="text.primary">
+            <Typography variant="h6" gutterBottom sx={{ color: "text.primary" }}>
               AI Copilot Configuration
             </Typography>
             <Typography variant="body2" sx={{ mb: 3 }}>
@@ -140,11 +161,100 @@ export default function Settings() {
               </Button>
             </Box>
           </Item>
+
+          <Item sx={{ mt: 3 }}>
+            <Typography variant="h6" gutterBottom sx={{ color: "text.primary" }}>
+              Post-Processing AI Specialists
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 3 }}>
+              Enable these background agents to autonomously analyze extracted evidence files during indexation.
+            </Typography>
+
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <Box>
+                  <Typography variant="subtitle1">Image Specialist</Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Uses OpenAI Vision API to scan photos and graphics for relevant context.
+                  </Typography>
+                </Box>
+                <input
+                  type="checkbox"
+                  checked={enableImageSpecialist}
+                  onChange={(e) => setEnableImageSpecialist(e.target.checked)}
+                  style={{ transform: "scale(1.5)" }}
+                />
+              </Box>
+
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <Box>
+                  <Typography variant="subtitle1">Text Specialist</Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Scans configuration files, scripts, and pure text files for credentials or suspicious traits.
+                  </Typography>
+                </Box>
+                <input
+                  type="checkbox"
+                  checked={enableTextSpecialist}
+                  onChange={(e) => setEnableTextSpecialist(e.target.checked)}
+                  style={{ transform: "scale(1.5)" }}
+                />
+              </Box>
+
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <Box>
+                  <Typography variant="subtitle1">Audio Specialist</Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Uses OpenAI Whisper API to transcribe and score audio recordings.
+                  </Typography>
+                </Box>
+                <input
+                  type="checkbox"
+                  checked={enableAudioSpecialist}
+                  onChange={(e) => setEnableAudioSpecialist(e.target.checked)}
+                  style={{ transform: "scale(1.5)" }}
+                />
+              </Box>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleSaveAIConfig}
+                sx={{ alignSelf: "flex-start", mt: 1 }}
+              >
+                Save Settings
+              </Button>
+            </Box>
+          </Item>
         </Grid>
 
         <Grid size={{ xs: 12, md: 4 }}>
           <Item>
-            <Typography variant="h6" gutterBottom color="text.primary">
+            <Typography variant="h6" gutterBottom sx={{ color: "text.primary" }}>
+              Appearance
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              Choose the application colour theme.
+            </Typography>
+            <ToggleButtonGroup
+              value={themeMode}
+              exclusive
+              onChange={handleThemeChange}
+              aria-label="theme mode"
+              fullWidth
+            >
+              <ToggleButton value="light" aria-label="light mode">
+                <LightModeIcon sx={{ mr: 1, fontSize: 18 }} />
+                Light
+              </ToggleButton>
+              <ToggleButton value="dark" aria-label="dark mode">
+                <DarkModeIcon sx={{ mr: 1, fontSize: 18 }} />
+                Dark
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Item>
+
+          <Item sx={{ mt: 3 }}>
+            <Typography variant="h6" gutterBottom sx={{ color: "text.primary" }}>
               About
             </Typography>
             <Typography variant="body2">

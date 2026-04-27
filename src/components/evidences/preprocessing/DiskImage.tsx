@@ -13,6 +13,12 @@ import {
   ListItem,
   ListItemText,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  TextField,
+  DialogActions,
 } from "@mui/material";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import ComputerIcon from "@mui/icons-material/Computer";
@@ -89,6 +95,11 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
   const [finalInsertStatus, setFinalInsertStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
+
+  const [fvekPromptOpen, setFvekPromptOpen] = useState(false);
+  const [fvekInput, setFvekInput] = useState("");
+  const [pendingFvekPartitionIndex, setPendingFvekPartitionIndex] = useState<{ type: 'mbr' | 'gpt', index: number } | null>(null);
+  const [isRetryingWithFvek, setIsRetryingWithFvek] = useState(false);
 
   /* ---------------------------------------------------------------
    *  Partition selection callback
@@ -224,13 +235,47 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
         }
       }
 
+
       setPartitionReadResults(results);
-      if (!results.some((r) => r.success)) {
-        setCurrentError(
-          "None of the selected partitions were successfully read.",
-        );
+      if (!isRetryingWithFvek) {
+        // check if any errors mention BitLocker
+        const bitlockerErrors = results.filter(r => !r.success && r.message.toLowerCase().includes("bitlocker"));
+        if (bitlockerErrors.length > 0) {
+          // Find the first partition that failed due to BitLocker to prompt for FVEK
+          let found = false;
+          for (let i = 0; i < selectedMbrPartitions.length; i++) {
+            if (results[i] && !results[i].success && results[i].message.toLowerCase().includes("bitlocker")) {
+              setPendingFvekPartitionIndex({ type: 'mbr', index: i });
+              setFvekPromptOpen(true);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            for (let i = 0; i < selectedGptPartitions.length; i++) {
+              const resultIdx = selectedMbrPartitions.length + i;
+              if (results[resultIdx] && !results[resultIdx].success && results[resultIdx].message.toLowerCase().includes("bitlocker")) {
+                setPendingFvekPartitionIndex({ type: 'gpt', index: i });
+                setFvekPromptOpen(true);
+                break;
+              }
+            }
+          }
+        } else if (!results.some((r) => r.success)) {
+          setCurrentError("None of the selected partitions were successfully read.");
+        } else {
+          setCurrentError(null);
+        }
       } else {
-        setCurrentError(null);
+        setIsRetryingWithFvek(false);
+        const activeErrors = results.filter(r => !r.success && r.message.toLowerCase().includes("bitlocker"));
+        if (activeErrors.length > 0) {
+          setFvekPromptOpen(true);
+        } else if (!results.some((r) => r.success)) {
+          setCurrentError("None of the selected partitions were successfully read.");
+        } else {
+          setCurrentError(null);
+        }
       }
     })();
   }, [
@@ -239,7 +284,37 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
     selectedGptPartitions,
     partitionReadResults.length,
     evidenceData.path,
+    isRetryingWithFvek
   ]);
+
+  const handleFvekSubmit = () => {
+    if (pendingFvekPartitionIndex) {
+      if (pendingFvekPartitionIndex.type === 'mbr') {
+        const newMbr = [...selectedMbrPartitions];
+        newMbr[pendingFvekPartitionIndex.index].fvek = fvekInput;
+        setSelectedMbrPartitions(newMbr);
+      } else {
+        const newGpt = [...selectedGptPartitions];
+        newGpt[pendingFvekPartitionIndex.index].fvek = fvekInput;
+        setSelectedGptPartitions(newGpt);
+      }
+    }
+    setFvekPromptOpen(false);
+    setFvekInput("");
+    setPendingFvekPartitionIndex(null);
+    setPartitionReadResults([]);
+    setIsRetryingWithFvek(true);
+    setCurrentError(null);
+  };
+
+  const handleFvekCancel = () => {
+    setFvekPromptOpen(false);
+    setFvekInput("");
+    setPendingFvekPartitionIndex(null);
+    // We don't retry, just leave the error as is.
+    setCurrentError("BitLocker Decryption key required for one or more partitions.");
+  };
+
 
   /* ---------------------------------------------------------------
    *  Navigation buttons
@@ -451,7 +526,13 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
    * ------------------------------------------------------------- */
   if (finalInsertStatus === "loading") {
     return (
-      <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          flexDirection: "column",
+          mt: 2
+        }}>
         <CircularProgress size={40} />
         <Typography variant="body2" sx={{ mt: 1 }}>
           Saving preprocessing metadata…
@@ -462,12 +543,20 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
 
   if (finalInsertStatus === "success") {
     return (
-      <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          flexDirection: "column",
+          mt: 2
+        }}>
         <CheckCircleIcon fontSize="large" />
         <Typography variant="h6" sx={{ mt: 1 }}>
           Preprocessing metadata saved successfully!
         </Typography>
-        <Box mt={2}>
+        <Box sx={{
+          mt: 2
+        }}>
           <Button
             variant="contained"
             onClick={() => navigate(`/evidences/process/${evidenceData.id}`)}
@@ -485,7 +574,13 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
 
   if (finalInsertStatus === "error") {
     return (
-      <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          flexDirection: "column",
+          mt: 2
+        }}>
         <CancelIcon fontSize="large" color="error" />
         <Typography variant="h6" color="error" sx={{ mt: 1 }}>
           Error saving preprocessing metadata
@@ -493,7 +588,9 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
         <Typography variant="body2" sx={{ mt: 1 }}>
           Please check the logs or try again.
         </Typography>
-        <Box mt={2}>
+        <Box sx={{
+          mt: 2
+        }}>
           <Button
             variant="contained"
             onClick={() => setFinalInsertStatus("idle")}
@@ -579,6 +676,32 @@ const DiskImage: React.FC<DiskImageProps> = ({ database, evidenceData }) => {
           </Typography>
         </Box>
       )}
+
+      {/* BitLocker FVEK Dialog */}
+      <Dialog open={fvekPromptOpen} onClose={handleFvekCancel}>
+        <DialogTitle>BitLocker Detected</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            BitLocker encryption was detected on a selected partition. Please enter the Full Volume Encryption Key (FVEK) in hexadecimal format to decrypt it.
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="FVEK (Hexadecimal)"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={fvekInput}
+            onChange={(e) => setFvekInput(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleFvekCancel}>Skip</Button>
+          <Button onClick={handleFvekSubmit} variant="contained" disabled={!fvekInput}>
+            Decrypt & Retry
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -87,7 +87,9 @@ const FinalSummary: React.FC<FinalSummaryProps> = ({
                       <Typography
                         component="span"
                         variant="body2"
-                        color="text.primary"
+                        sx={{
+                          color: "text.primary"
+                        }}
                       >
                         {evidence.type}
                       </Typography>
@@ -96,7 +98,9 @@ const FinalSummary: React.FC<FinalSummaryProps> = ({
                       <Typography
                         component="span"
                         variant="body2"
-                        color="text.primary"
+                        sx={{
+                          color: "text.primary"
+                        }}
                       >
                         {evidence.path}
                       </Typography>
@@ -107,7 +111,9 @@ const FinalSummary: React.FC<FinalSummaryProps> = ({
             ))}
           </List>
         ) : (
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{
+            color: "text.secondary"
+          }}>
             No evidence provided.
           </Typography>
         )}

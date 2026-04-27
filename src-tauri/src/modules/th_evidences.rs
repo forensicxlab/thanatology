@@ -15,6 +15,17 @@ pub struct EvidenceInput {
     pub r#type: String, // 'type' is a Rust keyword
     pub path: String,
     pub description: String,
+    #[serde(default)]
+    pub images: Vec<EvidenceImageInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EvidenceImageInput {
+    pub caption: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub source_kind: String,
+    pub bytes: Vec<u8>,
 }
 
 #[tauri::command]
@@ -72,6 +83,39 @@ pub async fn create_case_with_evidence(
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("insert evidence error: {e}"))?;
+
+        let evidence_rec = sqlx::query_as::<_, (i64,)>("SELECT last_insert_rowid();")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("last_insert_rowid error: {e}"))?;
+        let evidence_id = evidence_rec.0;
+
+        for image in ev.images.iter() {
+            let caption = image.caption.trim();
+            if caption.is_empty() {
+                return Err("Each evidence image requires a caption.".to_string());
+            }
+
+            sqlx::query(
+                "INSERT INTO evidence_images (
+                    evidence_id,
+                    caption,
+                    file_name,
+                    mime_type,
+                    source_kind,
+                    data
+                 ) VALUES (?, ?, ?, ?, ?, ?);",
+            )
+            .bind(evidence_id)
+            .bind(caption)
+            .bind(&image.file_name)
+            .bind(&image.mime_type)
+            .bind(&image.source_kind)
+            .bind(&image.bytes)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("insert evidence image error: {e}"))?;
+        }
     }
 
     tx.commit()

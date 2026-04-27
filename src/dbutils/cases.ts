@@ -1,6 +1,7 @@
 // src/dbutils/tauriCommands.ts
 import { invoke } from "@tauri-apps/api/core";
 import { appLocalDataDir } from "@tauri-apps/api/path";
+import { EvidenceImageInput } from "./types";
 
 type CaseInput = {
   name: string;
@@ -13,6 +14,7 @@ type EvidenceInput = {
   type: string;
   path: string;
   description: string;
+  images?: EvidenceImageInput[];
 };
 
 export async function createCaseAndEvidences(

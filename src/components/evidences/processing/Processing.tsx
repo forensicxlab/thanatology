@@ -35,11 +35,12 @@ const Processing: React.FC = () => {
     <Box sx={{ flexGrow: 1 }}>
       {loading ? (
         <Box
-          display="flex"
-          justifyContent="center"
-          alignItems="center"
-          height="100vh"
-        >
+          sx={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "100vh"
+          }}>
           <CircularProgress />
         </Box>
       ) : (

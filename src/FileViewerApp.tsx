@@ -41,6 +41,7 @@ type FileOpenPayload = {
   evidenceId: number;
   partitionId: number;
   path: string;
+  evidenceRootPath?: string;
 };
 
 import dayjs from "dayjs";
@@ -49,6 +50,7 @@ import timezone from "dayjs/plugin/timezone";
 import SqliteViewer from "./components/SqliteViewer";
 import { invoke } from "@tauri-apps/api/core";
 import { getEvidenceDbPath } from "./dbutils/db";
+import { getEvidence } from "./dbutils/sqlite";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -82,6 +84,28 @@ const FileViewer: React.FC = () => {
   const [pmlData, setPmlData] = useState<boolean>(false);
   const [evtxData, setEvtxData] = useState<boolean>(false);
 
+  async function hydratePayload(
+    payload: FileOpenPayload,
+  ): Promise<FileOpenPayload> {
+    if (payload.evidenceRootPath) {
+      return payload;
+    }
+
+    try {
+      const evidence = await getEvidence(null, String(payload.evidenceId));
+      if (evidence?.type === "Folder" && typeof evidence.path === "string") {
+        return {
+          ...payload,
+          evidenceRootPath: evidence.path,
+        };
+      }
+    } catch (error) {
+      console.error("Failed to resolve evidence metadata for file viewer:", error);
+    }
+
+    return payload;
+  }
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -90,7 +114,9 @@ const FileViewer: React.FC = () => {
       const pendingPayloadStr = localStorage.getItem("pending_fileviewer_payload");
       if (pendingPayloadStr) {
         try {
-          const payload = JSON.parse(pendingPayloadStr) as FileOpenPayload;
+          const payload = await hydratePayload(
+            JSON.parse(pendingPayloadStr) as FileOpenPayload,
+          );
           setFile(payload);
           void checkIfSqlite(
             payload.Identifier,
@@ -98,6 +124,7 @@ const FileViewer: React.FC = () => {
             payload.fileId,
             payload.evidenceId,
             payload.partitionId,
+            payload.evidenceRootPath,
           );
           // Clear it so we don't accidentally load it again on refresh
           localStorage.removeItem("pending_fileviewer_payload");
@@ -108,15 +135,18 @@ const FileViewer: React.FC = () => {
 
       // 2. Set up listener for subsequent open requests
       unlisten = await listen<FileOpenPayload>("message", (event) => {
-        // console.log("File loaded:", event.payload);
-        setFile(event.payload);
-        void checkIfSqlite(
-          event.payload.Identifier,
-          event.payload.path,
-          event.payload.fileId,
-          event.payload.evidenceId,
-          event.payload.partitionId,
-        ); // Pass DB ID
+        void (async () => {
+          const payload = await hydratePayload(event.payload);
+          setFile(payload);
+          void checkIfSqlite(
+            payload.Identifier,
+            payload.path,
+            payload.fileId,
+            payload.evidenceId,
+            payload.partitionId,
+            payload.evidenceRootPath,
+          );
+        })();
       });
     })();
 
@@ -199,6 +229,7 @@ const FileViewer: React.FC = () => {
     dbId: number,
     evidenceId: number,
     partitionId: number,
+    evidenceRootPath?: string,
   ) => {
     try {
       // Read first 16 bytes for magic "SQLite format 3\0"
@@ -206,6 +237,7 @@ const FileViewer: React.FC = () => {
         fileId: fsId,
         length: 16,
         path: path,
+        rootPath: evidenceRootPath,
       });
       if (prefix.startsWith("SQLite format 3")) {
         setIsSqlite(true);
@@ -235,6 +267,7 @@ const FileViewer: React.FC = () => {
           fileId: file.Identifier,
           destinationPath: path,
           path: file.path,
+          rootPath: file.evidenceRootPath,
         });
         // Ideally show a snackbar here
       }
@@ -253,11 +286,13 @@ const FileViewer: React.FC = () => {
         fileId: file.Identifier,
         algorithm: "md5",
         path: file.path,
+        rootPath: file.evidenceRootPath,
       });
       const sha256 = await invoke<string>("compute_hash", {
         fileId: file.Identifier,
         algorithm: "sha256",
         path: file.path,
+        rootPath: file.evidenceRootPath,
       });
       setHashes({ md5, sha256 });
     } catch (err) {
@@ -268,7 +303,13 @@ const FileViewer: React.FC = () => {
   };
 
   return (
-    <Box height="100vh" display="flex" flexDirection="column" minHeight={0}>
+    <Box
+      sx={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0
+      }}>
       {/* Action toolbar */}
       <Paper
         elevation={0}
@@ -289,9 +330,13 @@ const FileViewer: React.FC = () => {
             Compute Hash
           </Button>
 
-          <Box flex={1} />
+          <Box sx={{
+            flex: 1
+          }} />
 
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack direction="row" spacing={1} sx={{
+            alignItems: "center"
+          }}>
             <Tooltip title={rightOpen ? "Hide panel" : "Show panel"}>
               <IconButton
                 size="small"
@@ -304,17 +349,23 @@ const FileViewer: React.FC = () => {
           </Stack>
         </Toolbar>
       </Paper>
-
       {/* Main content row */}
-      <Box display="flex" flex={1} minHeight={0} minWidth={0}>
+      <Box
+        sx={{
+          display: "flex",
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0
+        }}>
         {/* Left: main viewer */}
         <Box
-          flex={1}
-          minWidth={0}
-          display="flex"
-          flexDirection="column"
-          minHeight={0}
-        >
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0
+          }}>
           {/* Tabs */}
           <Paper
             elevation={0}
@@ -339,15 +390,26 @@ const FileViewer: React.FC = () => {
           </Paper>
 
           {/* Tab content */}
-          <Box flex={1} minHeight={0} minWidth={0} p={1}>
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              p: 1
+            }}>
             {tab === "raw" && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
-                <Box height="100%" minHeight={0}>
+                <Box
+                  sx={{
+                    height: "100%",
+                    minHeight: 0
+                  }}>
                   {file && (
                     <RawViewer
                       fileId={file.Identifier}
                       fileSize={file.fileSize}
                       path={file.path}
+                      rootPath={file.evidenceRootPath}
                       height={"100%"}
                       language="plaintext"
                       theme="vs-dark"
@@ -359,8 +421,18 @@ const FileViewer: React.FC = () => {
 
             {tab === "sqlite" && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
-                <Box height="100%" minHeight={0}>
-                  {file && <SqliteViewer fileId={file.Identifier} />}
+                <Box
+                  sx={{
+                    height: "100%",
+                    minHeight: 0
+                  }}>
+                  {file && (
+                    <SqliteViewer
+                      fileId={file.Identifier}
+                      path={file.path}
+                      rootPath={file.evidenceRootPath}
+                    />
+                  )}
                 </Box>
               </Paper>
             )}
@@ -383,17 +455,26 @@ const FileViewer: React.FC = () => {
 
             {tab === "hex" && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
-                <Box height="100%" minHeight={0}>
+                <Box
+                  sx={{
+                    height: "100%",
+                    minHeight: 0
+                  }}>
                   {file ? (
                     <HexViewerWindow
                       ref={hexRef}
                       fileId={file.Identifier}
                       fileSize={file.fileSize}
                       path={file.path}
+                      rootPath={file.evidenceRootPath}
                     />
                   ) : (
-                    <Box p={2}>
-                      <Typography variant="body2" color="text.secondary">
+                    <Box sx={{
+                      p: 2
+                    }}>
+                      <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                      }}>
                         No file loaded.
                       </Typography>
                     </Box>
@@ -404,7 +485,11 @@ const FileViewer: React.FC = () => {
 
             {tab === "artefacts" && evtxData && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
-                <Box height="100%" minHeight={0}>
+                <Box
+                  sx={{
+                    height: "100%",
+                    minHeight: 0
+                  }}>
                   {file ? (
                     <WindowsEventsTimeliner
                       evidenceId={file.evidenceId}
@@ -417,11 +502,15 @@ const FileViewer: React.FC = () => {
                     //   height="100%"
                     //   persistKeyPrefix="thanatology:grid:fileviewer:artefacts"
                     // />
-                    <Box p={2}>
-                      <Typography variant="body2" color="text.secondary">
+                    (<Box sx={{
+                      p: 2
+                    }}>
+                      <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                      }}>
                         No file loaded.
                       </Typography>
-                    </Box>
+                    </Box>)
                   )}
                 </Box>
               </Paper>
@@ -431,18 +520,29 @@ const FileViewer: React.FC = () => {
 
         {/* Right: closable panel */}
         <Collapse in={rightOpen} orientation="horizontal" unmountOnExit>
-          <Box display="flex" height="100%" minHeight={0}>
+          <Box
+            sx={{
+              display: "flex",
+              height: "100%",
+              minHeight: 0
+            }}>
             <Divider orientation="vertical" flexItem />
 
             <Box
-              width={RIGHT_PANEL_WIDTH}
-              minWidth={RIGHT_PANEL_WIDTH}
-              display="flex"
-              flexDirection="column"
-              minHeight={0}
-            >
+              sx={{
+                width: RIGHT_PANEL_WIDTH,
+                minWidth: RIGHT_PANEL_WIDTH,
+                display: "flex",
+                flexDirection: "column",
+                minHeight: 0
+              }}>
               {/* Metadata (top) */}
-              <Box flex={1} minHeight={0} p={1}>
+              <Box
+                sx={{
+                  flex: 1,
+                  minHeight: 0,
+                  p: 1
+                }}>
                 <Paper
                   variant="outlined"
                   sx={{ height: "100%", p: 2, minHeight: 0 }}
@@ -469,7 +569,12 @@ const FileViewer: React.FC = () => {
               <Divider flexItem />
 
               {/* AI prompt (bottom) */}
-              <Box flex={1} minHeight={0} p={1}>
+              <Box
+                sx={{
+                  flex: 1,
+                  minHeight: 0,
+                  p: 1
+                }}>
                 <Paper
                   variant="outlined"
                   sx={{ height: "100%", p: 2, minHeight: 0 }}
@@ -505,7 +610,12 @@ const FileViewer: React.FC = () => {
         <DialogTitle>File Hashes</DialogTitle>
         <DialogContent>
           {hashLoading ? (
-            <Box display="flex" justifyContent="center" p={3}>
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "center",
+                p: 3
+              }}>
               <CircularProgress />
             </Box>
           ) : (
@@ -513,18 +623,22 @@ const FileViewer: React.FC = () => {
               <TextField
                 label="MD5"
                 value={hashes.md5}
-                InputProps={{ readOnly: true }}
                 fullWidth
                 size="small"
                 variant="outlined"
+                slotProps={{
+                  input: { readOnly: true }
+                }}
               />
               <TextField
                 label="SHA256"
                 value={hashes.sha256}
-                InputProps={{ readOnly: true }}
                 fullWidth
                 size="small"
                 variant="outlined"
+                slotProps={{
+                  input: { readOnly: true }
+                }}
               />
             </Stack>
           )}

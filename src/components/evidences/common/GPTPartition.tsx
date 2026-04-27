@@ -17,7 +17,12 @@ const GPTPartition: React.FC<GPTPartitionProps> = ({ gptPartition, index }) => {
         borderLeft: "4px solid transparent",
       }}
     >
-      <Box display="flex" alignItems="center" mb={1}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          mb: 1
+        }}>
         <StorageIcon color="primary" sx={{ mr: 1 }} />
         {index ? (
           <Typography variant="subtitle1">Partition #{index + 1}</Typography>

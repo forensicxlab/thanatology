@@ -1,5 +1,6 @@
 {
   "bundle": {
-    "externalBin": ["binaries/bin-macos/PCILeech/pcileech"]
+    "externalBin": ["binaries/bin-macos/LeechCore/pcileech"],
+    "resources": ["binaries/bin-macos/LeechCore/runtime"]
   }
 }

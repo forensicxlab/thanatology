@@ -5,9 +5,6 @@ import {
   GridActionsCellItem,
   GridRowParams,
   GRID_DETAIL_PANEL_TOGGLE_FIELD,
-  useGridApiContext,
-  useGridSelector,
-  gridDimensionsSelector,
   useGridApiRef,
   GridRenderCellParams,
 } from "@mui/x-data-grid-pro";
@@ -39,10 +36,6 @@ interface ArtifactsProps {
 /* Detail-panel component                                              */
 /* ------------------------------------------------------------------ */
 function ArtifactDetailPanel({ row }: { row: ArtifactWithFile }) {
-  const apiRef = useGridApiContext();
-  const width = useGridSelector(apiRef, gridDimensionsSelector)
-    .viewportInnerSize.width;
-
   /* Pretty-print JSON metadata when possible */
   let pretty = row.metadata;
   try {
@@ -59,7 +52,7 @@ function ArtifactDetailPanel({ row }: { row: ArtifactWithFile }) {
         boxSizing: "border-box",
         position: "sticky",
         left: 0,
-        width,
+        width: "calc(var(--DataGrid-rowWidth) - var(--DataGrid-hasScrollY) * var(--DataGrid-scrollbarSize))",
       }}
       direction="column"
     >
@@ -364,11 +357,11 @@ const Artifacts: React.FC<ArtifactsProps> = ({
     [],
   );
 
-  const getDetailPanelHeight = useCallback(() => 500, []);
+  const getDetailPanelHeight = useCallback(() => 300, []);
 
   /* Render */
   return (
-    <Box sx={{ width: "100%" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
       <DataGridPro
         apiRef={apiRef}
         density="compact"
@@ -376,7 +369,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         rows={rows}
         getRowId={(r) => r.artifact_id}
         loading={loading}
-        rowHeight={50}
+        rowHeight={36}
         showToolbar
         disableRowSelectionOnClick
         pagination

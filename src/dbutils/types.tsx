@@ -16,6 +16,38 @@ export interface Evidence {
   description: string;
   status: number;
   db_path: string;
+  images?: EvidenceImageDraft[];
+}
+
+export type EvidenceImageSourceKind = "camera" | "file";
+
+export interface EvidenceImageDraft {
+  id: string;
+  caption: string;
+  file_name: string;
+  mime_type: string;
+  source_kind: EvidenceImageSourceKind;
+  bytes: number[];
+  preview_url: string;
+}
+
+export interface EvidenceImageInput {
+  caption: string;
+  file_name: string;
+  mime_type: string;
+  source_kind: EvidenceImageSourceKind;
+  bytes: number[];
+}
+
+export interface EvidenceImageRecord {
+  id: number;
+  evidence_id: number;
+  caption: string;
+  file_name: string;
+  mime_type: string;
+  source_kind: EvidenceImageSourceKind;
+  created_at: string;
+  data_url: string;
 }
 
 /* -------------------------------------------------------------------------
@@ -34,6 +66,7 @@ export interface MBRPartitionEntry {
   sector_size: number;
   first_byte_addr: number;
   description: string;
+  fvek?: string;
 }
 
 /** Master Boot Record sector */
@@ -64,6 +97,7 @@ export interface GPTPartitionEntry {
   attributes: number;
   description: string;
   partition_name: string;
+  fvek?: string;
 }
 
 export interface GPTHeader {
@@ -96,6 +130,7 @@ export interface LogicalPartitionEntry {
   size: number;
   /** optional short text for UI; add this column if you like */
   description?: string | null;
+  fvek?: string;
 }
 
 /* -------------------------  Combined view  --------------------------- */
@@ -131,6 +166,7 @@ export interface Module {
 export interface LogicalPartition {
   id: number;
   size: number;
+  fvek?: string;
 }
 
 /* --------------------------------  Workflows  ------------------------ */
@@ -172,10 +208,35 @@ export interface File {
   permissions: string | null;
   owner: string | null;
   group: string | null; // quoted in DB, must be renamed in TS
+  display?: string | null;
+  path_key: string;
+  parent_path_key: string | null;
+  depth: number;
+  is_dir: number;
   sig_name: string | null;
   sig_mime: string | null;
   sig_exts: string | null;
   metadata: string; // JSON as string from DB
+}
+
+export type FileQueryScope =
+  | { kind: "root" }
+  | { kind: "directory"; pathKey: string }
+  | { kind: "file"; pathKey: string };
+
+export type FilesystemTreeItemKind = "root" | "directory" | "file";
+
+export interface FilesystemTreeItem {
+  id: string;
+  label: string;
+  pathKey: string;
+  parentPathKey: string | null;
+  absolutePath: string;
+  name: string;
+  ftype: string;
+  isDir: boolean;
+  childrenCount: number;
+  itemKind: FilesystemTreeItemKind;
 }
 
 export interface ArtifactWithFile {
@@ -257,3 +318,28 @@ export type WindowsEventCount = {
   ts: number; // epoch ms (bucket start)
   count: number;
 };
+
+/* -------------------------  Summary statistics  ---------------------- */
+
+export interface FileStats {
+  total_files: number;
+  total_dirs: number;
+  total_size: number;
+  earliest_ts: number | null;
+  latest_ts: number | null;
+}
+
+export interface MimeTypeCount {
+  mime_category: string;
+  count: number;
+}
+
+export interface ArtifactCategoryCount {
+  category: string;
+  count: number;
+}
+
+export interface TopSignature {
+  sig_name: string;
+  count: number;
+}

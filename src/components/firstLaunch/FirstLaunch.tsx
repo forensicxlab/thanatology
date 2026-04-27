@@ -84,14 +84,17 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
   return (
     <Container maxWidth="sm">
       <Box
-        display="flex"
-        flexDirection="column"
-        alignItems="center"
-        justifyContent="center"
-        minHeight="100vh"
-      >
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh"
+        }}>
         {/* Logo Placeholder */}
-        <Box mb={3}>
+        <Box sx={{
+          mb: 3
+        }}>
           <img src="/ThanatologyFull.svg" alt="Logo" width={500} />
         </Box>
 
@@ -105,7 +108,9 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
         {/* User Form */}
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>
           {/* Username Field */}
-          <Box mb={2}>
+          <Box sx={{
+            mb: 2
+          }}>
             <TextField
               fullWidth
               label="Choose a username"
@@ -133,14 +138,17 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
               <FormControlLabel
                 value="postgres"
                 control={<Radio />}
-                label="PostgreSQL - Create or join a Thanatology database and collaborate"
+                disabled
+                label="PostgreSQL - Create or join a Thanatology database and collaborate (Disabled for first release)"
               />
             </RadioGroup>
           </FormControl>
 
           {/* PostgreSQL Credentials (conditionally rendered) */}
           {dbType === "postgres" && (
-            <Box mt={2}>
+            <Box sx={{
+              mt: 2
+            }}>
               <TextField
                 fullWidth
                 label="Host"
@@ -186,7 +194,12 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
           )}
 
           {/* Submit Button */}
-          <Box mt={3} display="flex" justifyContent="center">
+          <Box
+            sx={{
+              mt: 3,
+              display: "flex",
+              justifyContent: "center"
+            }}>
             <Button type="submit" variant="contained" color="primary">
               Begin
             </Button>

@@ -15,6 +15,8 @@ import {
   PlayArrow,
   Stop,
   Visibility,
+  HourglassEmpty,
+  ErrorOutlined,
 } from "@mui/icons-material";
 import Tooltip from "@mui/material/Tooltip";
 import { useNavigate } from "react-router";
@@ -78,7 +80,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       flex: 1,
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Numbers style={{ marginRight: 8 }} />
+          <Numbers style={{ marginRight: 5, fontSize: 15 }} />
           EV-{params.value}
         </div>
       ),
@@ -89,7 +91,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       flex: 1,
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Badge style={{ marginRight: 8 }} />
+          <Badge style={{ marginRight: 5, fontSize: 15 }} />
           EV-{params.value}
         </div>
       ),
@@ -105,7 +107,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       flex: 1,
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Description style={{ marginRight: 8 }} />
+          <Description style={{ marginRight: 5, fontSize: 15 }} />
           {params.value ? params.value : "No description provided."}
         </div>
       ),
@@ -119,6 +121,14 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
         let statusText;
 
         switch (params.value) {
+          case -2:
+            statusColor = "orange";
+            statusText = "Stopping...";
+            break;
+          case -1:
+            statusColor = "red";
+            statusText = "Stopped / Error";
+            break;
           case 0:
             statusColor = "red";
             statusText = "Not processed";
@@ -144,7 +154,13 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               color: statusColor,
             }}
           >
-            <Info style={{ marginRight: 8 }} />
+            {params.value === -2 ? (
+              <HourglassEmpty style={{ marginRight: 5, fontSize: 15 }} />
+            ) : params.value === -1 ? (
+              <ErrorOutlined style={{ marginRight: 5, fontSize: 15 }} />
+            ) : (
+              <Info style={{ marginRight: 5, fontSize: 15 }} />
+            )}
             {statusText}
           </div>
         );
@@ -166,17 +182,26 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               />
             </Tooltip>,
           ];
-        } else if (status === 1) {
+        } else if (status === 1 || status === -1) {
           return [
             <Tooltip key="extract" title="Start Extraction">
               <GridActionsCellItem
                 icon={<PlayArrow />}
-                label="Start Extraction"
+                label={status === -1 ? "Resume Extraction" : "Start Extraction"}
                 onClick={() => {
                   navigate(`/evidences/process/${params.id}`);
                 }}
               />
             </Tooltip>,
+            ...(status === -1 ? [
+              <Tooltip key="restart" title="Restart processing">
+                <GridActionsCellItem
+                  icon={<RestartAlt />}
+                  label="Restart processing"
+                  onClick={() => handleRestart(params.row.id)}
+                />
+              </Tooltip>
+            ] : [])
           ];
         } else if (status === 2) {
           return [
@@ -184,8 +209,16 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               <GridActionsCellItem
                 icon={<Stop />}
                 label="Stop processing the evidence"
-                onClick={() => {
-                  console.log("TODO");
+                onClick={async () => {
+                  try {
+                    await invoke("cancel_processing", { evidenceId: params.row.id });
+                    display_message("info", "Stop requested, the process will complete its current task and stop.");
+                    if (onEvidenceChange) {
+                      onEvidenceChange();
+                    }
+                  } catch (e) {
+                    display_message("error", `Failed to stop processing: ${e}`);
+                  }
                 }}
               />
             </Tooltip>,
@@ -205,7 +238,26 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
               <GridActionsCellItem
                 icon={<PlayArrow />}
                 label="Investigate the evidence"
-                onClick={() => navigate(`/evidences/investigate/${params.id}`)}
+                onClick={async () => {
+                  try {
+                    const exists: boolean = await invoke("check_evidence_exists", {
+                      path: params.row.path,
+                    });
+                    if (exists) {
+                      navigate(`/evidences/investigate/${params.id}`);
+                    } else {
+                      display_message(
+                        "error",
+                        "The source evidence file is missing on disk. Please relink it manually."
+                      );
+                    }
+                  } catch (e) {
+                    display_message(
+                      "error",
+                      `Error checking evidence: ${e}`
+                    );
+                  }
+                }}
               />
             </Tooltip>,
             <Tooltip key="restart" title="Restart processing">
@@ -227,6 +279,9 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
       <DataGridPro
         rows={evidences}
         columns={columns}
+        density="compact"
+        rowHeight={30}
+        showToolbar
         checkboxSelection
         rowSelectionModel={selectionModel}
         onRowSelectionModelChange={handleRowSelectionModelChange}

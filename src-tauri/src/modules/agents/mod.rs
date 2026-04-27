@@ -1,6 +1,7 @@
 pub mod manager;
 pub mod tools;
 pub mod supervisor;
+pub mod specialists;
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -66,8 +67,15 @@ pub async fn investigate_with_agent(
     };
 
     // 4. Run the investigation via dynamic dispatch internally
+    use sqlx::Row;
+    let evidence_row = sqlx::query("SELECT id FROM evidence LIMIT 1")
+        .fetch_one(&evidence_pool)
+        .await
+        .map_err(|e| format!("Failed to read evidence ID: {}", e))?;
+    let evidence_id: i64 = evidence_row.get(0);
+
     let report = manager
-        .execute_investigation(&config, instruction, history, evidence_pool)
+        .execute_investigation(&config, instruction, history, evidence_pool, app, evidence_id)
         .await?;
 
     Ok(report)
@@ -75,7 +83,7 @@ pub async fn investigate_with_agent(
 
 #[derive(Serialize, Deserialize, sqlx::FromRow)]
 pub struct MentionFileResult {
-    pub file_id: i64,
+    pub identifier: i64,
     pub partition_id: i64,
     pub name: String,
     pub absolute_path: String,
@@ -97,11 +105,11 @@ pub async fn search_files_for_mention(
 
     // We use LIKE '%query%' to find matching file names quickly.
     // LIMIT 10 to keep the dropdown UI responsive and clean.
-    let sql = "SELECT identifier as file_id, partition_id, name, absolute_path FROM system_files WHERE name LIKE ? OR absolute_path LIKE ? LIMIT 10";
+    let _sql = "SELECT identifier, partition_id, name, absolute_path FROM system_files WHERE name LIKE ? OR absolute_path LIKE ? LIMIT 10";
     let filter = format!("%{}%", query);
 
     let rows = sqlx::query_as::<_, MentionFileResult>(
-        "SELECT identifier as file_id, partition_id, name, absolute_path FROM system_files WHERE name LIKE ? OR absolute_path LIKE ? LIMIT 10"
+        "SELECT identifier, partition_id, name, absolute_path FROM system_files WHERE name LIKE ? OR absolute_path LIKE ? LIMIT 10"
     )
     .bind(filter.clone())
     .bind(filter)

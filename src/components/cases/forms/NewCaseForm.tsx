@@ -58,6 +58,7 @@ const NewCaseForm: React.FC<NewCaseFormProps> = ({
         multiline
         rows={4}
       />
+      {/* Collaborators selection disabled for first release (PostgreSQL required) 
       <Autocomplete
         multiple
         options={availableCollaborators}
@@ -74,6 +75,7 @@ const NewCaseForm: React.FC<NewCaseFormProps> = ({
           />
         )}
       />
+      */}
     </Box>
   );
 };

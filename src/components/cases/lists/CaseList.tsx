@@ -69,7 +69,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       headerName: "Identifier",
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Numbers style={{ marginRight: 8 }} />
+          <Numbers style={{ marginRight: 5, fontSize: 15 }} />
           CASE-{params.value}
         </div>
       ),
@@ -80,7 +80,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       headerName: "Name",
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Work style={{ marginRight: 8 }} />
+          <Work style={{ marginRight: 5, fontSize: 15 }} />
           {params.value}
         </div>
       ),
@@ -91,7 +91,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       headerName: "Description",
       renderCell: (params: GridRenderCellParams) => (
         <div style={{ display: "flex", alignItems: "center" }}>
-          <Info style={{ marginRight: 8 }} />
+          <Info style={{ marginRight: 5, fontSize: 15 }} />
           {params.value}
         </div>
       ),
@@ -127,6 +127,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
     <Box sx={{ width: "100%" }}>
       <DataGridPro
         pagination
+        density="compact"
         rowHeight={30}
         rows={cases}
         columns={columns}

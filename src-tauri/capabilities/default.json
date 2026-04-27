@@ -2,13 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "whiteboard", "fileviewer"],
+  "windows": ["main", "whiteboard", "fileviewer", "leechcore"],
   "permissions": [
     "core:default",
+    "mcp-bridge:default",
     "opener:default",
     "sql:default",
     "sql:allow-execute",
     "dialog:default",
+    "macos-permissions:default",
     "pty:allow-spawn",
     "pty:default",
     "core:window:default",
@@ -19,7 +21,7 @@
   ],
   "allow": [
     {
-      "name": "binaries/bin-macos/PCILeech/pcileech-aarch64-apple-darwin",
+      "name": "binaries/bin-macos/LeechCore/pcileech-aarch64-apple-darwin",
       "sidecar": true,
       "args": [
         "--input",

@@ -6,7 +6,6 @@ import MenuItem from "@mui/material/MenuItem";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import CircularProgress from "@mui/material/CircularProgress";
-import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";
 import Divider from "@mui/material/Divider";
 import Button from "@mui/material/Button";
@@ -45,6 +44,11 @@ const BUCKET_MS: Record<Bucket, number> = {
   day: 86_400_000,
 };
 
+const SCATTER_ZOOM_INTERACTION_CONFIG = {
+  zoom: ["wheel", "pinch"] as const,
+  pan: ["drag", "wheel"] as const,
+};
+
 function WindowsEventsTooltip() {
   const item = useItemTooltip(); // null when closed
 
@@ -68,7 +72,9 @@ function WindowsEventsTooltip() {
                   {ts != null ? <UnixToISO8601UTC timestamp={ts} /> : "—"}
                 </Typography>
                 <Divider sx={{ my: 1 }} />
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" sx={{
+                  color: "text.secondary"
+                }}>
                   Click to filter the grid to this bucket.
                 </Typography>
               </Paper>
@@ -112,36 +118,6 @@ function stableStringifyFilterModel(m: GridFilterModel | undefined) {
 function makeRangeFilter(startMs: number | null, endMs: number | null) {
   if (!startMs || !endMs) return null;
   return { start: startMs, end: endMs } as TimelineWindowsEventFilter;
-}
-
-type ItemPoint = {
-  seriesId: string;
-  color: string;
-  value: { x: number | Date; y: number };
-};
-
-function TooltipContent(props: {
-  item?: ItemPoint | null;
-  items?: ItemPoint[];
-}) {
-  const item = props.item ?? props.items?.[0] ?? null;
-  if (!item) return null;
-
-  const x = item.value?.x;
-  const tsMs = x instanceof Date ? x.getTime() : x;
-  const count = item.value?.y ?? "";
-
-  return (
-    <Paper sx={{ p: 1.5, maxWidth: 380 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-        {count} event(s) — <UnixToISO8601UTC timestamp={tsMs} />
-      </Typography>
-      <Divider sx={{ my: 1 }} />
-      <Typography variant="body2" color="text.secondary">
-        Click to filter the grid to this bucket.
-      </Typography>
-    </Paper>
-  );
 }
 
 export default function WindowsEventTimelineScatter({
@@ -271,27 +247,29 @@ export default function WindowsEventTimelineScatter({
 
   const chartData = points.map((p, idx) => ({
     id: idx,
-    // give the chart a Date for time scale
-    x: new Date(p.x),
+    x: p.x,
     y: p.y,
-    // keep ms around for tooltip/click logic if you want
-    xMs: p.x,
   }));
+
+  const hasChartData = chartData.length > 0;
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Stack gap={2}>
+      <Stack sx={{
+        gap: 2
+      }}>
         <Typography variant="h6" sx={{ alignSelf: "center" }}>
           Windows Events Timeline (count over time)
         </Typography>
 
         <Stack
           direction={{ xs: "column", sm: "row" }}
-          gap={2}
-          alignItems={{ xs: "stretch", sm: "center" }}
-          justifyContent="center"
-          sx={{ flexWrap: "wrap" }}
-        >
+          sx={{
+            gap: 2,
+            alignItems: { xs: "stretch", sm: "center" },
+            justifyContent: "center",
+            flexWrap: "wrap"
+          }}>
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="bucket-select-label">Bucket</InputLabel>
             <Select
@@ -317,7 +295,12 @@ export default function WindowsEventTimelineScatter({
             disabled={loading}
           />
 
-          <Stack direction="row" gap={1} alignItems="center">
+          <Stack
+            direction="row"
+            sx={{
+              gap: 1,
+              alignItems: "center"
+            }}>
             <Button
               variant="contained"
               size="small"
@@ -357,18 +340,32 @@ export default function WindowsEventTimelineScatter({
           </Typography>
         ) : loading ? (
           <Stack
-            alignItems="center"
-            justifyContent="center"
-            sx={{ height: 520 }}
-          >
+            sx={{
+              alignItems: "center",
+              justifyContent: "center",
+              height: 520
+            }}>
             <CircularProgress />
             <Typography variant="body2" sx={{ mt: 1 }}>
               Loading data…
             </Typography>
           </Stack>
+        ) : !hasChartData ? (
+          <Stack
+            sx={{
+              alignItems: "center",
+              justifyContent: "center",
+              height: 300,
+            }}
+          >
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              No Windows event data matched the current filters.
+            </Typography>
+          </Stack>
         ) : (
           <ScatterChartPro
             height={300}
+            zoomInteractionConfig={SCATTER_ZOOM_INTERACTION_CONFIG}
             xAxis={[
               {
                 id: "time",
@@ -391,10 +388,7 @@ export default function WindowsEventTimelineScatter({
                 data: chartData,
                 valueFormatter: (v) => {
                   if (!v) return "";
-                  const xVal = v.x as unknown as Date | number;
-                  const ms =
-                    xVal instanceof Date ? xVal.getTime() : Number(xVal);
-                  return `${v.y} event(s) — ${new Date(ms).toISOString()}`;
+                  return `${v.y} event(s) — ${new Date(Number(v.x)).toISOString()}`;
                 },
               },
             ]}

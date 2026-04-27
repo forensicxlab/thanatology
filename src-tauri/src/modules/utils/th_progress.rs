@@ -6,6 +6,10 @@ pub enum ProgressMessageType {
     Info,
     Error,
     Success,
+    Progress,
+    AgentThought,
+    AgentToolCall,
+    AgentToolResult,
 }
 
 #[derive(Debug)]
@@ -20,6 +24,10 @@ impl ProgressMessageType {
             ProgressMessageType::Info => "info",
             ProgressMessageType::Error => "error",
             ProgressMessageType::Success => "success",
+            ProgressMessageType::Progress => "progress",
+            ProgressMessageType::AgentThought => "agentthought",
+            ProgressMessageType::AgentToolCall => "agenttoolcall",
+            ProgressMessageType::AgentToolResult => "agenttoolresult",
         }
     }
 }

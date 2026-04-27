@@ -15,18 +15,20 @@ pub struct ExtractFileError {
     pub message: String,
 }
 
-use exhume_body::{Body, BodySlice};
+use exhume_body::Body;
 use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::filesystem::Filesystem;
 
 /// A tool to extract a file or read its metadata using the natively linked exhume crates.
 pub struct ExhumeExtractionTool {
     pub evidence_pool: sqlx::SqlitePool,
+    pub app: tauri::AppHandle,
+    pub evidence_id: i64,
 }
 
 impl ExhumeExtractionTool {
-    pub fn new(evidence_pool: sqlx::SqlitePool) -> Self {
-        Self { evidence_pool }
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Self {
+        Self { evidence_pool, app, evidence_id }
     }
 }
 
@@ -46,7 +48,7 @@ impl Tool for ExhumeExtractionTool {
                 "properties": {
                     "file_id": {
                         "type": "integer",
-                        "description": "The unique 'identifier' integer of the file on the partition to extract. (Retrieved from the system_files table)"
+                        "description": "The filesystem identifier integer of the file on the partition. (Retrieved from system_files.identifier)"
                     },
                     "partition_id": {
                         "type": "integer",
@@ -59,9 +61,19 @@ impl Tool for ExhumeExtractionTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::AgentToolCall,
+            format!("Extracting file content (id: {})", args.file_id),
+            &self.app,
+        );
+
         use sqlx::Row;
         
-        let evidence_row = sqlx::query("SELECT type, path FROM evidence LIMIT 1")
+        let evidence_row = sqlx::query("SELECT type, path FROM evidence WHERE id = ? LIMIT 1")
+            .bind(self.evidence_id)
             .fetch_one(&self.evidence_pool)
             .await
             .map_err(|e| ExtractFileError { message: format!("Failed to read evidence metadata: {}", e) })?;
@@ -92,28 +104,24 @@ impl Tool for ExhumeExtractionTool {
         let mut body = Body::new(ev_path.clone(), "auto");
         let sector_size = body.get_sector_size() as u64;
 
-        if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors FROM mbr_partition_entries WHERE id = ?")
+        if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")
             .bind(args.partition_id)
             .fetch_one(&self.evidence_pool).await {
             first_byte_addr = Some(row.try_get::<i64, _>("first_byte_addr").unwrap_or(0) as u64);
-            size_bytes = Some((row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64).saturating_mul(sector_size));
-        } else if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors FROM gpt_partition_entries WHERE id = ?")
-            .bind(args.partition_id)
-            .fetch_one(&self.evidence_pool).await {
-            first_byte_addr = Some(row.try_get::<i64, _>("first_byte_addr").unwrap_or(0) as u64);
-            size_bytes = Some((row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64).saturating_mul(sector_size));
-        } else if let Ok(row) = sqlx::query("SELECT size FROM logical_partition_entries WHERE id = ?")
-            .bind(args.partition_id)
-            .fetch_one(&self.evidence_pool).await {
-            first_byte_addr = Some(0);
-            size_bytes = Some(row.try_get::<i64, _>("size").unwrap_or(0) as u64);
+            size_bytes = Some(
+                row.try_get::<i64, _>("size_bytes").unwrap_or_else(|_| {
+                    let size_sectors = row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64;
+                    let partition_sector_size = row.try_get::<i64, _>("sector_size").unwrap_or(sector_size as i64) as u64;
+                    size_sectors.saturating_mul(partition_sector_size) as i64
+                }) as u64,
+            );
         }
 
         if first_byte_addr.is_none() || size_bytes.is_none() {
             return Err(ExtractFileError { message: format!("Partition ID {} not found", args.partition_id) });
         }
 
-        let mut fs = detect_filesystem(&mut body, first_byte_addr.unwrap(), size_bytes.unwrap())
+        let mut fs = detect_filesystem(&mut body, first_byte_addr.unwrap(), size_bytes.unwrap(), None)
             .map_err(|e| ExtractFileError { message: format!("Filesystem detection failed: {}", e) })?;
 
         let file = fs.get_file(args.file_id)
@@ -141,11 +149,13 @@ pub struct QueryError {
 /// A tool allowing the LLM to query the evidence SQLite database.
 pub struct QuerySystemFilesTool {
     pub evidence_pool: sqlx::SqlitePool,
+    pub app: tauri::AppHandle,
+    pub evidence_id: i64,
 }
 
 impl QuerySystemFilesTool {
-    pub fn new(evidence_pool: sqlx::SqlitePool) -> Self {
-        Self { evidence_pool }
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Self {
+        Self { evidence_pool, app, evidence_id }
     }
 }
 
@@ -159,7 +169,7 @@ impl Tool for QuerySystemFilesTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Execute a read-only SQLite query against the evidence database to find files or artifacts. Tables include: files, entries_pml, entries_pe, timeline, artifacts. Example: SELECT name, absolute_path FROM files WHERE extension = 'exe' LIMIT 10".to_string(),
+            description: "Execute a read-only SQLite query against the evidence database. Primary portable tables are: system_files, partitions, artifacts, artifact_objects. Example: SELECT identifier, absolute_path, partition_id FROM system_files WHERE LOWER(name) LIKE '%.exe' LIMIT 10".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -174,6 +184,15 @@ impl Tool for QuerySystemFilesTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::AgentToolCall,
+            format!("Executing SQL query: {}", args.query),
+            &self.app,
+        );
+
         if !args.query.trim().to_uppercase().starts_with("SELECT") {
             return Err(QueryError {
                 message: "Only SELECT queries are allowed.".to_string(),
@@ -225,12 +244,14 @@ impl Tool for QuerySystemFilesTool {
 
 pub struct AnalyzeImageTool {
     pub evidence_pool: sqlx::SqlitePool,
+    pub app: tauri::AppHandle,
+    pub evidence_id: i64,
     pub api_key: String,
 }
 
 impl AnalyzeImageTool {
-    pub fn new(evidence_pool: sqlx::SqlitePool, api_key: String) -> Self {
-        Self { evidence_pool, api_key }
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64, api_key: String) -> Self {
+        Self { evidence_pool, app, evidence_id, api_key }
     }
 }
 
@@ -250,7 +271,7 @@ impl Tool for AnalyzeImageTool {
                 "properties": {
                     "file_id": {
                         "type": "integer",
-                        "description": "The unique 'identifier' integer of the image file. (Retrieved from system_files)"
+                        "description": "The filesystem identifier integer of the image file. (Retrieved from system_files.identifier)"
                     },
                     "partition_id": {
                         "type": "integer",
@@ -263,13 +284,23 @@ impl Tool for AnalyzeImageTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::AgentToolCall,
+            format!("Analyzing image content (id: {})", args.file_id),
+            &self.app,
+        );
+
         use sqlx::Row;
         use rig::client::CompletionClient;
         use rig::providers::openai;
         use rig::completion::Prompt;
         use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
         
-        let evidence_row = sqlx::query("SELECT type, path FROM evidence LIMIT 1")
+        let evidence_row = sqlx::query("SELECT type, path FROM evidence WHERE id = ? LIMIT 1")
+            .bind(self.evidence_id)
             .fetch_one(&self.evidence_pool)
             .await
             .map_err(|e| ExtractFileError { message: format!("Failed to read evidence metadata: {}", e) })?;
@@ -277,7 +308,7 @@ impl Tool for AnalyzeImageTool {
         let ev_type: String = evidence_row.try_get("type").unwrap_or_default();
         let ev_path: String = evidence_row.try_get("path").unwrap_or_default();
 
-        let mut content = Vec::new();
+        let content: Vec<u8>;
         let mut mime_type = "image/jpeg".to_string();
 
         // Also fetch file extension from system_files to set correct mime type
@@ -315,28 +346,24 @@ impl Tool for AnalyzeImageTool {
             let mut body = Body::new(ev_path.clone(), "auto");
             let sector_size = body.get_sector_size() as u64;
 
-            if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors FROM mbr_partition_entries WHERE id = ?")
+            if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")
                 .bind(args.partition_id)
                 .fetch_one(&self.evidence_pool).await {
                 first_byte_addr = Some(row.try_get::<i64, _>("first_byte_addr").unwrap_or(0) as u64);
-                size_bytes = Some((row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64).saturating_mul(sector_size));
-            } else if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors FROM gpt_partition_entries WHERE id = ?")
-                .bind(args.partition_id)
-                .fetch_one(&self.evidence_pool).await {
-                first_byte_addr = Some(row.try_get::<i64, _>("first_byte_addr").unwrap_or(0) as u64);
-                size_bytes = Some((row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64).saturating_mul(sector_size));
-            } else if let Ok(row) = sqlx::query("SELECT size FROM logical_partition_entries WHERE id = ?")
-                .bind(args.partition_id)
-                .fetch_one(&self.evidence_pool).await {
-                first_byte_addr = Some(0);
-                size_bytes = Some(row.try_get::<i64, _>("size").unwrap_or(0) as u64);
+                size_bytes = Some(
+                    row.try_get::<i64, _>("size_bytes").unwrap_or_else(|_| {
+                        let size_sectors = row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64;
+                        let partition_sector_size = row.try_get::<i64, _>("sector_size").unwrap_or(sector_size as i64) as u64;
+                        size_sectors.saturating_mul(partition_sector_size) as i64
+                    }) as u64,
+                );
             }
 
             if first_byte_addr.is_none() || size_bytes.is_none() {
                 return Err(ExtractFileError { message: format!("Partition ID {} not found", args.partition_id) });
             }
 
-            let mut fs = detect_filesystem(&mut body, first_byte_addr.unwrap(), size_bytes.unwrap())
+            let mut fs = detect_filesystem(&mut body, first_byte_addr.unwrap(), size_bytes.unwrap(), None)
                 .map_err(|e| ExtractFileError { message: format!("Filesystem detection failed: {}", e) })?;
 
             let file = fs.get_file(args.file_id)
@@ -401,11 +428,13 @@ pub struct QueryParsedArtifactsError {
 /// A tool to check if a specific system file has been successfully parsed by Thanatology's plugins.
 pub struct QueryParsedArtifactsTool {
     pub evidence_pool: sqlx::SqlitePool,
+    pub app: tauri::AppHandle,
+    pub evidence_id: i64,
 }
 
 impl QueryParsedArtifactsTool {
-    pub fn new(evidence_pool: sqlx::SqlitePool) -> Self {
-        Self { evidence_pool }
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Self {
+        Self { evidence_pool, app, evidence_id }
     }
 }
 
@@ -425,7 +454,7 @@ impl Tool for QueryParsedArtifactsTool {
                 "properties": {
                     "file_id": {
                         "type": "integer",
-                        "description": "The unique 'identifier' integer of the file."
+                        "description": "The filesystem identifier integer of the file."
                     },
                     "partition_id": {
                         "type": "integer",
@@ -438,6 +467,15 @@ impl Tool for QueryParsedArtifactsTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::AgentToolCall,
+            format!("Checking parsed artifacts for file_id: {}", args.file_id),
+            &self.app,
+        );
+
         use sqlx::Row;
 
         let rows = sqlx::query(
@@ -465,5 +503,220 @@ impl Tool for QueryParsedArtifactsTool {
 
         // Cap to 50k characters to prevent window blowout.
         Ok(concatenated_json.chars().take(50_000).collect())
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Query SQLite File Tool
+// -------------------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct QuerySqliteFileArgs {
+    pub file_id: u64,
+    pub partition_id: i64,
+    pub query: String,
+}
+
+#[derive(Serialize, Debug, Error)]
+#[error("QuerySqliteFileError: {message}")]
+pub struct QuerySqliteFileError {
+    pub message: String,
+}
+
+/// A tool to extract a specific SQLite database from the disk image and execute a read-only query against it.
+pub struct QuerySqliteFileTool {
+    pub evidence_pool: sqlx::SqlitePool,
+    pub app: tauri::AppHandle,
+    pub evidence_id: i64,
+}
+
+impl QuerySqliteFileTool {
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Self {
+        Self { evidence_pool, app, evidence_id }
+    }
+}
+
+impl Tool for QuerySqliteFileTool {
+    const NAME: &'static str = "query_sqlite_file";
+    
+    type Args = QuerySqliteFileArgs;
+    type Output = String;
+    type Error = QuerySqliteFileError;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "Extracts a SQLite database file (.db, .sqlite) from the disk image and executes a read-only SQL query against it. Example: SELECT name FROM sqlite_master WHERE type='table'".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_id": {
+                        "type": "integer",
+                        "description": "The filesystem identifier integer of the SQLite database file."
+                    },
+                    "partition_id": {
+                        "type": "integer",
+                        "description": "The ID of the partition containing the file."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The exact read-only SELECT query to execute against the extracted database."
+                    }
+                },
+                "required": ["file_id", "partition_id", "query"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+        emit_progress_event(
+            &self.evidence_id,
+            ProgressMessageLevel::Module,
+            ProgressMessageType::AgentToolCall,
+            format!("Querying SQLite file (id: {}): {}", args.file_id, args.query),
+            &self.app,
+        );
+
+        if !args.query.trim().to_uppercase().starts_with("SELECT") {
+            return Err(QuerySqliteFileError {
+                message: "Only SELECT queries are allowed.".to_string(),
+            });
+        }
+
+        use sqlx::{Row, Column, TypeInfo};
+        
+        let evidence_row = sqlx::query("SELECT type, path FROM evidence WHERE id = ? LIMIT 1")
+            .bind(self.evidence_id)
+            .fetch_one(&self.evidence_pool)
+            .await
+            .map_err(|e| QuerySqliteFileError { message: format!("Failed to read evidence metadata: {}", e) })?;
+
+        let ev_type: String = evidence_row.try_get("type").unwrap_or_default();
+        let ev_path: String = evidence_row.try_get("path").unwrap_or_default();
+
+        let file_row = sqlx::query("SELECT name, absolute_path, sig_mime, sig_name FROM system_files WHERE identifier = ? AND partition_id = ? LIMIT 1")
+            .bind(args.file_id as i64)
+            .bind(args.partition_id)
+            .fetch_one(&self.evidence_pool)
+            .await
+            .map_err(|_| QuerySqliteFileError { message: format!("Could not find file_id {} in DB", args.file_id) })?;
+
+        let name: String = file_row.try_get("name").unwrap_or_default();
+        let sig_mime: String = file_row.try_get("sig_mime").unwrap_or_default();
+        let sig_name: String = file_row.try_get("sig_name").unwrap_or_default();
+        
+        let mut is_db = false;
+        let p_name = name.to_lowercase();
+        if p_name.ends_with(".db") || p_name.ends_with(".sqlite") || p_name.ends_with(".sqlite3") {
+            is_db = true;
+        }
+        if sig_mime.to_lowercase().contains("sqlite") || sig_name.to_lowercase().contains("sqlite") {
+            is_db = true;
+        }
+        if !is_db {
+            return Err(QuerySqliteFileError { message: format!("File {} is not recognized as a SQLite Database by its signature or extension.", name) });
+        }
+
+        let content: Vec<u8>;
+        if ev_type == "Folder" {
+            let absolute_path: String = file_row.try_get("absolute_path").unwrap_or_default();
+            let full_path = std::path::Path::new(&ev_path).join(absolute_path.trim_start_matches('/'));
+            content = std::fs::read(&full_path).map_err(|e| QuerySqliteFileError { message: format!("Local FS Error reading {:?}: {}", full_path, e) })?;
+        } else {
+            let mut first_byte_addr: Option<u64> = None;
+            let mut size_bytes: Option<u64> = None;
+
+            let mut body = Body::new(ev_path.clone(), "auto");
+            let sector_size = body.get_sector_size() as u64;
+
+            if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")
+                .bind(args.partition_id)
+                .fetch_one(&self.evidence_pool).await {
+                first_byte_addr = Some(row.try_get::<i64, _>("first_byte_addr").unwrap_or(0) as u64);
+                size_bytes = Some(
+                    row.try_get::<i64, _>("size_bytes").unwrap_or_else(|_| {
+                        let size_sectors = row.try_get::<i64, _>("size_sectors").unwrap_or(0) as u64;
+                        let partition_sector_size = row.try_get::<i64, _>("sector_size").unwrap_or(sector_size as i64) as u64;
+                        size_sectors.saturating_mul(partition_sector_size) as i64
+                    }) as u64,
+                );
+            }
+
+            if first_byte_addr.is_none() || size_bytes.is_none() {
+                return Err(QuerySqliteFileError { message: format!("Partition ID {} not found", args.partition_id) });
+            }
+
+            let mut fs = detect_filesystem(&mut body, first_byte_addr.unwrap(), size_bytes.unwrap(), None)
+                .map_err(|e| QuerySqliteFileError { message: format!("Filesystem detection failed: {}", e) })?;
+
+            let file = fs.get_file(args.file_id)
+                .map_err(|e| QuerySqliteFileError { message: format!("File lookup failed for id {}: {}", args.file_id, e) })?;
+
+            content = fs.read_file_content(&file)
+                .map_err(|e| QuerySqliteFileError { message: format!("Failed to read file bytes: {}", e) })?;
+        }
+
+        let temp_path = std::env::temp_dir().join(format!("thanatology_sqlite_query_{}_{}.db", args.partition_id, args.file_id));
+        if let Err(e) = tokio::fs::write(&temp_path, &content).await {
+            return Err(QuerySqliteFileError { message: format!("Failed to write DB to temp file: {}", e) });
+        }
+
+        let db_url = format!("sqlite://{}", temp_path.to_string_lossy());
+        let temp_pool_res = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url).await;
+            
+        let temp_pool = match temp_pool_res {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(QuerySqliteFileError { message: format!("Failed to open extracted database: {}", e) });
+            }
+        };
+
+        let rows_res = sqlx::query(&args.query)
+            .fetch_all(&temp_pool)
+            .await;
+
+        temp_pool.close().await;
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        let rows = rows_res.map_err(|e| QuerySqliteFileError { message: format!("SQL Error: {}", e) })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let mut obj = serde_json::Map::new();
+            for col in row.columns() {
+                let name = col.name();
+                let ty = col.type_info().name();
+                let value = match ty {
+                    "TEXT" | "VARCHAR" => {
+                        let val: Option<String> = row.try_get(name).unwrap_or(None);
+                        serde_json::json!(val)
+                    },
+                    "INTEGER" | "BIGINT" => {
+                        let val: Option<i64> = row.try_get(name).unwrap_or(None);
+                        serde_json::json!(val)
+                    },
+                    "REAL" | "FLOAT" => {
+                        let val: Option<f64> = row.try_get(name).unwrap_or(None);
+                        serde_json::json!(val)
+                    },
+                    "BOOLEAN" => {
+                        let val: Option<bool> = row.try_get(name).unwrap_or(None);
+                        serde_json::json!(val)
+                    },
+                    _ => {
+                        let val: Option<String> = row.try_get(name).unwrap_or(None);
+                        serde_json::json!(val)
+                    }
+                };
+                obj.insert(name.to_string(), value);
+            }
+            results.push(serde_json::Value::Object(obj));
+        }
+
+        Ok(serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string()).chars().take(50_000).collect())
     }
 }

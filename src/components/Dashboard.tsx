@@ -24,7 +24,7 @@ const Dashboard = () => {
     {
       title: "New case",
       subtitle: "Create a new case",
-      icon: <NoteAddIcon sx={{ fontSize: 50, mb: 1 }} />,
+      icon: <NoteAddIcon sx={{ fontSize: 36, mb: 0.5 }} />,
       enabled: true,
       onClick: () => {
         navigate(`/case/new`);
@@ -33,7 +33,7 @@ const Dashboard = () => {
     {
       title: "Whiteboard",
       subtitle: "Open the Whiteboard",
-      icon: <ShapeLine sx={{ fontSize: 50, mb: 1 }} />,
+      icon: <ShapeLine sx={{ fontSize: 36, mb: 0.5 }} />,
       enabled: true,
       onClick: async () => {
         try {
@@ -46,7 +46,7 @@ const Dashboard = () => {
     {
       title: "FileViewer",
       subtitle: "Open the advanced file viewer",
-      icon: <Pageview sx={{ fontSize: 50, mb: 1 }} />,
+      icon: <Pageview sx={{ fontSize: 36, mb: 0.5 }} />,
       enabled: true,
       onClick: async () => {
         try {
@@ -57,15 +57,22 @@ const Dashboard = () => {
       },
     },
     {
-      title: "PCILeech",
-      subtitle: "coming soon",
-      icon: <DeveloperBoard sx={{ fontSize: 50, mb: 1 }} />,
-      enabled: false,
+      title: "LeechCore",
+      subtitle: "Validate DMA and run memory modules",
+      icon: <DeveloperBoard sx={{ fontSize: 36, mb: 0.5 }} />,
+      enabled: true,
+      onClick: async () => {
+        try {
+          await invoke("new_leechcore");
+        } catch (error) {
+          console.error("Error opening the LeechCore workspace:", error);
+        }
+      },
     },
     {
       title: "Malware Analysis",
       subtitle: "coming soon",
-      icon: <CenterFocusWeak sx={{ fontSize: 50, mb: 1 }} />,
+      icon: <CenterFocusWeak sx={{ fontSize: 36, mb: 0.5 }} />,
       enabled: false,
     },
   ];
@@ -80,39 +87,45 @@ const Dashboard = () => {
         alignItems: "center",
       }}
     >
-      <Grid container spacing={3} justifyContent="center">
+      <Grid container spacing={2} sx={{
+        justifyContent: "center"
+      }}>
         {tiles.map((tile, index) => (
           <Grid key={index}>
             <Card
               sx={{
-                width: 220,
+                width: 160,
                 textAlign: "center",
                 opacity: tile.enabled ? 1 : 0.5,
               }}
             >
               {tile.enabled ? (
                 <CardActionArea onClick={tile.onClick}>
-                  <CardContent>
+                  <CardContent sx={{ py: 1.5, px: 2 }}>
                     {tile.icon}
-                    <Typography variant="h6" component="div">
+                    <Typography variant="subtitle2" component="div" fontWeight={600}>
                       {tile.title}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" sx={{
+                      color: "text.secondary"
+                    }}>
                       {tile.subtitle}
                     </Typography>
                   </CardContent>
                 </CardActionArea>
               ) : (
                 // For disabled tiles, render without the CardActionArea
-                <Box sx={{ p: 2 }}>
+                (<Box sx={{ py: 1.5, px: 2 }}>
                   {tile.icon}
-                  <Typography variant="h6" component="div">
+                  <Typography variant="subtitle2" component="div" fontWeight={600}>
                     {tile.title}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="caption" sx={{
+                    color: "text.secondary"
+                  }}>
                     {tile.subtitle}
                   </Typography>
-                </Box>
+                </Box>)
               )}
             </Card>
           </Grid>

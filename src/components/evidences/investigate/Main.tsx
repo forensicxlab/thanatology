@@ -3,6 +3,9 @@ import { Evidence } from "../../../dbutils/types";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Typography from "@mui/material/Typography";
 import { getEvidence } from "../../../dbutils/sqlite";
 import { useParams } from "react-router";
 
@@ -16,20 +19,21 @@ import {
   PermMedia,
   Settings,
   Timeline,
+  Psychology,
 } from "@mui/icons-material";
 import Summary from "./categories/summary/Summary";
 import System from "./categories/system/System";
 import Timeliner from "./categories/timeline/Timeliner";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
-// optional if you want timezone support:
 import timezone from "dayjs/plugin/timezone";
 import Network from "./categories/network/Network";
 import { PartitionSelection } from "./PartitionSelection";
 import Users from "./categories/users/Users";
 import Applications from "./categories/applications/Applications";
 import Media from "./categories/media/Media";
-import FileDataGrid from "./categories/files/FilesDataGrid";
+import FilesExplorer from "./categories/files/FilesExplorer";
+import AiArtifacts from "./categories/ai_analysis/AiArtifacts";
 import { useEvidenceStore } from "../../../store/evidenceStore";
 
 interface TabPanelProps {
@@ -38,24 +42,44 @@ interface TabPanelProps {
   value: number;
 }
 
+const INVESTIGATION_LAYOUT_OFFSET = 84;
+
 dayjs.extend(utc);
 dayjs.extend(timezone);
-// optional default:
 dayjs.tz.setDefault("UTC");
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
 
   return (
-    <div
+    <Box
       role="tabpanel"
       hidden={value !== index}
       id={`simple-tabpanel-${index}`}
       aria-labelledby={`simple-tab-${index}`}
       {...other}
+      sx={{
+        display: value === index ? "flex" : "none",
+        flexDirection: "column",
+        flexGrow: 1,
+        minHeight: 0,
+      }}
     >
-      {value === index && <Box sx={{ p: 1 }}>{children}</Box>}
-    </div>
+      {value === index && (
+        <Box
+          sx={{
+            p: 1,
+            display: "flex",
+            flexDirection: "column",
+            flexGrow: 1,
+            minHeight: 0,
+            overflow: "auto",
+          }}
+        >
+          {children}
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -83,7 +107,6 @@ const InvestigateLinux: React.FC = () => {
   };
 
   const handlePartitionChanged = (newId: number | null) => {
-    console.log("New partition selected:", newId);
     setSelectedPartition(newId);
   };
 
@@ -127,20 +150,17 @@ const InvestigateLinux: React.FC = () => {
 
     fetchEvidence();
 
-    // Cleanup when leaving the evidence investigation page
     return () => {
       clearActiveEvidence();
     };
   }, [evidence_id, setActiveEvidence, clearActiveEvidence]);
 
-  // Synchronize global state when evidence is successfully fetched
   useEffect(() => {
     if (evidence) {
       setActiveEvidence(`sqlite:evidences/${evidence.id}.db`, evidence.id);
     }
   }, [evidence, setActiveEvidence]);
 
-  // Handle loading and error states
   if (loading) {
     return <div>Loading evidence details...</div>;
   }
@@ -151,35 +171,35 @@ const InvestigateLinux: React.FC = () => {
     return <div>No evidence found.</div>;
   }
 
-  // Always show the partition selection, but only show the main UI if partition selected:
   return (
-    <>
+    <Box
+      sx={{
+        height: `calc(100vh - ${INVESTIGATION_LAYOUT_OFFSET}px)`,
+        display: "grid",
+        gridTemplateRows: "minmax(0, 1fr) auto",
+        gap: 1.5,
+        minHeight: 0,
+      }}
+    >
       <Box
         sx={{
-          position: "fixed",
-          bottom: 30,
-          right: 10,
           display: "flex",
           flexDirection: "column",
-          gap: 1,
-          zIndex: 0,
+          minHeight: 0,
+          overflow: "hidden",
         }}
       >
-        <PartitionSelection
-          evidenceId={evidence.id}
-          onPartitionChange={handlePartitionChanged}
-        />
-      </Box>
-
-      <Box>
-        {selectedPartition ? (
+        {selectedPartition !== null ? (
           <>
             <Tabs
               variant="scrollable"
               scrollButtons="auto"
               allowScrollButtonsMobile
+              value={value}
+              onChange={handleChange}
               sx={{
                 minHeight: 36,
+                flexShrink: 0,
                 "& .MuiTabs-indicator": {
                   backgroundColor: "success.main",
                 },
@@ -190,8 +210,6 @@ const InvestigateLinux: React.FC = () => {
                   color: "inherit",
                 },
               }}
-              value={value}
-              onChange={handleChange}
             >
               <Tab
                 icon={<Home />}
@@ -256,11 +274,23 @@ const InvestigateLinux: React.FC = () => {
                 {...a11yProps(8)}
                 sx={compactTabSx}
               />
+              <Tab
+                icon={<Psychology />}
+                iconPosition="start"
+                label="AI Analysis"
+                {...a11yProps(9)}
+                sx={compactTabSx}
+              />
             </Tabs>
             <Box
               sx={{
                 width: "100%",
                 bgcolor: "background.paper",
+                display: "flex",
+                flexDirection: "column",
+                flexGrow: 1,
+                minHeight: 0,
+                overflow: "hidden",
               }}
             >
               <TabPanel value={value} index={0}>
@@ -268,10 +298,12 @@ const InvestigateLinux: React.FC = () => {
               </TabPanel>
 
               <TabPanel value={value} index={1}>
-                <FileDataGrid
-                  evidence_id={evidence.id}
-                  partition_id={selectedPartition}
-                />
+                <Box sx={{ flexGrow: 1, minHeight: 0 }}>
+                  <FilesExplorer
+                    evidenceId={evidence.id}
+                    partitionId={selectedPartition}
+                  />
+                </Box>
               </TabPanel>
 
               <TabPanel value={value} index={2}>
@@ -296,7 +328,7 @@ const InvestigateLinux: React.FC = () => {
                 <Media
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
-                ></Media>
+                />
               </TabPanel>
               <TabPanel value={value} index={6}>
                 <Applications
@@ -313,15 +345,61 @@ const InvestigateLinux: React.FC = () => {
               <TabPanel value={value} index={8}>
                 Explore content
               </TabPanel>
+              <TabPanel value={value} index={9}>
+                <AiArtifacts
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
+              </TabPanel>
             </Box>
           </>
         ) : (
-          <div style={{ margin: "1rem", color: "#666" }}>
-            Please select a partition to start investigate.
-          </div>
+          <Paper
+            variant="outlined"
+            sx={{
+              display: "grid",
+              placeItems: "center",
+              flexGrow: 1,
+              minHeight: 0,
+              px: 3,
+            }}
+          >
+            <Typography variant="body1" sx={{ color: "text.secondary" }}>
+              Please select a partition to start investigate.
+            </Typography>
+          </Paper>
         )}
       </Box>
-    </>
+      <Paper
+        variant="outlined"
+        sx={{
+          px: 1.5,
+          py: 1.25,
+          borderRadius: 2,
+          flexShrink: 0,
+        }}
+      >
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          sx={{
+            alignItems: { xs: "stretch", md: "center" },
+            justifyContent: "space-between"
+          }}>
+          <Box>
+            <Typography variant="subtitle2">Partition Scope</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              The active investigation view is constrained to the selected
+              partition.
+            </Typography>
+          </Box>
+          <PartitionSelection
+            evidenceId={evidence.id}
+            onPartitionChange={handlePartitionChanged}
+          />
+        </Stack>
+      </Paper>
+    </Box>
   );
 };
 

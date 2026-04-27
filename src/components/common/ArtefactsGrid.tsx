@@ -9,38 +9,23 @@ import {
   GridRowParams,
   DataGridProProps,
 } from "@mui/x-data-grid-pro";
-import {
-  Box,
-  Backdrop,
-  CircularProgress,
-  Typography,
-  Divider,
-} from "@mui/material";
+import { Box, CircularProgress, Typography, Divider } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import DownloadIcon from "@mui/icons-material/Download";
 import SendIcon from "@mui/icons-material/Send";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { emitTo } from "@tauri-apps/api/event";
 
 /* ---------- types ---------- */
 
 export interface BaseRow {
   id: number | string;
-  /** If present, the detail panel will render this key-value object */
   metadata?: Record<string, unknown>;
 }
 
 export interface ArtefactsGridProps<RowType extends BaseRow> {
-  /** Async loader that returns all rows */
   fetchRows: () => Promise<RowType[]>;
-  /** Column definitions for the grid */
   columns: GridColDef<RowType>[];
-  /** Optional container height (defaults to 80 vh) */
   height?: string | number;
-  /**
-   * Optional custom detail renderer. If omitted and `row.metadata`
-   * exists, the grid shows the default metadata panel. Returning
-   * `null` disables the panel for that row.
-   */
   renderDetailPanel?: (row: RowType) => React.ReactNode;
 }
 
@@ -56,45 +41,33 @@ function ArtefactsGrid<RowType extends BaseRow>({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  /* ---------- data fetch ---------- */
-
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        setRows(await fetchRows());
+        const data = await fetchRows();
+        if (!cancelled) setRows(data);
       } catch (err) {
+        if (!cancelled) setError("Failed to load artefacts.");
         console.error(err);
-        setError("Failed to load artefacts.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [fetchRows]);
 
-  /* ---------- master–detail helpers ---------- */
-
-  /** Default metadata panel (simple `<dl>`). */
   const defaultDetailPanel = useCallback(
     (row: RowType) =>
       row.metadata ? (
         <Box sx={{ p: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Metadata
-          </Typography>
+          <Typography variant="subtitle1" gutterBottom>Metadata</Typography>
           <Divider sx={{ mb: 1 }} />
           <Box component="dl" sx={{ m: 0 }}>
             {Object.entries(row.metadata).map(([k, v]) => (
-              <Box
-                key={k}
-                component="div"
-                sx={{ display: "flex", mb: 0.5, flexWrap: "wrap" }}
-              >
-                <Typography component="dt" sx={{ fontWeight: 600, mr: 1 }}>
-                  {k}:
-                </Typography>
-                <Typography component="dd" sx={{ m: 0 }}>
-                  {String(v)}
-                </Typography>
+              <Box key={k} sx={{ display: "flex", mb: 0.5, flexWrap: "wrap" }}>
+                <Typography component="dt" sx={{ fontWeight: 600, mr: 1 }}>{k}:</Typography>
+                <Typography component="dd" sx={{ m: 0 }}>{String(v)}</Typography>
               </Box>
             ))}
           </Box>
@@ -106,39 +79,27 @@ function ArtefactsGrid<RowType extends BaseRow>({
   const getDetailPanelContent = React.useCallback<
     NonNullable<DataGridProProps["getDetailPanelContent"]>
   >(
-    ({ row }) =>
-      renderDetailPanel ? renderDetailPanel(row) : defaultDetailPanel(row),
+    ({ row }) => renderDetailPanel ? renderDetailPanel(row) : defaultDetailPanel(row),
     [renderDetailPanel, defaultDetailPanel],
   );
 
-  /** Height resolver—return `"auto"` so the grid sizes itself. */
   const getDetailPanelHeight = useCallback<
-    NonNullable<
-      React.ComponentProps<typeof DataGridPro>["getDetailPanelHeight"]
-    >
+    NonNullable<React.ComponentProps<typeof DataGridPro>["getDetailPanelHeight"]>
   >(() => "auto" as const, []);
 
-  /* ---------- action handlers ---------- */
-
-  const handleView = (row: RowType) => {
-    // TODO: Replace with real view logic
+  const handleView = useCallback((row: RowType) => {
     console.log("View artefact:", row);
-  };
+  }, []);
 
-  const handleDownload = (row: RowType) => {
-    // TODO: Replace with real download logic
+  const handleDownload = useCallback((row: RowType) => {
     console.log("Download artefact:", row);
-  };
+  }, []);
 
-  const handleSend = (row: RowType) => {
-    // TODO: Replace with real send/share logic
-    console.log("Send artefact:", row);
+  const handleSend = useCallback((row: RowType) => {
     emitTo("fileviewer", "message", row);
-  };
+  }, []);
 
-  /* ---------- action-column definition ---------- */
-
-  const actionColumn: GridColDef<RowType> = {
+  const actionColumn = useMemo<GridColDef<RowType>>(() => ({
     field: "actions",
     type: "actions",
     headerName: "Actions",
@@ -163,28 +124,25 @@ function ArtefactsGrid<RowType extends BaseRow>({
         onClick={() => handleSend(params.row)}
       />,
     ],
-  };
+  }), [handleView, handleDownload, handleSend]);
 
-  /** Memoise merged columns to avoid unnecessary re-renders. */
   const gridColumns = useMemo(
     () => [...columns, actionColumn],
     [columns, actionColumn],
   );
 
-  /* ---------- early-return states ---------- */
-
   if (loading) {
     return (
-      <Box sx={{ height, width: "100%" }}>
-        <Backdrop
-          sx={(theme) => ({
-            color: "#fff",
-            zIndex: theme.zIndex.drawer + 1,
-          })}
-          open
-        >
-          <CircularProgress color="inherit" />
-        </Backdrop>
+      <Box
+        sx={{
+          height,
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <CircularProgress />
       </Box>
     );
   }
@@ -205,10 +163,9 @@ function ArtefactsGrid<RowType extends BaseRow>({
     );
   }
 
-  /* ---------- main render ---------- */
-
   return (
-    <Box sx={{ height, width: "100%" }}>
+    /* Explicit height on outer box → DataGrid's height:100% resolves correctly */
+    <Box sx={{ height, width: "100%", isolation: "isolate" }}>
       <DataGridPro<RowType>
         rows={rows}
         columns={gridColumns}
@@ -216,15 +173,13 @@ function ArtefactsGrid<RowType extends BaseRow>({
         checkboxSelection
         pagination
         rowHeight={30}
-        autoPageSize
+        pageSizeOptions={[25, 50, 100]}
+        initialState={{ pagination: { paginationModel: { pageSize: 25 } } }}
         disableRowSelectionOnClick
         getDetailPanelContent={getDetailPanelContent}
         getDetailPanelHeight={getDetailPanelHeight}
         sx={{
-          "& .MuiDataGrid-columnHeaders": {
-            backgroundColor: "#1976d2",
-            color: "#fff",
-          },
+          height: "100%",
           "& .MuiDataGrid-row:hover": {
             backgroundColor: "rgba(25,118,210,0.1)",
           },

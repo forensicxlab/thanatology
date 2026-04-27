@@ -1,4 +1,3 @@
-// thanatology/src/components/evidences/investigate/PartitionSelection.tsx
 import React, { useEffect, useState } from "react";
 import { getPartitions } from "../../../dbutils/sqlite";
 import {
@@ -14,24 +13,17 @@ import InputLabel from "@mui/material/InputLabel";
 type PartitionKind = "MBR" | "GPT" | "LOGICAL";
 
 interface PartitionOption {
-  /** Database primary-key */
   id: number;
-  /** “MBR” | “GPT” | “LOGICAL” so callers know which table to query next */
   type: PartitionKind;
-  /** Short text shown to the user */
   description?: string | null;
 }
 
 interface PartitionSelectionProps {
-  evidenceId: number;
-  /**
-   * Receives the id **and** kind of the selected partition.
-   * When the select is cleared, both values are `null`.
-   */
   onPartitionChange?: (
     partitionId: number | null,
     partitionType: PartitionKind | null,
   ) => void;
+  evidenceId: number;
 }
 
 export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
@@ -39,16 +31,14 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
   onPartitionChange,
 }) => {
   const [partitions, setPartitions] = useState<PartitionOption[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>(""); // e.g. "GPT:3"
+  const [selectedKey, setSelectedKey] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPartitions = async () => {
       try {
-        const { mbrRows, gptRows, logicalRows } =
-          await getPartitions(evidenceId);
+        const { mbrRows, gptRows, logicalRows } = await getPartitions(evidenceId);
 
-        // Normalise rows → PartitionOption
         const combined: PartitionOption[] = [
           ...mbrRows.map((row: MBRPartitionEntry) => ({
             id: row.id,
@@ -63,7 +53,6 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
           ...logicalRows.map((row: LogicalPartitionEntry) => ({
             id: row.id,
             type: "LOGICAL" as const,
-            // Fall back to a sensible label if description isn't present
             description:
               row.description ??
               `Logical snapshot (${Intl.NumberFormat().format(row.size)} bytes)`,
@@ -72,7 +61,7 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
 
         setPartitions(combined);
         setError(null);
-        setSelectedKey(""); // reset selection when evidence changes
+        setSelectedKey("");
       } catch (err) {
         console.error("Failed to fetch partitions:", err);
         setError("Failed to load partition data.");
@@ -83,10 +72,12 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
   }, [evidenceId]);
 
   const handlePartitionChange = (event: SelectChangeEvent) => {
-    const value = event.target.value as string; // e.g. "GPT:5"
+    const value = event.target.value as string;
     setSelectedKey(value);
 
-    if (!onPartitionChange) return;
+    if (!onPartitionChange) {
+      return;
+    }
 
     if (!value) {
       onPartitionChange(null, null);
@@ -101,14 +92,21 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
     return <div style={{ color: "red" }}>{error}</div>;
   }
 
-  // Prepare groups so the UI is tidy
   const mbrItems = partitions.filter((p) => p.type === "MBR");
   const gptItems = partitions.filter((p) => p.type === "GPT");
   const logicalItems = partitions.filter((p) => p.type === "LOGICAL");
 
   return (
-    <FormControl style={{ marginBottom: "1rem", minWidth: 260 }} size="small">
-      <InputLabel id="partition-selector-label">Partition(s)</InputLabel>
+    <FormControl
+      size="small"
+      fullWidth
+      sx={{
+        minWidth: { xs: "100%", sm: 340 },
+        maxWidth: { xs: "100%", md: 460 },
+        mb: 0,
+      }}
+    >
+      <InputLabel id="partition-selector-label">Partition</InputLabel>
       <Select
         labelId="partition-selector-label"
         id="partition-selector"
@@ -117,10 +115,13 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
         onChange={handlePartitionChange}
         displayEmpty
       >
-        {/* LOGICAL rows */}
+        <MenuItem value="">
+          <em>Select a partition</em>
+        </MenuItem>
+
         {logicalItems.length > 0 && (
-          <MenuItem disabled style={{ opacity: 0.7 }}>
-            — Logical —
+          <MenuItem disabled sx={{ opacity: 0.7, typography: "caption" }}>
+            Logical
           </MenuItem>
         )}
         {logicalItems.map((p) => (
@@ -130,10 +131,9 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
           </MenuItem>
         ))}
 
-        {/* MBR rows */}
         {mbrItems.length > 0 && (
-          <MenuItem disabled style={{ opacity: 0.7 }}>
-            — MBR —
+          <MenuItem disabled sx={{ opacity: 0.7, typography: "caption" }}>
+            MBR
           </MenuItem>
         )}
         {mbrItems.map((p) => (
@@ -143,10 +143,9 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
           </MenuItem>
         ))}
 
-        {/* GPT rows */}
         {gptItems.length > 0 && (
-          <MenuItem disabled style={{ opacity: 0.7 }}>
-            — GPT —
+          <MenuItem disabled sx={{ opacity: 0.7, typography: "caption" }}>
+            GPT
           </MenuItem>
         )}
         {gptItems.map((p) => (

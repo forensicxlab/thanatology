@@ -13,6 +13,14 @@ import {
 } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  TextField,
+  DialogActions,
+} from "@mui/material";
 import { useNavigate } from "react-router";
 
 import Database from "@tauri-apps/plugin-sql";
@@ -56,6 +64,10 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
     "idle" | "loading" | "success" | "error"
   >("idle");
 
+  const [fvekPromptOpen, setFvekPromptOpen] = useState(false);
+  const [fvekInput, setFvekInput] = useState("");
+  const [logicalFvek, setLogicalFvek] = useState<string | undefined>(undefined);
+
   /* -------------------------------------------------------------- */
   /* Auto steps                                                      */
   /* -------------------------------------------------------------- */
@@ -87,16 +99,39 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
         }
       } catch (err: any) {
         console.error("LogicalImage auto step error", err);
-        setCurrentError(err.toString());
+        const errMsg = err.toString();
+        if (step === 2 && errMsg.toLowerCase().includes("bitlocker")) {
+          setFvekPromptOpen(true);
+          setCurrentError("BitLocker encryption detected. Please provide FVEK.");
+        } else {
+          setCurrentError(errMsg);
+        }
       }
     },
     [evidenceData.path],
   );
 
+  const handleFvekSubmit = async () => {
+    setLogicalFvek(fvekInput);
+    setFvekPromptOpen(false);
+    setCurrentError(null);
+    // For now, if detect_logical_filesystem doesn't support fvek dynamically in the UI preview,
+    // we just assume it will succeed later during processing, or we can just proceed to Finish. 
+    // User requested "propose the user to enter decryption key. It will then be used when processing".
+    setFilesystemName("BitLocker (Encrypted)");
+    setActiveStep(3);
+  };
+
+  const handleFvekCancel = () => {
+    setFvekPromptOpen(false);
+    setFvekInput("");
+    // Leave error
+  };
+
   useEffect(() => {
-    if (activeStep < 3) runAutoStep(activeStep);
+    if (activeStep < 3 && !fvekPromptOpen) runAutoStep(activeStep);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStep]);
+  }, [activeStep, fvekPromptOpen]);
 
   /* -------------------------------------------------------------- */
   /* Navigation                                                      */
@@ -116,16 +151,24 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
   const handleFinish = async () => {
     setFinalInsertStatus("loading");
 
-    const metadata: ProcessedEvidenceMetadata = {
-      evidenceData,
-      diskImageFormat,
-      selectedMbrPartitions: [],
-      selectedGptPartitions: [],
-      // For logical images we store the detected FS name as the "format" detail:
-      logicalFilesystem: filesystemName, // <— add this field in your TS type if not present yet
-    } as ProcessedEvidenceMetadata;
-
     try {
+      const logicalSize: number = await invoke("file_size", {
+        path: evidenceData.path,
+      });
+
+      const metadata: ProcessedEvidenceMetadata = {
+        evidenceData,
+        diskImageFormat,
+        selectedMbrPartitions: [],
+        selectedGptPartitions: [],
+        selectedLogicalPartition: {
+          id: evidenceData.id,
+          size: logicalSize,
+          fvek: logicalFvek,
+        },
+        logicalFilesystem: filesystemName,
+      };
+
       await savePreprocessingMetadata(metadata, database);
       setFinalInsertStatus("success");
     } catch (err: any) {
@@ -173,7 +216,13 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
   if (finalInsertStatus !== "idle") {
     if (finalInsertStatus === "loading") {
       return (
-        <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            flexDirection: "column",
+            mt: 2
+          }}>
           <CircularProgress size={40} />
           <Typography variant="body2" sx={{ mt: 1 }}>
             Saving preprocessing metadata…
@@ -183,12 +232,20 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
     }
     if (finalInsertStatus === "success") {
       return (
-        <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            flexDirection: "column",
+            mt: 2
+          }}>
           <CheckCircleIcon fontSize="large" />
           <Typography variant="h6" sx={{ mt: 1 }}>
             Preprocessing metadata saved successfully!
           </Typography>
-          <Box mt={2}>
+          <Box sx={{
+            mt: 2
+          }}>
             <Button
               variant="contained"
               onClick={() => navigate(`/evidences/process/${evidenceData.id}`)}
@@ -205,7 +262,13 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
     }
     if (finalInsertStatus === "error") {
       return (
-        <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            flexDirection: "column",
+            mt: 2
+          }}>
           <CancelIcon fontSize="large" color="error" />
           <Typography variant="h6" color="error" sx={{ mt: 1 }}>
             Error saving preprocessing metadata
@@ -213,7 +276,9 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
           <Typography variant="body2" sx={{ mt: 1 }}>
             Please check the logs or try again.
           </Typography>
-          <Box mt={2}>
+          <Box sx={{
+            mt: 2
+          }}>
             <Button
               variant="contained"
               onClick={() => setFinalInsertStatus("idle")}
@@ -293,6 +358,31 @@ const LogicalImage: React.FC<LogicalImageProps> = ({
           </Typography>
         </Box>
       )}
+
+      <Dialog open={fvekPromptOpen} onClose={handleFvekCancel}>
+        <DialogTitle>BitLocker Detected</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            BitLocker encryption was detected on this logical image. Please enter the Full Volume Encryption Key (FVEK) in hexadecimal format to decrypt it during processing.
+          </DialogContentText>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="FVEK (Hexadecimal)"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={fvekInput}
+            onChange={(e) => setFvekInput(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleFvekCancel}>Cancel</Button>
+          <Button onClick={handleFvekSubmit} variant="contained" disabled={!fvekInput}>
+            Save Key & Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

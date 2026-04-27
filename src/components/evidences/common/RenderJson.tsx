@@ -17,7 +17,9 @@ const RenderJson = ({ data }: { data: any }) => {
           }}
         >
           <Box sx={{ display: "flex", gap: 1 }}>
-            <Typography variant="body2" component="span" fontWeight="bold">
+            <Typography variant="body2" component="span" sx={{
+              fontWeight: "bold"
+            }}>
               {key}:
             </Typography>
             {typeof value !== "object" || value === null ? (

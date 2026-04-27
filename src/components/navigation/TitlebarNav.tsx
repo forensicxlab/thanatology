@@ -5,15 +5,13 @@ import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import MinimizeIcon from "@mui/icons-material/Minimize";
 import CropSquareIcon from "@mui/icons-material/CropSquare";
 import CloseIcon from "@mui/icons-material/Close";
-import { useNavigate } from "react-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavHistory } from "./NavHistory";
 
-const TITLEBAR_HEIGHT = 40;
-const BTN = 32; // button square size inside the 40px bar
+const TITLEBAR_HEIGHT = 32;
+const BTN = 26; // button square size inside the 32px bar
 
 export default function TitlebarNav() {
-  const navigate = useNavigate();
   const appWindow = React.useMemo(() => getCurrentWindow(), []);
   const { canBack, canForward, back, forward } = useNavHistory();
 

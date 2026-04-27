@@ -11,8 +11,7 @@ import {
 import { Chip, Tooltip } from "@mui/material";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { InfoOutlined } from "@mui/icons-material";
-import { useNavigate } from "react-router";
-import UnixToISO8601UTC from "../../../common/UnixToUTC";
+
 import { searchMedia } from "../../../../../dbutils/sqlite";
 import { File } from "../../../../../dbutils/types";
 
@@ -37,7 +36,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   onRowsLoaded,
   onRowActivate,
 }) => {
-  const navigate = useNavigate();
+
   const apiRef = useGridApiRef();
 
   const [rows, setRows] = React.useState<File[]>([]);

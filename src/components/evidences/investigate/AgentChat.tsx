@@ -1,12 +1,26 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Box, Button, Typography, Paper, CircularProgress, List, ListItem, ListItemButton, ListItemText } from "@mui/material";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEvidenceStore } from '../../../store/evidenceStore';
 
+interface ProgressEvent {
+    evidence_id: string;
+    level: string;
+    message_type: string;
+    message: string;
+}
+
+interface ThinkingEvent {
+    type: string;
+    message: string;
+    timestamp: number;
+}
+
 interface MentionFileResult {
-    file_id: number;
+    identifier: number;
     partition_id: number;
     name: string;
     absolute_path: string;
@@ -29,6 +43,7 @@ const AgentChat: React.FC = () => {
     const [instruction, setInstruction] = useState("");
     const [loading, setLoading] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [thinkingEvents, setThinkingEvents] = useState<ThinkingEvent[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     // Mention state
@@ -38,6 +53,22 @@ const AgentChat: React.FC = () => {
     const [mentionIndex, setMentionIndex] = useState(-1);
     const textFieldRef = useRef<HTMLTextAreaElement>(null);
     const backdropRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const unlisten = listen<ProgressEvent>("progress-event", (event) => {
+            const { message_type, message } = event.payload;
+            if (["AgentThought", "AgentToolCall", "AgentToolResult"].includes(message_type)) {
+                setThinkingEvents(prev => [
+                    ...prev,
+                    { type: message_type, message, timestamp: Date.now() }
+                ]);
+            }
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
+    }, []);
 
     const handleInstructionChange = async (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const value = e.target.value;
@@ -89,7 +120,7 @@ const AgentChat: React.FC = () => {
 
             setInstruction(before + injectedText + after + " ");
             setContextFiles(prev => {
-                const newFiles = prev.filter(f => f.file_id !== file.file_id);
+                const newFiles = prev.filter(f => f.identifier !== file.identifier);
                 return [...newFiles, file];
             });
         }
@@ -113,7 +144,7 @@ const AgentChat: React.FC = () => {
             const regex = new RegExp(`@${safeName}\\b`, 'g');
             processedInstruction = processedInstruction.replace(
                 regex,
-                `@${file.name} (identifier: ${file.file_id}, partition_id: ${file.partition_id})`
+                `@${file.name} (identifier: ${file.identifier}, partition_id: ${file.partition_id})`
             );
         });
 
@@ -128,6 +159,8 @@ const AgentChat: React.FC = () => {
             const aiEndpoint = localStorage.getItem("aiEndpoint") || "http://localhost:11434";
             const aiModel = localStorage.getItem("aiModel") || "llama3.1:latest";
             const aiApiKey = localStorage.getItem("aiApiKey") || "";
+
+            setThinkingEvents([]); // Reset for new investigation
 
             const response = await invoke<Report>("investigate_with_agent", {
                 evidenceDbPath: activeEvidenceDbPath,
@@ -151,19 +184,22 @@ const AgentChat: React.FC = () => {
     if (!activeEvidenceDbPath) {
         return (
             <Box sx={{ p: 2, height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Typography color="text.secondary">Please open an evidence case to start investigating.</Typography>
+                <Typography sx={{
+                    color: "text.secondary"
+                }}>Please open an evidence case to start investigating.</Typography>
             </Box>
         );
     }
 
     return (
         <Box sx={{ p: 2, height: "100%", display: "flex", flexDirection: "column", gap: 2 }}>
-
             {/* Scrollable Chat Area */}
             <Box sx={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
                 <Box>
                     <Typography variant="h6">Investigator Copilot</Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="body2" sx={{
+                        color: "text.secondary"
+                    }}>
                         Ask the agent to investigate the extracted evidence database.
                     </Typography>
                 </Box>
@@ -200,7 +236,9 @@ const AgentChat: React.FC = () => {
 
                         {msg.report?.findings && msg.report.findings.length > 0 && (
                             <Box sx={{ mt: 1 }}>
-                                <Typography variant="caption" color="text.secondary" gutterBottom>Structured Findings</Typography>
+                                <Typography variant="caption" gutterBottom sx={{
+                                    color: "text.secondary"
+                                }}>Structured Findings</Typography>
                                 <ul>
                                     {msg.report.findings.map((f, i) => (
                                         <li key={i} style={{ fontSize: '0.875rem' }}>
@@ -212,8 +250,29 @@ const AgentChat: React.FC = () => {
                         )}
                     </Paper>
                 ))}
-            </Box>
 
+                {loading && (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1, ml: 1, borderLeft: "2px solid", borderColor: "primary.main", pl: 2, py: 1 }}>
+                        <Typography variant="caption" color="primary" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <CircularProgress size={12} /> Investigator is processing...
+                        </Typography>
+                        {thinkingEvents.map((ev, i) => (
+                            <Typography
+                                key={i}
+                                variant="caption"
+                                sx={{
+                                    display: "block",
+                                    animation: "fadeIn 0.3s ease-in",
+                                    fontStyle: ev.type === "AgentThought" ? "italic" : "normal",
+                                    color: ev.type === "AgentToolCall" ? "info.main" : "text.secondary"
+                                }}>
+                                {ev.type === "AgentToolCall" ? "🛠️ " : ev.type === "AgentToolResult" ? "✅ " : "💭 "}
+                                {ev.message}
+                            </Typography>
+                        ))}
+                    </Box>
+                )}
+            </Box>
             {/* Bottom Fixed Input Area */}
             <Box sx={{ display: "flex", flexDirection: "column" }}>
                 {(messages.length > 0 || error || instruction.length > 0) && (
@@ -362,12 +421,14 @@ const AgentChat: React.FC = () => {
                         >
                             <List dense>
                                 {mentionResults.map((res, i) => (
-                                    <ListItem disablePadding key={`${res.file_id}-${i}`}>
+                                    <ListItem disablePadding key={`${res.identifier}-${i}`}>
                                         <ListItemButton onClick={() => handleMentionSelect(res)}>
                                             <ListItemText
                                                 primary={res.name}
                                                 secondary={res.absolute_path}
-                                                secondaryTypographyProps={{ style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }}
+                                                slotProps={{
+                                                    secondary: { style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }
+                                                }}
                                             />
                                         </ListItemButton>
                                     </ListItem>

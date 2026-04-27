@@ -15,6 +15,7 @@ import {
 } from "../../../dbutils/sqlite";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnackbar } from "../../SnackbarProvider";
+import { useNavigate } from "react-router";
 
 interface FolderProcessingProps {
     evidence: Evidence;
@@ -26,7 +27,10 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
     setEvidence,
 }) => {
     const { display_message } = useSnackbar();
+    const navigate = useNavigate();
     const [processing, setProcessing] = useState<boolean>(false);
+    const [artefactIdentificationCompleted, setArtefactIdentificationCompleted] =
+        useState(false);
 
     const [mainDbPath, setMainDbPath] = useState<string>("");
     const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
@@ -45,6 +49,10 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
         initPaths();
     }, [evidence, display_message]);
 
+    useEffect(() => {
+        setArtefactIdentificationCompleted(false);
+    }, [evidence.id]);
+
     async function fetchEvidence() {
         try {
             const fetchedEvidence: Evidence = await getEvidence(
@@ -59,7 +67,7 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
     }
 
     useEffect(() => {
-        if (evidence.status === 2) setProcessing(true);
+        setProcessing(evidence.status >= 2 && evidence.status < 5);
     }, [evidence.status]);
 
     const handleStartProcessing = async () => {
@@ -95,12 +103,26 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
         setProcessing(true);
         display_message("info", "Processing Started");
 
+        // Let ProcessingTask mount its event listeners before the backend emits early discovery updates.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
         try {
+            const aiConfig = {
+                provider: localStorage.getItem("aiProvider") || "ollama",
+                endpoint: localStorage.getItem("aiEndpoint") || "http://localhost:11434",
+                model: localStorage.getItem("aiModel") || "llama3.1:latest",
+                api_key: localStorage.getItem("aiApiKey") || "",
+                enable_image_specialist: localStorage.getItem("enableImageSpecialist") === "true",
+                enable_text_specialist: localStorage.getItem("enableTextSpecialist") === "true",
+                enable_audio_specialist: localStorage.getItem("enableAudioSpecialist") === "true",
+            };
+
             await invoke("process_folder", {
                 evidenceId: evidence.id,
                 mainDbPath: mainDbPath,
                 evidenceDbPath: evidenceDbPath,
                 folderPath: evidence.path,
+                aiConfig: aiConfig,
             });
         } catch (err) {
             console.error("Error invoking process_folder", err);
@@ -112,18 +134,65 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
         }
     };
 
-    if (evidence.status === 3 || evidence.status === 4 || evidence.status === 5) {
+    const handleReviewEvidence = async () => {
+        try {
+            const exists: boolean = await invoke("check_evidence_exists", {
+                path: evidence.path,
+            });
+
+            if (!exists) {
+                display_message(
+                    "error",
+                    "The source evidence file is missing on disk. Please relink it manually.",
+                );
+                return;
+            }
+
+            navigate(`/evidences/investigate/${evidence.id}`);
+        } catch (err) {
+            display_message("error", `Error checking evidence: ${err}`);
+        }
+    };
+
+    const showCompletionScreen =
+        artefactIdentificationCompleted || evidence.status >= 5;
+
+    const processingTask =
+        evidence.status >= 2 && evidence.status < 5 ? (
+            <ProcessingTask
+                evidence={evidence}
+                onComplete={fetchEvidence}
+                onArtefactIdentificationComplete={() =>
+                    setArtefactIdentificationCompleted(true)
+                }
+            />
+        ) : null;
+
+    if (showCompletionScreen) {
         return (
-            <Box sx={{ textAlign: "center", mt: 4 }}>
-                <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
-                <Typography variant="h5" gutterBottom>
-                    Folder Indexing Completed
-                </Typography>
-                <Typography variant="body1">
-                    The indexation process of the folder is now completed. You can
-                    already start your investigation while other modules run.
-                </Typography>
-            </Box>
+            <>
+                {evidence.status < 5 && processingTask && (
+                    <Box sx={{ display: "none" }}>{processingTask}</Box>
+                )}
+                <Box sx={{ textAlign: "center", mt: 4 }}>
+                    <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
+                    <Typography variant="h5" gutterBottom>
+                        {evidence.status >= 5
+                            ? "Folder Indexing Completed"
+                            : "Artefact Identification Completed"}
+                    </Typography>
+                    <Typography variant="body1">
+                        {evidence.status >= 5
+                            ? "The full processing pipeline for the folder is now completed. You can start or continue the investigation."
+                            : "Known artefacts have been identified. You can start or continue the investigation while artefact extraction finishes in the background."}
+                    </Typography>
+                    <Box sx={{ mt: 3 }}>
+                        <Button variant="contained" onClick={handleReviewEvidence}>
+                            Review Evidence
+                        </Button>
+                    </Box>
+                </Box>
+            </>
         );
     }
 
@@ -136,12 +205,7 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
                 Ready to index folder: <strong>{evidence.path}</strong>
             </Typography>
 
-            {evidence.status === 2 && (
-                <ProcessingTask
-                    evidence={evidence}
-                    onComplete={fetchEvidence}
-                />
-            )}
+            {processingTask}
             <Box sx={{ textAlign: "center", mt: 2 }}>
                 <Button
                     variant="contained"

@@ -1,16 +1,21 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import {
   MBRPartitionEntry,
   Module,
   Case,
   Evidence,
+  EvidenceImageInput,
+  EvidenceImageRecord,
   ProcessedEvidenceMetadata,
   File,
   GPTPartitionEntry,
   LogicalPartitionEntry,
+  FileQueryScope,
+  FilesystemTreeItem,
 } from "./types";
 import type { TimestampType, TimestampCount, ArtifactObjectRow } from "./types";
-import { getEvidenceDb } from "./db";
+import { getEvidenceDb, getMainDb } from "./db";
 // import { CLASS_FLEX_CENTER } from "yet-another-react-lightbox";
 
 export async function createUser(username: string, db: Database | null) {
@@ -132,7 +137,12 @@ export async function deleteCase(
 
     // Delete any MBR partition entries associated with the evidence for this case.
     await db.execute(
-      "DELETE FROM mbr_partition_entries WHERE evidence_id IN (SELECT id FROM evidence WHERE case_id = $1)",
+      "DELETE FROM partitions WHERE evidence_id IN (SELECT id FROM evidence WHERE case_id = $1)",
+      [caseId],
+    );
+
+    await db.execute(
+      "DELETE FROM evidence_images WHERE evidence_id IN (SELECT id FROM evidence WHERE case_id = $1)",
       [caseId],
     );
 
@@ -172,7 +182,15 @@ export async function deleteCases(caseIds: number[]): Promise<void> {
 
     // Delete MBR partition entries associated with evidence for these cases.
     await db.execute(
-      `DELETE FROM mbr_partition_entries
+      `DELETE FROM partitions
+       WHERE evidence_id IN (
+         SELECT id FROM evidence WHERE case_id IN (${placeholders})
+       )`,
+      caseIds,
+    );
+
+    await db.execute(
+      `DELETE FROM evidence_images
        WHERE evidence_id IN (
          SELECT id FROM evidence WHERE case_id IN (${placeholders})
        )`,
@@ -215,7 +233,17 @@ export async function savePreprocessingMetadata(
     );
   }
 
-  // 1) Insert the main preprocessing record
+  await db.execute("PRAGMA busy_timeout = 30000");
+
+  await db.execute(
+    "DELETE FROM partitions WHERE evidence_id = $1",
+    [metadata.evidenceData.id],
+  );
+  await db.execute(
+    "DELETE FROM evidence_preprocessing_metadata WHERE evidence_id = $1",
+    [metadata.evidenceData.id],
+  );
+
   const insertMetadataQuery = `
     INSERT INTO evidence_preprocessing_metadata (evidence_id, disk_image_format)
     VALUES ($1, $2)
@@ -232,11 +260,11 @@ export async function savePreprocessingMetadata(
 
   if (metadata.selectedMbrPartitions) {
     for (const partition of metadata.selectedMbrPartitions) {
-      console.log(partition);
       await db.execute(
         `
-        INSERT INTO mbr_partition_entries (
+        INSERT INTO partitions (
           evidence_id,
+          kind,
           partition_type,
           boot_indicator,
           start_chs,
@@ -245,8 +273,10 @@ export async function savePreprocessingMetadata(
           size_sectors,
           sector_size,
           first_byte_addr,
-          description
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          size_bytes,
+          description,
+          fvek
+        ) VALUES ($1, 'mbr', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       `,
         [
           metadata.evidenceData.id,
@@ -258,7 +288,9 @@ export async function savePreprocessingMetadata(
           partition.size_sectors,
           partition.sector_size,
           partition.first_byte_addr,
+          partition.size_sectors * partition.sector_size,
           partition.description,
+          partition.fvek || null,
         ],
       );
     }
@@ -266,20 +298,31 @@ export async function savePreprocessingMetadata(
 
   if (metadata.selectedGptPartitions) {
     for (const partition of metadata.selectedGptPartitions) {
+      const sizeSectors =
+        partition.size_sectors ??
+        (partition.ending_lba - partition.starting_lba + 1);
+      const sectorSize = 512;
+      const firstByteAddr =
+        partition.first_byte_addr ?? partition.starting_lba * sectorSize;
+
       await db.execute(
         `
-          INSERT INTO gpt_partition_entries (
+          INSERT INTO partitions (
             evidence_id,
+            kind,
             partition_guid,
             partition_type_guid,
-            starting_lba,
-            ending_lba,
+            start_lba,
+            end_lba,
             attributes,
             partition_name,
             description,
             first_byte_addr,
-            size_sectors
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            size_sectors,
+            sector_size,
+            size_bytes,
+            fvek
+          ) VALUES ($1, 'gpt', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         `,
         [
           metadata.evidenceData.id,
@@ -290,14 +333,41 @@ export async function savePreprocessingMetadata(
           partition.attributes,
           partition.partition_name,
           partition.description,
-          partition.first_byte_addr,
-          partition.size_sectors,
+          firstByteAddr,
+          sizeSectors,
+          sectorSize,
+          sizeSectors * sectorSize,
+          partition.fvek || null,
         ],
       );
     }
   }
 
-  // 4) Update status
+  if (metadata.selectedLogicalPartition) {
+    const logicalSizeBytes = metadata.selectedLogicalPartition.size;
+    const logicalSectorSize = 512;
+    await db.execute(
+      `
+        INSERT INTO partitions (
+          evidence_id,
+          kind,
+          first_byte_addr,
+          size_sectors,
+          sector_size,
+          size_bytes,
+          fvek
+        ) VALUES ($1, 'logical', 0, $2, $3, $4, $5)
+      `,
+      [
+        metadata.evidenceData.id,
+        Math.ceil(logicalSizeBytes / logicalSectorSize),
+        logicalSectorSize,
+        logicalSizeBytes,
+        metadata.selectedLogicalPartition.fvek || null,
+      ],
+    );
+  }
+
   await db.execute(
     `UPDATE evidence
            SET status = 1
@@ -306,6 +376,58 @@ export async function savePreprocessingMetadata(
   );
 
   return preprocessingId;
+}
+
+function mapPartitionRows(rows: any[]): {
+  mbrRows: MBRPartitionEntry[];
+  gptRows: GPTPartitionEntry[];
+  logicalRows: LogicalPartitionEntry[];
+} {
+  const mbrRows: MBRPartitionEntry[] = rows
+    .filter((row) => row.kind === "mbr")
+    .map((row) => ({
+      id: row.id,
+      boot_indicator: row.boot_indicator ?? 0,
+      start_chs: row.start_chs ?? [0, 0, 0],
+      partition_type: row.partition_type ?? 0,
+      end_chs: row.end_chs ?? [0, 0, 0],
+      start_lba: row.start_lba ?? 0,
+      size_sectors: row.size_sectors ?? 0,
+      sector_size: row.sector_size ?? 512,
+      first_byte_addr: row.first_byte_addr ?? 0,
+      description: row.description ?? "",
+      fvek: row.fvek ?? undefined,
+    }));
+
+  const gptRows: GPTPartitionEntry[] = rows
+    .filter((row) => row.kind === "gpt")
+    .map((row) => ({
+      id: row.id,
+      partition_guid: [],
+      partition_guid_string: row.partition_guid ?? "",
+      partition_type_guid: [],
+      partition_type_guid_string: row.partition_type_guid ?? "",
+      starting_lba: row.start_lba ?? 0,
+      ending_lba: row.end_lba ?? 0,
+      first_byte_addr: row.first_byte_addr ?? 0,
+      size_sectors: row.size_sectors ?? 0,
+      attributes: row.attributes ?? 0,
+      description: row.description ?? "",
+      partition_name: row.partition_name ?? "",
+      fvek: row.fvek ?? undefined,
+    }));
+
+  const logicalRows: LogicalPartitionEntry[] = rows
+    .filter((row) => row.kind === "logical" || row.kind === "folder")
+    .map((row) => ({
+      id: row.id,
+      evidence_id: row.evidence_id,
+      size: row.size_bytes ?? 0,
+      description: row.description ?? null,
+      fvek: row.fvek ?? undefined,
+    }));
+
+  return { mbrRows, gptRows, logicalRows };
 }
 
 // dbutils/sqlite.ts
@@ -321,22 +443,12 @@ export async function getSelectedPartitions(
     db = await Database.load("sqlite:thanatology.db");
   }
 
-  const mbrRows: MBRPartitionEntry[] = await db.select(
-    "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
+  const rows = await db.select<any[]>(
+    "SELECT * FROM partitions WHERE evidence_id = $1 ORDER BY id",
     [evidenceId],
   );
 
-  const gptRows: GPTPartitionEntry[] = await db.select(
-    "SELECT * FROM gpt_partition_entries WHERE evidence_id = $1",
-    [evidenceId],
-  );
-
-  const logicalRows: LogicalPartitionEntry[] = await db.select(
-    "SELECT * FROM logical_partition_entries WHERE evidence_id = $1",
-    [evidenceId],
-  );
-
-  return { mbrRows, gptRows, logicalRows };
+  return mapPartitionRows(rows);
 }
 
 export async function getPartitions(evidenceId: number): Promise<{
@@ -344,24 +456,47 @@ export async function getPartitions(evidenceId: number): Promise<{
   gptRows: GPTPartitionEntry[];
   logicalRows: LogicalPartitionEntry[];
 }> {
-  const db = await getEvidenceDb(evidenceId);
+  try {
+    const evidenceDb = await getEvidenceDb(evidenceId);
+    const rows = await evidenceDb.select<any[]>(
+      "SELECT * FROM partitions WHERE evidence_id = $1 ORDER BY id",
+      [evidenceId],
+    );
 
-  const mbrRows: MBRPartitionEntry[] = await db.select(
-    "SELECT * FROM mbr_partition_entries WHERE evidence_id = $1",
+    if (rows.length > 0) {
+      return mapPartitionRows(rows);
+    }
+  } catch (error) {
+    const message = String(error);
+    if (!message.includes("no such table: partitions")) {
+      throw error;
+    }
+  }
+
+  const mainDb = await getMainDb();
+  const rows = await mainDb.select<any[]>(
+    "SELECT * FROM partitions WHERE evidence_id = $1 ORDER BY id",
     [evidenceId],
   );
 
-  const gptRows: GPTPartitionEntry[] = await db.select(
-    "SELECT * FROM gpt_partition_entries WHERE evidence_id = $1",
-    [evidenceId],
-  );
+  return mapPartitionRows(rows);
+}
 
-  const logicalRows: LogicalPartitionEntry[] = await db.select(
-    "SELECT * FROM logical_partition_entries WHERE evidence_id = $1",
-    [evidenceId],
-  );
+export async function saveEvidenceImages(
+  evidenceId: number,
+  images: EvidenceImageInput[],
+): Promise<void> {
+  if (images.length === 0) {
+    return;
+  }
 
-  return { mbrRows, gptRows, logicalRows };
+  await invoke("save_evidence_images", { evidenceId, images });
+}
+
+export async function getEvidenceImages(
+  evidenceId: number,
+): Promise<EvidenceImageRecord[]> {
+  return invoke<EvidenceImageRecord[]>("get_evidence_images", { evidenceId });
 }
 
 // Fetch modules for processing.
@@ -448,17 +583,90 @@ export async function getFilesByEvidenceAndParent(
     db = await Database.load("sqlite:thanatology.db");
   }
 
+  const normalizedParentDirectory = normalizePathKey(parentDirectory);
+
   const files: File[] = await db.select(
     `
      SELECT *
      FROM system_files
-     WHERE evidence_id = $1 AND partition_id = $2 AND parent_directory = $3
-     ORDER BY file_type DESC, filename ASC
+     WHERE evidence_id = $1
+       AND partition_id = $2
+       AND parent_path_key = $3
+     ORDER BY is_dir DESC, LOWER(name) ASC, name ASC, id ASC
      `,
-    [evidenceId, partitionId, parentDirectory],
+    [evidenceId, partitionId, normalizedParentDirectory],
   );
 
   return files;
+}
+
+type FilesystemTreeRow = {
+  id: number;
+  name: string;
+  absolute_path: string;
+  path_key: string;
+  parent_path_key: string | null;
+  ftype: string;
+  is_dir: number;
+  children_count: number;
+};
+
+export async function getFilesystemTreeChildren(
+  evidenceId: number,
+  partitionId: number,
+  parentPathKey: string,
+): Promise<FilesystemTreeItem[]> {
+  const db = await getEvidenceDb(evidenceId);
+  const normalizedParentPathKey = normalizePathKey(parentPathKey);
+
+  const rows = await db.select<FilesystemTreeRow[]>((
+    `
+      SELECT
+        sf.id,
+        sf.name,
+        sf.absolute_path,
+        sf.path_key,
+        sf.parent_path_key,
+        sf.ftype,
+        sf.is_dir,
+        COALESCE(child_counts.child_count, 0) AS children_count
+      FROM system_files sf
+      LEFT JOIN (
+        SELECT
+          evidence_id,
+          partition_id,
+          parent_path_key,
+          COUNT(*) AS child_count
+        FROM system_files
+        WHERE evidence_id = $1
+          AND partition_id = $2
+        GROUP BY evidence_id, partition_id, parent_path_key
+      ) AS child_counts
+        ON child_counts.evidence_id = sf.evidence_id
+       AND child_counts.partition_id = sf.partition_id
+       AND child_counts.parent_path_key = sf.path_key
+      WHERE sf.evidence_id = $1
+        AND sf.partition_id = $2
+        AND sf.parent_path_key = $3
+      ORDER BY sf.is_dir DESC, LOWER(sf.name) ASC, sf.name ASC, sf.id ASC
+    `
+  ), [evidenceId, partitionId, normalizedParentPathKey]);
+
+  return rows.map((row) => {
+    const isDir = Number(row.is_dir ?? 0) === 1;
+    return {
+      id: row.path_key,
+      label: makeFilesystemTreeLabel(row.name, row.absolute_path, isDir),
+      pathKey: row.path_key,
+      parentPathKey: row.parent_path_key,
+      absolutePath: row.absolute_path,
+      name: row.name,
+      ftype: row.ftype,
+      isDir,
+      childrenCount: Number(row.children_count ?? 0),
+      itemKind: isDir ? "directory" : "file",
+    };
+  });
 }
 
 export async function getFileByEvidenceAndAbsolutePath(
@@ -508,6 +716,98 @@ export async function searchMedia(
     [partition_id],
   );
   const rowCount = countResult[0].count;
+
+  return { rows, rowCount };
+}
+
+export interface MediaStats {
+  images: number;
+  videos: number;
+  audio: number;
+  total: number;
+}
+
+export async function getMediaStats(
+  evidenceId: number,
+  partitionId: number,
+): Promise<MediaStats> {
+  const db = await getEvidenceDb(evidenceId);
+
+  const result: Array<{ kind: string; count: number }> = await db.select(
+    `SELECT
+       CASE
+         WHEN sig_mime LIKE 'image%' THEN 'image'
+         WHEN sig_mime LIKE 'video%' THEN 'video'
+         WHEN sig_mime LIKE 'audio%' THEN 'audio'
+       END AS kind,
+       COUNT(*) as count
+     FROM system_files
+     WHERE partition_id = $1
+       AND (sig_mime LIKE 'image%' OR sig_mime LIKE 'video%' OR sig_mime LIKE 'audio%')
+     GROUP BY kind`,
+    [partitionId],
+  );
+
+  const stats: MediaStats = { images: 0, videos: 0, audio: 0, total: 0 };
+  for (const r of result) {
+    if (r.kind === "image") stats.images = r.count;
+    else if (r.kind === "video") stats.videos = r.count;
+    else if (r.kind === "audio") stats.audio = r.count;
+  }
+  stats.total = stats.images + stats.videos + stats.audio;
+  return stats;
+}
+
+export async function searchMediaFiltered(
+  evidenceId: number,
+  partitionId: number,
+  offset: number,
+  limit: number,
+  options?: {
+    searchText?: string;
+    includeImages?: boolean;
+    includeVideos?: boolean;
+    includeAudio?: boolean;
+  },
+): Promise<{ rows: File[]; rowCount: number }> {
+  const db = await getEvidenceDb(evidenceId);
+
+  const includeImages = options?.includeImages ?? true;
+  const includeVideos = options?.includeVideos ?? true;
+  const includeAudio = options?.includeAudio ?? true;
+
+  const typeClauses: string[] = [];
+  if (includeImages) typeClauses.push("sig_mime LIKE 'image%'");
+  if (includeVideos) typeClauses.push("sig_mime LIKE 'video%'");
+  if (includeAudio) typeClauses.push("sig_mime LIKE 'audio%'");
+
+  if (typeClauses.length === 0) {
+    return { rows: [], rowCount: 0 };
+  }
+
+  const typeWhere = `(${typeClauses.join(" OR ")})`;
+  const params: any[] = [partitionId];
+  let searchWhere = "";
+
+  if (options?.searchText && options.searchText.trim().length > 0) {
+    const term = `%${options.searchText.trim()}%`;
+    params.push(term, term);
+    searchWhere = ` AND (name LIKE $${params.length - 1} OR absolute_path LIKE $${params.length})`;
+  }
+
+  const where = `WHERE partition_id = $1 AND ${typeWhere}${searchWhere}`;
+
+  const countResult: Array<{ count: number }> = await db.select(
+    `SELECT COUNT(*) as count FROM system_files ${where}`,
+    params,
+  );
+  const rowCount = countResult[0].count;
+
+  const selectParams = [...params, limit, offset];
+  const rows: File[] = await db.select(
+    `SELECT * FROM system_files ${where} ORDER BY absolute_path ASC LIMIT $${selectParams.length - 1} OFFSET $${selectParams.length}`,
+    selectParams,
+  );
 
   return { rows, rowCount };
 }
@@ -886,6 +1186,8 @@ export type FilterModel = {
   quickFilterLogicOperator?: LogicOperator;
 };
 
+export type FileListingMode = "subtree-files" | "direct-children";
+
 const FIELD_MAP: Record<string, string> = {
   id: "id",
   evidence_id: "evidence_id",
@@ -939,6 +1241,24 @@ function isTextLikeField(field: string): boolean {
 
 function escapeLike(raw: string): string {
   return raw.replace(/[%_\\]/g, (m) => "\\" + m);
+}
+
+export const ROOT_PATH_KEY = "/";
+
+function normalizePathKey(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter((part) => part.length > 0);
+
+  return parts.length === 0 ? ROOT_PATH_KEY : `/${parts.join("/")}`;
+}
+
+function makeFilesystemTreeLabel(
+  name: string | null | undefined,
+  absolutePath: string,
+  isDir: boolean,
+): string {
+  const baseLabel = name && name.trim().length > 0 ? name : absolutePath;
+  return isDir ? `${baseLabel}/` : baseLabel;
 }
 
 function buildFiltersWithDollarPlaceholders(
@@ -1059,6 +1379,52 @@ function buildFiltersWithDollarPlaceholders(
   };
 }
 
+function buildFileScope(
+  scope: FileQueryScope | undefined,
+  listingMode: FileListingMode = "subtree-files",
+) {
+  const resolvedScope = scope ?? { kind: "root" as const };
+  const clauses = ["partition_id = $1"];
+  const params: any[] = [];
+  let lastIndex = 1;
+  let orderBy = "LOWER(path_key) ASC, path_key ASC, id ASC";
+
+  if (listingMode === "direct-children") {
+    if (resolvedScope.kind === "file") {
+      clauses.push(`path_key = $${++lastIndex}`);
+      params.push(normalizePathKey(resolvedScope.pathKey));
+      orderBy = "id ASC";
+    } else {
+      const parentPath =
+        resolvedScope.kind === "directory"
+          ? normalizePathKey(resolvedScope.pathKey)
+          : ROOT_PATH_KEY;
+
+      clauses.push(`parent_path_key = $${++lastIndex}`);
+      params.push(parentPath);
+      orderBy = "is_dir DESC, LOWER(name) ASC, name ASC, id ASC";
+    }
+
+    return { clauses, params, lastIndex, orderBy };
+  }
+
+  clauses.push("is_dir = 0");
+
+  if (resolvedScope.kind === "directory") {
+    const normalizedPath = normalizePathKey(resolvedScope.pathKey);
+
+    if (normalizedPath !== ROOT_PATH_KEY) {
+      clauses.push(`path_key LIKE $${++lastIndex} ESCAPE '\\'`);
+      params.push(`${escapeLike(normalizedPath)}/%`);
+    }
+  } else if (resolvedScope.kind === "file") {
+    clauses.push(`path_key = $${++lastIndex}`);
+    params.push(normalizePathKey(resolvedScope.pathKey));
+  }
+
+  return { clauses, params, lastIndex, orderBy };
+}
+
 export async function getFiles(
   evidenceId: number,
   partition_id: number,
@@ -1066,20 +1432,18 @@ export async function getFiles(
   limit: number,
   filterModel?: FilterModel,
   timelineFilter?: TimelineFileFilter,
+  scope?: FileQueryScope,
+  listingMode: FileListingMode = "subtree-files",
 ): Promise<{ rows: File[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
 
-  // $1 is always the partition_id
-  const base = `partition_id = $1`;
+  const scopeSql = buildFileScope(scope, listingMode);
+  const built = buildFiltersWithDollarPlaceholders(filterModel, scopeSql.lastIndex);
 
-  const built = buildFiltersWithDollarPlaceholders(filterModel, 1);
-
-  // We'll append extra filters after built.where
   let p = built.lastIndex;
-  const dynamicParams = [...built.params];
+  const dynamicParams = [...scopeSql.params, ...built.params];
   const extraClauses: string[] = [];
 
-  // ---- Timeline filter (created/accessed/modified in range)
   const hasTimelineBounds =
     timelineFilter &&
     (timelineFilter.start != null || timelineFilter.end != null) &&
@@ -1088,14 +1452,17 @@ export async function getFiles(
   if (hasTimelineBounds) {
     const startSec =
       timelineFilter?.start != null
-        ? (timelineFilter.start < 1e11 ? timelineFilter.start : Math.floor(timelineFilter.start / 1000))
+        ? timelineFilter.start < 1e11
+          ? timelineFilter.start
+          : Math.floor(timelineFilter.start / 1000)
         : null;
     const endSec =
       timelineFilter?.end != null
-        ? (timelineFilter.end < 1e11 ? timelineFilter.end : Math.floor(timelineFilter.end / 1000))
+        ? timelineFilter.end < 1e11
+          ? timelineFilter.end
+          : Math.floor(timelineFilter.end / 1000)
         : null;
 
-    // Only apply if at least one bound exists
     if (startSec != null || endSec != null) {
       const phStart = `$${++p}`;
       const phEnd = `$${++p}`;
@@ -1120,7 +1487,11 @@ export async function getFiles(
     }
   }
 
-  const whereSql = [base, built.where, ...extraClauses]
+  const whereSql = [
+    ...scopeSql.clauses,
+    built.where,
+    ...extraClauses,
+  ]
     .filter(Boolean)
     .join(" AND ");
 
@@ -1131,6 +1502,7 @@ export async function getFiles(
     SELECT *
     FROM system_files
     WHERE ${whereSql}
+    ORDER BY ${scopeSql.orderBy}
     LIMIT $${limitIndex}
     OFFSET $${offsetIndex}
   `;
@@ -1175,15 +1547,7 @@ export async function deleteEvidence(
   try {
     // Delete partition-related entries
     await db.execute(
-      "DELETE FROM mbr_partition_entries WHERE evidence_id = $1",
-      [evidenceId],
-    );
-    await db.execute(
-      "DELETE FROM gpt_partition_entries WHERE evidence_id = $1",
-      [evidenceId],
-    );
-    await db.execute(
-      "DELETE FROM logical_partition_entries WHERE evidence_id = $1",
+      "DELETE FROM partitions WHERE evidence_id = $1",
       [evidenceId],
     );
 
@@ -1200,6 +1564,10 @@ export async function deleteEvidence(
       "DELETE FROM evidence_preprocessing_metadata WHERE evidence_id = $1",
       [evidenceId],
     );
+
+    await db.execute("DELETE FROM evidence_images WHERE evidence_id = $1", [
+      evidenceId,
+    ]);
 
     // Finally delete the evidence itself
     await db.execute("DELETE FROM evidence WHERE id = $1", [evidenceId]);
@@ -1223,17 +1591,7 @@ export async function deleteEvidences(evidenceIds: number[]): Promise<void> {
   try {
     // Partition-related entries
     await db.execute(
-      `DELETE FROM mbr_partition_entries
-       WHERE evidence_id IN (${placeholders})`,
-      evidenceIds,
-    );
-    await db.execute(
-      `DELETE FROM gpt_partition_entries
-       WHERE evidence_id IN (${placeholders})`,
-      evidenceIds,
-    );
-    await db.execute(
-      `DELETE FROM logical_partition_entries
+      `DELETE FROM partitions
        WHERE evidence_id IN (${placeholders})`,
       evidenceIds,
     );
@@ -1253,6 +1611,12 @@ export async function deleteEvidences(evidenceIds: number[]): Promise<void> {
     // Preprocessing metadata
     await db.execute(
       `DELETE FROM evidence_preprocessing_metadata
+       WHERE evidence_id IN (${placeholders})`,
+      evidenceIds,
+    );
+
+    await db.execute(
+      `DELETE FROM evidence_images
        WHERE evidence_id IN (${placeholders})`,
       evidenceIds,
     );
@@ -1625,6 +1989,99 @@ export async function getWindowsEvents(
   return { rows, rowCount: Number(countResult?.[0]?.count ?? 0) };
 }
 
+// ---------------- AI Specialist Artifacts ----------------
+
+export async function fetchAiArtifacts(
+  evidenceId: number,
+  partitionId: number,
+  offset: number,
+  limit: number,
+  filterModel?: FilterModel,
+): Promise<{ rows: any[]; rowCount: number }> {
+  const db = await getEvidenceDb(evidenceId);
+
+  // Re-use standard built artifact placeholders where applicable for filtering
+  const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, 3);
+  const extraWhere = built.where ? ` AND (${built.where})` : "";
+
+  const query = `
+    SELECT
+      ao.id AS artifact_id,
+      ao.kind AS artifact_name,
+      ao.parser,
+      '' AS tag,
+      '' AS category,
+      sf.id AS file_id,
+      sf.identifier AS identifier,
+      sf.absolute_path,
+      sf.name AS file_name,
+      sf.ftype,
+      sf.size,
+      sf.created,
+      sf.modified,
+      sf.accessed,
+      sf.permissions,
+      sf."group",
+      sf.owner,
+      sf.sig_name,
+      sf.sig_mime,
+      sf.sig_exts,
+      json_extract(ao.json, '$.score') as score,
+      json_extract(ao.json, '$.summary') as description,
+      ao.json AS metadata
+    FROM
+      artifact_objects ao
+    INNER JOIN
+      system_files sf ON ao.file_id = sf.id
+    WHERE
+      ao.parser = 'ai_specialist' AND
+      ao.evidence_id = $1 AND
+      ao.partition_id = $2
+      ${extraWhere.replace(/artifacts\./g, 'ao.')}
+    LIMIT $${built.params.length + 3} OFFSET $${built.params.length + 4}
+  `;
+
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM artifact_objects ao
+    INNER JOIN system_files sf ON ao.file_id = sf.id
+    WHERE
+      ao.parser = 'ai_specialist' AND
+      ao.evidence_id = $1 AND
+      ao.partition_id = $2
+      ${extraWhere.replace(/artifacts\./g, 'ao.')}
+  `;
+
+  const queryParams = [evidenceId, partitionId, ...built.params];
+
+  const countResult = (await db.select(countQuery, queryParams)) as any[];
+  const rowCount = countResult[0].count;
+
+  const rowsRaw = (await db.select(query, [
+    ...queryParams,
+    limit,
+    offset,
+  ])) as any[];
+
+  // Transform JSON payload into explicit keys so DataGrid sees `score` and `summary` automatically if needed.
+  const rows = rowsRaw.map((r: any) => {
+    let parsedMetadata: any = {};
+    try {
+      parsedMetadata = JSON.parse(r.metadata);
+    } catch (e) { }
+
+    return {
+      ...r,
+      score: parsedMetadata.score || null,
+      description: parsedMetadata.summary || "No summary available",
+      metadata: r.metadata
+    };
+  });
+
+  return { rows, rowCount };
+}
+
+
 // ---------------- Windows Events: chart counts ----------------
 
 export async function getWindowsEventCounts(
@@ -1891,4 +2348,133 @@ export async function getPmlEvents(
   const parsedRows = rows.map((row) => JSON.parse(row.json));
 
   return { rows: parsedRows, rowCount: Number(countResult?.[0]?.count ?? 0) };
+}
+
+/* =========================================================================
+ *  Summary statistics queries
+ * ========================================================================= */
+
+import type {
+  FileStats,
+  MimeTypeCount,
+  ArtifactCategoryCount,
+  TopSignature,
+} from "./types";
+
+export async function getFileStats(
+  evidenceId: number,
+  partitionId: number,
+): Promise<FileStats> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows: any[] = await db.select(
+    `SELECT
+       COALESCE(SUM(CASE WHEN is_dir = 0 THEN 1 ELSE 0 END), 0)  AS total_files,
+       COALESCE(SUM(CASE WHEN is_dir = 1 THEN 1 ELSE 0 END), 0)  AS total_dirs,
+       COALESCE(SUM(CASE WHEN is_dir = 0 THEN size ELSE 0 END), 0) AS total_size,
+       MIN(CASE WHEN created  > 0 THEN created  END)              AS earliest_ts,
+       MAX(CASE WHEN modified > 0 THEN modified
+                WHEN created  > 0 THEN created  END)              AS latest_ts
+     FROM system_files
+     WHERE evidence_id = $1 AND partition_id = $2`,
+    [evidenceId, partitionId],
+  );
+  const r = rows[0];
+  return {
+    total_files: Number(r.total_files ?? 0),
+    total_dirs:  Number(r.total_dirs  ?? 0),
+    total_size:  Number(r.total_size  ?? 0),
+    earliest_ts: r.earliest_ts ? Number(r.earliest_ts) : null,
+    latest_ts:   r.latest_ts   ? Number(r.latest_ts)   : null,
+  };
+}
+
+export async function getMimeTypeDistribution(
+  evidenceId: number,
+  partitionId: number,
+): Promise<MimeTypeCount[]> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows: any[] = await db.select(
+    `SELECT
+       CASE
+         WHEN sig_mime LIKE 'image/%'                          THEN 'Images'
+         WHEN sig_mime LIKE 'video/%'                          THEN 'Video'
+         WHEN sig_mime LIKE 'audio/%'                          THEN 'Audio'
+         WHEN sig_mime LIKE 'text/%'                           THEN 'Text'
+         WHEN sig_mime = 'application/pdf'
+           OR sig_mime LIKE '%word%'
+           OR sig_mime LIKE '%excel%'
+           OR sig_mime LIKE '%powerpoint%'
+           OR sig_mime LIKE '%spreadsheet%'
+           OR sig_mime LIKE '%presentation%'                   THEN 'Documents'
+         WHEN sig_mime IN (
+               'application/zip','application/x-rar-compressed',
+               'application/x-tar','application/gzip',
+               'application/x-bzip2','application/x-7z-compressed',
+               'application/x-xz','application/x-compress')
+           OR sig_mime LIKE 'application/x-rar%'              THEN 'Archives'
+         WHEN sig_mime IN (
+               'application/x-dosexec','application/x-elf',
+               'application/x-sharedlib',
+               'application/vnd.microsoft.portable-executable')
+           OR sig_mime LIKE 'application/x-executable%'       THEN 'Executables'
+         WHEN sig_mime IS NULL OR sig_mime = ''                THEN 'Unknown'
+         ELSE 'Other'
+       END AS mime_category,
+       COUNT(*) AS count
+     FROM system_files
+     WHERE evidence_id = $1 AND partition_id = $2 AND is_dir = 0
+     GROUP BY mime_category
+     ORDER BY count DESC`,
+    [evidenceId, partitionId],
+  );
+  return rows.map((r) => ({
+    mime_category: String(r.mime_category),
+    count: Number(r.count),
+  }));
+}
+
+export async function getArtifactCategoryCounts(
+  evidenceId: number,
+  partitionId: number,
+): Promise<ArtifactCategoryCount[]> {
+  try {
+    const db = await getEvidenceDb(evidenceId);
+    const rows: any[] = await db.select(
+      `SELECT category, COUNT(*) AS count
+       FROM artifacts
+       WHERE evidence_id = $1 AND partition_id = $2
+       GROUP BY category
+       ORDER BY count DESC`,
+      [evidenceId, partitionId],
+    );
+    return rows.map((r) => ({
+      category: String(r.category),
+      count: Number(r.count),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getTopFileSignatures(
+  evidenceId: number,
+  partitionId: number,
+  limit = 12,
+): Promise<TopSignature[]> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows: any[] = await db.select(
+    `SELECT sig_name, COUNT(*) AS count
+     FROM system_files
+     WHERE evidence_id = $1 AND partition_id = $2
+       AND is_dir = 0
+       AND sig_name IS NOT NULL AND sig_name != ''
+     GROUP BY sig_name
+     ORDER BY count DESC
+     LIMIT $3`,
+    [evidenceId, partitionId, limit],
+  );
+  return rows.map((r) => ({
+    sig_name: String(r.sig_name),
+    count: Number(r.count),
+  }));
 }

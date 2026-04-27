@@ -5,7 +5,7 @@ import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import Database from "@tauri-apps/plugin-sql";
 import "./App.css";
-import { ThemeProvider, createTheme, GlobalStyles } from "@mui/material";
+import { ThemeProvider } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
 import MiniDrawer from "./components/navigation/MiniDrawer";
 import { BrowserRouter as Router, Routes, Route } from "react-router";
@@ -22,18 +22,16 @@ import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/Main";
 import { LicenseInfo } from "@mui/x-license";
 import RawViewer from "./RawViewer";
-import { glassTheme } from "./glassTheme";
+import { createGlassTheme } from "./glassTheme";
 import { NavHistoryProvider } from "./components/navigation/NavHistory";
-
-// const darkTheme = createTheme({
-//   palette: {
-//     mode: "dark",
-//   },
-// });
+import { ThemeModeProvider, useThemeMode } from "./ThemeContext";
 
 LicenseInfo.setLicenseKey("LICENCE_KEY_HERE");
 
-const App: React.FC = () => {
+const AppWithTheme: React.FC = () => {
+  const { themeMode } = useThemeMode();
+  const theme = React.useMemo(() => createGlassTheme(themeMode), [themeMode]);
+
   const [database, setDatabase] = React.useState<Database | null>(null);
   const [firstLaunch, setFirstLaunch] = React.useState<Boolean>(false);
 
@@ -51,7 +49,7 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <ThemeProvider theme={glassTheme}>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
       <SnackbarProvider>
         {firstLaunch ? (
@@ -106,5 +104,11 @@ const App: React.FC = () => {
     </ThemeProvider>
   );
 };
+
+const App: React.FC = () => (
+  <ThemeModeProvider>
+    <AppWithTheme />
+  </ThemeModeProvider>
+);
 
 export default App;

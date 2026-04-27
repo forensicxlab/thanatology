@@ -52,7 +52,10 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
         const info: FsInfo = await invoke("get_fs_info", {
           path,
           offset: logical ? 0 : (partition as any).first_byte_addr,
-          size: logical ? partition.size : (partition as any).size_sectors,
+          size: logical
+            ? Math.ceil(partition.size / 512)
+            : (partition as any).size_sectors,
+          fvek: (partition as any).fvek || null,
         });
 
         setFsInfo(info);
@@ -66,24 +69,24 @@ const FileSystem: React.FC<FileSystemProps> = ({ path, partition }) => {
   }, [partition, path, display_message]);
   const oem = fsInfo ? oemString(fsInfo.metadata) : "";
 
-  return (
-    fsInfo && (
-      <Paper elevation={3} sx={{ p: 2, borderLeft: "4px solid #ab47bc" }}>
-        <Box display="flex" alignItems="center" mb={1}>
-          <GridView color="secondary" sx={{ mr: 1 }} />
-          <Typography variant="subtitle1">FileSystem</Typography>
-        </Box>
-
-        {oem.startsWith("NTFS") ? (
-          <NtfsLayout metadata={fsInfo.metadata} />
-        ) : oem.startsWith("EXFAT") ? (
-          <ExfatLayout metadata={fsInfo.metadata} />
-        ) : (
-          <ExtfsLayout superblock={fsInfo.metadata} />
-        )}
-      </Paper>
-    )
-  );
+  return (fsInfo && (<Paper elevation={3} sx={{ p: 2, borderLeft: "4px solid #ab47bc" }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        mb: 1
+      }}>
+      <GridView color="secondary" sx={{ mr: 1 }} />
+      <Typography variant="subtitle1">FileSystem</Typography>
+    </Box>
+    {oem.startsWith("NTFS") ? (
+      <NtfsLayout metadata={fsInfo.metadata} />
+    ) : oem.startsWith("EXFAT") ? (
+      <ExfatLayout metadata={fsInfo.metadata} />
+    ) : (
+      <ExtfsLayout superblock={fsInfo.metadata} />
+    )}
+  </Paper>));
 };
 
 export default FileSystem;

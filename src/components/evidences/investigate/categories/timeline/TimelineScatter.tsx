@@ -61,6 +61,11 @@ const BUCKET_MS: Record<Bucket, number> = {
   day: 86_400_000,
 };
 
+const SCATTER_ZOOM_INTERACTION_CONFIG = {
+  zoom: ["wheel", "pinch"] as const,
+  pan: ["drag", "wheel"] as const,
+};
+
 function stableStringifyFilterModel(m: GridFilterModel | undefined) {
   const items = [...(m?.items ?? [])]
     .map((it) => ({
@@ -124,11 +129,15 @@ function TooltipContent(props: {
       <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
         {count} file(s) — <UnixToISO8601UTC timestamp={ts} />
       </Typography>
-
       <Divider sx={{ my: 1 }} />
-
       {/* Series badge */}
-      <Stack direction="row" alignItems="center" gap={1}>
+      <Stack
+        direction="row"
+        sx={{
+          alignItems: "center",
+          gap: 1,
+        }}
+      >
         <Box
           sx={{
             width: 12,
@@ -178,9 +187,9 @@ export default function TimelineScatter({
   const hasPendingChanges =
     bucketPending !== bucketApplied ||
     (rangePending[0]?.valueOf() ?? null) !==
-    (rangeApplied[0]?.valueOf() ?? null) ||
+      (rangeApplied[0]?.valueOf() ?? null) ||
     (rangePending[1]?.valueOf() ?? null) !==
-    (rangeApplied[1]?.valueOf() ?? null);
+      (rangeApplied[1]?.valueOf() ?? null);
 
   const gridFilterKey = React.useMemo(
     () => stableStringifyFilterModel(gridFilterModel),
@@ -283,6 +292,8 @@ export default function TimelineScatter({
     [chartSeries, bucketApplied, onFilesFilterChange],
   );
 
+  const hasChartData = chartSeries.some((series) => series.data.length > 0);
+
   const xMin = rangeApplied[0]?.valueOf() ?? undefined;
   const xMax = rangeApplied[1]?.valueOf() ?? undefined;
 
@@ -308,7 +319,11 @@ export default function TimelineScatter({
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Stack gap={2}>
+      <Stack
+        sx={{
+          gap: 2,
+        }}
+      >
         <Typography variant="h6" sx={{ alignSelf: "center" }}>
           File Timestamps Timeline (Created / Accessed / Modified)
         </Typography>
@@ -316,10 +331,12 @@ export default function TimelineScatter({
         {/* Controls */}
         <Stack
           direction={{ xs: "column", sm: "row" }}
-          gap={2}
-          alignItems={{ xs: "stretch", sm: "center" }}
-          justifyContent="center"
-          sx={{ flexWrap: "wrap" }}
+          sx={{
+            gap: 2,
+            alignItems: { xs: "stretch", sm: "center" },
+            justifyContent: "center",
+            flexWrap: "wrap",
+          }}
         >
           {/* Bucket selector (pending) */}
           <FormControl size="small" sx={{ minWidth: 160 }}>
@@ -357,7 +374,13 @@ export default function TimelineScatter({
                     />
                   }
                   label={
-                    <Stack direction="row" gap={1} alignItems="center">
+                    <Stack
+                      direction="row"
+                      sx={{
+                        gap: 1,
+                        alignItems: "center",
+                      }}
+                    >
                       <Box
                         sx={{
                           width: 12,
@@ -375,7 +398,13 @@ export default function TimelineScatter({
           </FormControl>
 
           {/* Marker size */}
-          <Stack direction="row" gap={2} alignItems="center">
+          <Stack
+            direction="row"
+            sx={{
+              gap: 2,
+              alignItems: "center",
+            }}
+          >
             <Typography
               id="marker-size-slider"
               variant="body2"
@@ -406,7 +435,13 @@ export default function TimelineScatter({
           />
 
           {/* Action buttons */}
-          <Stack direction="row" gap={1} alignItems="center">
+          <Stack
+            direction="row"
+            sx={{
+              gap: 1,
+              alignItems: "center",
+            }}
+          >
             <Button
               variant="contained"
               size="small"
@@ -447,18 +482,35 @@ export default function TimelineScatter({
           </Typography>
         ) : loading ? (
           <Stack
-            alignItems="center"
-            justifyContent="center"
-            sx={{ height: 600 }}
+            sx={{
+              alignItems: "center",
+              justifyContent: "center",
+              height: 600,
+            }}
           >
             <CircularProgress />
             <Typography variant="body2" sx={{ mt: 1 }}>
               Loading data…
             </Typography>
           </Stack>
+        ) : !hasChartData ? (
+          <Stack
+            sx={{
+              alignItems: "center",
+              justifyContent: "center",
+              height: 300,
+            }}
+          >
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              {enabledTypes.length === 0
+                ? "Select at least one timestamp type to display the timeline."
+                : "No timestamp data matched the current filters."}
+            </Typography>
+          </Stack>
         ) : (
           <ScatterChartPro
             height={300}
+            zoomInteractionConfig={SCATTER_ZOOM_INTERACTION_CONFIG}
             xAxis={[
               {
                 id: "time",
@@ -482,8 +534,8 @@ export default function TimelineScatter({
           Bucket (applied): {bucketApplied}. Range:{" "}
           {rangeApplied[0] && rangeApplied[1]
             ? `${toISO8601UTCString(rangeApplied[0].valueOf())} → ${toISO8601UTCString(
-              rangeApplied[1].valueOf(),
-            )}`
+                rangeApplied[1].valueOf(),
+              )}`
             : "none (full dataset)"}
         </Typography>
       </Stack>

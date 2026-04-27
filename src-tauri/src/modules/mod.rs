@@ -4,5 +4,6 @@ pub mod th_evidences;
 pub mod th_filesystem;
 pub mod th_identifier;
 pub mod th_index;
+pub mod th_memory;
 pub mod utils;
 pub mod agents;

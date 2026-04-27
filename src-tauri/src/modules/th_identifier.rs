@@ -1,14 +1,20 @@
 use exhume_filesystem::filesystem::DirectoryCommon;
 use exhume_filesystem::Filesystem;
-use file_type::FileType;
-use log::{error, info};
-use sqlx::{Pool, Row, Sqlite};
+use serde::Serialize;
+use sqlx::{Pool, Sqlite};
 use tauri::AppHandle;
 
 use crate::modules::utils::th_progress::{
     emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
-const SAMPLE_LEN: usize = 8192; // 8 KiB of magic bytes
+use tokio::sync::mpsc;
+
+#[derive(Serialize)]
+struct ProgressPayload {
+    current: u64,
+    total: u64,
+    message: String,
+}
 
 pub async fn identify_file_types<T: Filesystem>(
     fs: &mut T,
@@ -19,151 +25,56 @@ pub async fn identify_file_types<T: Filesystem>(
 ) where
     T::DirectoryType: DirectoryCommon,
 {
-    info!("Starting file-signature identification…");
+    let (tx, mut rx) = mpsc::channel::<exhume_indexer::IndexerEvent>(100);
+    let app_clone = app.clone();
 
-    //--------------------------------------------------------------
-    // 1) Pull identifiers of every regular, non-empty file.
-    //--------------------------------------------------------------
-    let rows = match sqlx::query(
-        r#"
-        SELECT identifier
-        FROM   system_files
-        WHERE  evidence_id  = ?
-          AND  partition_id = ?
-          AND  size        > 0
-        "#,
+    // Spawn a task to listen for progress events from the headless indexer
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event.event_type {
+                exhume_indexer::IndexerEventType::Info
+                | exhume_indexer::IndexerEventType::Warning => emit_progress_event(
+                    &event.evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Info,
+                    event.message,
+                    &app_clone,
+                ),
+                exhume_indexer::IndexerEventType::Success => emit_progress_event(
+                    &event.evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Success,
+                    event.message,
+                    &app_clone,
+                ),
+                exhume_indexer::IndexerEventType::Error => emit_progress_event(
+                    &event.evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Error,
+                    event.message,
+                    &app_clone,
+                ),
+                exhume_indexer::IndexerEventType::Progress { current, total } => emit_progress_event(
+                    &event.evidence_id,
+                    ProgressMessageLevel::Module,
+                    ProgressMessageType::Progress,
+                    ProgressPayload {
+                        current,
+                        total,
+                        message: event.message,
+                    },
+                    &app_clone,
+                ),
+            };
+        }
+    });
+
+    exhume_indexer::identification::identify_file_types(
+        fs,
+        evidence_id,
+        partition_id,
+        &pool,
+        Some(tx),
     )
-    .bind(evidence_id)
-    .bind(partition_id)
-    .fetch_all(&pool)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Module,
-                ProgressMessageType::Error,
-                format!("Could not list files for signature pass: {e:?}"),
-                app,
-            );
-            return;
-        }
-    };
-
-    let total = rows.len() as u64;
-    if total == 0 {
-        emit_progress_event(
-            &evidence_id,
-            ProgressMessageLevel::Module,
-            ProgressMessageType::Success,
-            "No regular file to analyse (skipping file-type module).",
-            app,
-        );
-        return;
-    }
-
-    //--------------------------------------------------------------
-    // 2) Bulk update in a single transaction.
-    //--------------------------------------------------------------
-    let mut tx = match pool.begin().await {
-        Ok(t) => t,
-        Err(e) => {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Module,
-                ProgressMessageType::Error,
-                format!("Could not open DB transaction: {e:?}"),
-                app,
-            );
-            return;
-        }
-    };
-
-    //--------------------------------------------------------------
-    // 3) For every file: read prefix → detect → UPDATE … .bind().
-    //--------------------------------------------------------------
-    let mut processed = 0u64;
-
-    for row in rows {
-        let record_id = row.get::<i64, _>("identifier") as u64;
-
-        // FS record
-        let record = match fs.get_file(record_id) {
-            Ok(rec) => rec,
-            Err(e) => {
-                error!("get_file error id={record_id}: {e}");
-                continue;
-            }
-        };
-
-        // Efficient prefix read
-        let prefix = match fs.read_file_prefix(&record, SAMPLE_LEN) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("read_file_prefix error id={record_id}: {e}");
-                continue;
-            }
-        };
-
-        // Signature → UPDATE
-        if let ft = FileType::from_bytes(&prefix) {
-            //info!("Found file type: {}", ft.name());
-            if let Err(e) = sqlx::query(
-                r#"
-                UPDATE system_files
-                   SET sig_name = ?,
-                       sig_mime = ?,
-                       sig_exts = ?
-                 WHERE evidence_id  = ?
-                   AND partition_id = ?
-                   AND identifier   = ?
-                "#,
-            )
-            .bind(ft.name())
-            .bind(ft.media_types().join(","))
-            .bind(ft.extensions().join(","))
-            .bind(evidence_id)
-            .bind(partition_id)
-            .bind(record_id as i64)
-            .execute(&mut *tx)
-            .await
-            {
-                error!("DB update error id={record_id}: {e:?}");
-            }
-        }
-
-        processed += 1;
-        if processed % 500 == 0 || processed == total {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Module,
-                ProgressMessageType::Info,
-                format!("Signature analysed for {processed}/{total} files…"),
-                app,
-            );
-        }
-    }
-
-    //--------------------------------------------------------------
-    // 4) Commit.
-    //--------------------------------------------------------------
-    if let Err(e) = tx.commit().await {
-        emit_progress_event(
-            &evidence_id,
-            ProgressMessageLevel::Module,
-            ProgressMessageType::Error,
-            format!("Signature-pass commit error: {e:?}"),
-            app,
-        );
-        return;
-    }
-
-    emit_progress_event(
-        &evidence_id,
-        ProgressMessageLevel::Module,
-        ProgressMessageType::Success,
-        format!("File-signature identification done for {total} files."),
-        app,
-    );
+    .await;
 }

@@ -1,6 +1,7 @@
 // NewEvidenceForm.tsx
 import React from "react";
 import {
+  Alert,
   Box,
   Button,
   TextField,
@@ -10,6 +11,10 @@ import {
   FormControl,
 } from "@mui/material";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  EvidenceImageDraft,
+} from "../../../dbutils/types";
+import EvidenceImageAttachments from "./EvidenceImageAttachments";
 
 export interface NewEvidenceFormProps {
   evidenceName: string;
@@ -21,6 +26,7 @@ export interface NewEvidenceFormProps {
   | "Folder";
   evidenceLocation: string;
   evidenceDescription: string;
+  evidenceImages: EvidenceImageDraft[];
   // Handlers for controlled fields:
   onEvidenceNameChange: (value: string) => void;
   onEvidenceTypeChange: (
@@ -33,6 +39,7 @@ export interface NewEvidenceFormProps {
   ) => void;
   onEvidenceLocationChange: (value: string) => void;
   onEvidenceDescriptionChange: (value: string) => void;
+  onEvidenceImagesChange: (value: EvidenceImageDraft[]) => void;
   // Form submit handler (used when not embedded)
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   // When true, the component will render without a form wrapper and submit button.
@@ -45,13 +52,19 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
     evidenceType,
     evidenceLocation,
     evidenceDescription,
+    evidenceImages,
     onEvidenceNameChange,
     onEvidenceTypeChange,
     onEvidenceLocationChange,
     onEvidenceDescriptionChange,
+    onEvidenceImagesChange,
     onSubmit,
     hideSubmitButton,
   } = props;
+
+  const hasImageCaptionError = evidenceImages.some(
+    (image) => image.caption.trim().length === 0,
+  );
 
   const handleFileSelect = async () => {
     try {
@@ -138,6 +151,18 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
         multiline
         rows={4}
       />
+
+      <EvidenceImageAttachments
+        images={evidenceImages}
+        onChange={onEvidenceImagesChange}
+      />
+
+      {hasImageCaptionError && (
+        <Alert severity="warning">
+          Each attached image must include a caption before the evidence can be
+          created.
+        </Alert>
+      )}
 
       {/* Conditionally render submit button if not embedded */}
       {!hideSubmitButton && (

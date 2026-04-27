@@ -55,10 +55,11 @@ interface HexViewerWindowProps {
   fileId: number;
   fileSize: number;
   path: string;
+  rootPath?: string;
 }
 
 const HexViewerWindow = forwardRef<HexViewerHandle, HexViewerWindowProps>(
-  ({ fileId, fileSize, path }, ref) => {
+  ({ fileId, fileSize, path, rootPath }, ref) => {
     const viewerRef = useRef<HexViewerHandle>(null);
 
     const [gotoOffset, setGotoOffset] = useState("");
@@ -116,6 +117,7 @@ const HexViewerWindow = forwardRef<HexViewerHandle, HexViewerWindowProps>(
             offset: selection.start,
             length: readLen,
             path,
+            rootPath,
           });
 
           if (cancelled) return;
@@ -146,7 +148,7 @@ const HexViewerWindow = forwardRef<HexViewerHandle, HexViewerWindowProps>(
       return () => {
         cancelled = true;
       };
-    }, [selection, fileId]);
+    }, [selection, fileId, path, rootPath]);
 
     return (
       <Box
@@ -222,6 +224,7 @@ const HexViewerWindow = forwardRef<HexViewerHandle, HexViewerWindowProps>(
             fileId={fileId}
             fileSize={fileSize}
             path={path}
+            rootPath={rootPath}
             height="100%"
             onSelectionChange={setSelection}
           />

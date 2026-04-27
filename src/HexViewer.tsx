@@ -28,6 +28,7 @@ export interface HexViewerProps {
   fileId: number;
   fileSize: number;
   path: string;
+  rootPath?: string;
 
   /** Height of the viewer (default "100%") */
   height?: number | string;
@@ -53,13 +54,21 @@ const CACHE_CAPACITY = 128;
 const ROW_HEIGHT = 20;
 
 const CURSOR_STYLE: CSSProperties = {
-  outline: "2px solid #1976d2",
+  outline: "2px solid #56b3f0",
   outlineOffset: "-1px",
   borderRadius: "2px",
 };
 
 const SELECT_BG_STYLE: CSSProperties = {
-  backgroundColor: "#194a5c",
+  backgroundColor: "#1a4976",
+};
+
+const HOVER_BG_STYLE: CSSProperties = {
+  backgroundColor: "rgba(100, 180, 255, 0.09)",
+};
+
+const HOVER_SEL_BG_STYLE: CSSProperties = {
+  backgroundColor: "#245a7a",
 };
 
 const hex = (n: number, len: number) =>
@@ -128,6 +137,7 @@ interface RowData {
   getRowSlice: (row: number) => Promise<Uint8Array>;
   selRange: ByteRange | null;
   cursor: number | null;
+  hoveredOffset: number | null;
   onByteMouseDown: (e: MouseEvent, off: number) => void;
   onByteMouseEnter: (e: MouseEvent, off: number) => void;
   offsetDigits: number;
@@ -195,6 +205,7 @@ const HexRow = memo(
       getRowSlice,
       selRange,
       cursor,
+      hoveredOffset,
       onByteMouseDown,
       onByteMouseEnter,
       offsetDigits,
@@ -233,6 +244,16 @@ const HexRow = memo(
       globalOffset >= selRange.start &&
       globalOffset <= selRange.end;
 
+    const byteBg = (globalOffset: number, outOfFile: boolean) => {
+      if (outOfFile) return {};
+      const sel = byteSelected(globalOffset);
+      const hov = hoveredOffset === globalOffset;
+      if (sel && hov) return HOVER_SEL_BG_STYLE;
+      if (sel) return SELECT_BG_STYLE;
+      if (hov) return HOVER_BG_STYLE;
+      return {};
+    };
+
     if (!bytes) {
       return (
         <Box sx={rowSx} className="font-mono text-sm leading-5">
@@ -245,23 +266,25 @@ const HexRow = memo(
       <Box role="row" aria-rowindex={index + 1} sx={rowSx}>
         {/* Offset */}
         <Box
-          display="flex"
-          alignItems="center"
-          gap={1}
           onMouseDown={(e) => onByteMouseDown(e, rowOffset)}
           onMouseEnter={(e) => onByteMouseEnter(e, rowOffset)}
-          sx={{ cursor: "pointer" }}
-        >
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            cursor: "crosshair",
+          }}>
           <Typography
             component="span"
-            color="text.secondary"
-            sx={{ fontSize: "0.75rem", paddingRight: 1 }}
-          >
+            sx={{
+              color: "text.secondary",
+              fontSize: "0.75rem",
+              paddingRight: 1
+            }}>
             {hex(rowOffset, offsetDigits)}
           </Typography>
           <Divider orientation="vertical" flexItem />
         </Box>
-
         {/* Hex bytes */}
         <Box className="select-none" sx={HEX_GRID_CSS}>
           {Array.from({ length: BYTES_PER_ROW }, (_, i) => {
@@ -269,7 +292,6 @@ const HexRow = memo(
             const b = bytes[i];
             const outOfFile = globalOffset >= fileSize;
             const isCursor = cursor === globalOffset;
-            const isSel = !outOfFile && byteSelected(globalOffset);
 
             return (
               <Box
@@ -282,7 +304,7 @@ const HexRow = memo(
                   display: "inline-block",
                   width: "100%",
                   ...(i === 7 ? { marginRight: "1ch" } : {}),
-                  ...(isSel ? SELECT_BG_STYLE : {}),
+                  ...byteBg(globalOffset, outOfFile),
                   ...(isCursor ? CURSOR_STYLE : {}),
                   opacity: outOfFile ? 0.35 : 1,
                 }}
@@ -296,16 +318,20 @@ const HexRow = memo(
                     ? undefined
                     : (e) => onByteMouseEnter(e, globalOffset)
                 }
-                style={{ cursor: outOfFile ? "default" : "pointer" }}
+                style={{ cursor: outOfFile ? "default" : "crosshair" }}
               >
                 {b === undefined ? "  " : hex(b, 2)}
               </Box>
             );
           })}
         </Box>
-
         {/* ASCII */}
-        <Box display="flex" alignItems="center" gap={1}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1
+          }}>
           <Divider orientation="vertical" flexItem />
           <Box className="select-none" sx={ASCII_GRID_CSS}>
             {Array.from({ length: BYTES_PER_ROW }, (_, i) => {
@@ -313,7 +339,6 @@ const HexRow = memo(
               const b = bytes[i];
               const outOfFile = globalOffset >= fileSize;
               const isCursor = cursor === globalOffset;
-              const isSel = !outOfFile && byteSelected(globalOffset);
 
               return (
                 <Typography
@@ -326,7 +351,7 @@ const HexRow = memo(
                     display: "inline-block",
                     width: "100%",
                     ...(i === 7 ? { marginRight: "1ch" } : {}),
-                    ...(isSel ? SELECT_BG_STYLE : {}),
+                    ...byteBg(globalOffset, outOfFile),
                     ...(isCursor ? CURSOR_STYLE : {}),
                     opacity: outOfFile ? 0.35 : 1,
                   }}
@@ -340,7 +365,7 @@ const HexRow = memo(
                       ? undefined
                       : (e) => onByteMouseEnter(e, globalOffset)
                   }
-                  style={{ cursor: outOfFile ? "default" : "pointer" }}
+                  style={{ cursor: outOfFile ? "default" : "crosshair" }}
                 >
                   {b === undefined
                     ? " "
@@ -355,12 +380,9 @@ const HexRow = memo(
       </Box>
     );
   },
-  // Keep it simple: let selection/cursor changes re-render visible rows.
-  // The big perf win comes from debouncing onSelectionChange (parent work).
   (prev, next) => {
     if (prev.index !== next.index) return false;
 
-    // IMPORTANT: style changes as you scroll
     const ps = prev.style as any;
     const ns = next.style as any;
     if (
@@ -377,7 +399,19 @@ const HexRow = memo(
 
     const a = prev.data.selRange;
     const b = next.data.selRange;
-    return a?.start === b?.start && a?.end === b?.end;
+    if (a?.start !== b?.start || a?.end !== b?.end) return false;
+
+    // Only re-render if hover change affects a byte in this row
+    if (prev.data.hoveredOffset !== next.data.hoveredOffset) {
+      const rowStart = prev.index * BYTES_PER_ROW;
+      const rowEnd = rowStart + BYTES_PER_ROW - 1;
+      const inRow = (off: number | null) =>
+        off !== null && off >= rowStart && off <= rowEnd;
+      if (inRow(prev.data.hoveredOffset) || inRow(next.data.hoveredOffset))
+        return false;
+    }
+
+    return true;
   },
 );
 
@@ -388,6 +422,7 @@ const HexViewer = forwardRef(
       fileId,
       fileSize,
       path,
+      rootPath,
       height = "100%",
       onSelectionChange,
       selectionDebounceMs = 120,
@@ -407,7 +442,7 @@ const HexViewer = forwardRef(
     const cacheRef = useRef(new LRU<number, Uint8Array>(CACHE_CAPACITY));
     useEffect(() => {
       cacheRef.current = new LRU<number, Uint8Array>(CACHE_CAPACITY);
-    }, [fileId, fileSize]);
+    }, [fileId, fileSize, path, rootPath]);
 
     const fetchChunk = useCallback(
       async (chunkStart: number): Promise<Uint8Array> => {
@@ -422,13 +457,14 @@ const HexViewer = forwardRef(
           offset: chunkStart,
           length,
           path,
+          rootPath,
         });
 
         const buf = Uint8Array.from(data);
         cacheRef.current.set(chunkStart, buf);
         return buf;
       },
-      [fileId, fileSize, path],
+      [fileId, fileSize, path, rootPath],
     );
 
     const getRowSlice = useCallback(
@@ -473,6 +509,10 @@ const HexViewer = forwardRef(
 
     /* ─────────────── mouse-drag selection ─────────────── */
     const [dragging, setDragging] = useState(false);
+    // Ref mirrors dragging state — avoids stale closure in onByteMouseEnter
+    const draggingRef = useRef(false);
+
+    const [hoveredOffset, setHoveredOffset] = useState<number | null>(null);
 
     // Debounced selection emitter (prevents parent work during drag)
     const emitTimerRef = useRef<number | null>(null);
@@ -510,14 +550,28 @@ const HexViewer = forwardRef(
     // End drag + flush selection on global mouse-up
     useEffect(() => {
       const onUp = () => {
-        if (dragging) {
+        if (draggingRef.current) {
+          draggingRef.current = false;
           setDragging(false);
           flushSelection();
         }
       };
       window.addEventListener("mouseup", onUp);
       return () => window.removeEventListener("mouseup", onUp);
-    }, [dragging, flushSelection]);
+    }, [flushSelection]);
+
+    // Keep document cursor as crosshair for the full duration of a drag
+    useEffect(() => {
+      if (!dragging) return;
+      const prev = document.body.style.cursor;
+      const prevSelect = document.body.style.userSelect;
+      document.body.style.cursor = "crosshair";
+      document.body.style.userSelect = "none";
+      return () => {
+        document.body.style.cursor = prev;
+        document.body.style.userSelect = prevSelect;
+      };
+    }, [dragging]);
 
     const onByteMouseDown = useCallback(
       (e: MouseEvent, byteOffset: number) => {
@@ -536,12 +590,13 @@ const HexViewer = forwardRef(
           toggle: e.ctrlKey || (e as unknown as KeyboardEvent).metaKey,
         });
 
-        // Start drag only for primary button
+        // Start drag only for primary button without modifiers
         if (
           e.button === 0 &&
           !e.ctrlKey &&
           !(e as unknown as KeyboardEvent).metaKey
         ) {
+          draggingRef.current = true;
           setDragging(true);
         }
       },
@@ -550,12 +605,15 @@ const HexViewer = forwardRef(
 
     const onByteMouseEnter = useCallback(
       (_e: MouseEvent, byteOffset: number) => {
-        if (!dragging) return;
         const clamped = clampOffset(byteOffset, fileSize);
+        if (clamped !== null) setHoveredOffset(clamped);
+        // Use the ref (not state) so this never runs with a stale dragging=true
+        // after mouseup has already fired
+        if (!draggingRef.current) return;
         if (clamped === null) return;
         dispatchSel({ type: "extend", offset: clamped });
       },
-      [dragging, fileSize],
+      [fileSize],
     );
 
     /* ─────────────── keyboard navigation ─────────────── */
@@ -677,6 +735,8 @@ const HexViewer = forwardRef(
             fileId,
             offset: off,
             length: readLen,
+            path,
+            rootPath,
           });
 
           const view = Uint8Array.from(data);
@@ -694,7 +754,7 @@ const HexViewer = forwardRef(
 
         return null;
       },
-      [fileId, fileSize, selState.range],
+      [fileId, fileSize, path, rootPath, selState.range],
     );
 
     useImperativeHandle(ref, () => ({
@@ -733,6 +793,7 @@ const HexViewer = forwardRef(
         getRowSlice,
         selRange: selState.range,
         cursor,
+        hoveredOffset,
         onByteMouseDown,
         onByteMouseEnter,
         offsetDigits,
@@ -743,6 +804,7 @@ const HexViewer = forwardRef(
         selState.range?.start,
         selState.range?.end,
         cursor,
+        hoveredOffset,
         onByteMouseDown,
         onByteMouseEnter,
         offsetDigits,
@@ -767,6 +829,7 @@ const HexViewer = forwardRef(
           tabIndex={0}
           ref={containerRef}
           onKeyDown={handleKeyDown}
+          onMouseLeave={() => setHoveredOffset(null)}
           sx={{
             outline: "none",
             userSelect: "none",
@@ -776,7 +839,12 @@ const HexViewer = forwardRef(
         >
           {/* Header */}
           <Box ref={headerRef} sx={headerSx}>
-            <Box display="flex" alignItems="center" gap={1}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1
+              }}>
               <Typography component="span" sx={{ paddingRight: 1 }} />
             </Box>
 
@@ -799,7 +867,12 @@ const HexViewer = forwardRef(
               ))}
             </Box>
 
-            <Box display="flex" alignItems="center" gap={1}>
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1
+              }}>
               <Divider orientation="vertical" flexItem />
             </Box>
           </Box>

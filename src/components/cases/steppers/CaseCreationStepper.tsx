@@ -44,8 +44,10 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
     type: "Physical Disk image",
     path: "",
     description: "",
+    images: [],
     case_id: 0,
     status: 0,
+    db_path: "",
   };
 
   const [evidences, setEvidences] = React.useState<Evidence[]>([
@@ -59,7 +61,8 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
   const isEvidenceComplete = (evidence: Evidence): boolean =>
     evidence.name.trim() !== "" &&
     evidence.type.trim() !== "" &&
-    evidence.description.trim() !== "";
+    evidence.description.trim() !== "" &&
+    (evidence.images ?? []).every((image) => image.caption.trim() !== "");
 
   const isEvidenceStepValid = (): boolean =>
     evidences.every(isEvidenceComplete);
@@ -121,6 +124,13 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
           type: e.type,
           path: e.path,
           description: e.description,
+          images: (e.images ?? []).map((image) => ({
+            caption: image.caption.trim(),
+            file_name: image.file_name,
+            mime_type: image.mime_type,
+            source_kind: image.source_kind,
+            bytes: image.bytes,
+          })),
         })),
       );
 

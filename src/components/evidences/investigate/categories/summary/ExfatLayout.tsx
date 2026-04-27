@@ -43,12 +43,13 @@ function LayoutBar({
 
   return (
     <Box
-      display="flex"
-      border="1px solid #ccc"
-      borderRadius="2px"
-      overflow="hidden"
-      position="relative"
-    >
+      sx={{
+        display: "flex",
+        border: "1px solid #ccc",
+        borderRadius: "2px",
+        overflow: "hidden",
+        position: "relative"
+      }}>
       {sections.map((section, idx) => {
         const widthPercent = (scale(section.sectors) / totalScaled) * 100;
         const offsetHex = bytesToHex(currentOffsetBytes);
@@ -58,18 +59,19 @@ function LayoutBar({
         return (
           <Box
             key={idx}
-            flex={`0 0 ${widthPercent}%`}
-            bgcolor={section.color}
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            position="relative"
             sx={{
+              flex: `0 0 ${widthPercent}%`,
+              bgcolor: section.color,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              position: "relative",
+
               borderRight:
                 idx < sections.length - 1 ? "1px solid #fff" : "none",
-              minWidth: section.sectors > 0 ? "26px" : undefined,
-            }}
-          >
+
+              minWidth: section.sectors > 0 ? "26px" : undefined
+            }}>
             <Typography variant="caption" align="center" sx={{ p: 0.5 }}>
               {section.name}
               <br />
@@ -77,13 +79,13 @@ function LayoutBar({
                 ? "many sectors"
                 : `${section.sectors.toLocaleString()} sectors`}
             </Typography>
-
             <Box
-              position="absolute"
-              bottom="-20px"
-              left="0"
-              sx={{ fontSize: "0.7rem" }}
-            >
+              sx={{
+                position: "absolute",
+                bottom: "-20px",
+                left: "0",
+                fontSize: "0.7rem"
+              }}>
               {offsetHex}
             </Box>
           </Box>
@@ -170,26 +172,34 @@ export default function ExfatLayout({ metadata }: { metadata: AnyObj }) {
 
   return (
     <>
-      <Box mb={1}>
-        <Typography variant="caption" color="text.secondary">
+      <Box sx={{
+        mb: 1
+      }}>
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           exFAT ({oem}) — {bytesPerSector} B/sector, {sectorsPerCluster}{" "}
           sectors/cluster
         </Typography>
       </Box>
-
       <LayoutBar
         sections={sections}
         bytesPerSector={bytesPerSector}
         scale={logScale}
       />
-
-      <Box mt={3}>
-        <Typography variant="caption" color="text.secondary">
+      <Box sx={{
+        mt: 3
+      }}>
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           Root dir starts @ cluster {rootDirFirstCluster} (≈ byte offset{" "}
           {rootDirByteOffset.toLocaleString()}).
         </Typography>
         <br />
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           Total: {totalSectors.toLocaleString()} sectors (
           {totalBytes.toLocaleString()} bytes)
         </Typography>

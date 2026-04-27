@@ -13,19 +13,42 @@ import {
   Dashboard,
   Work,
   Memory,
+  DeveloperBoard,
   QuestionMark,
   Settings,
   ChevronRight,
   ChevronLeft,
 } from "@mui/icons-material";
 import { Outlet, Link } from "react-router";
+import { invoke } from "@tauri-apps/api/core";
 import TitlebarNav from "./TitlebarNav";
 
-const drawerWidth = 200;
-const collapsedDrawerWidth = 52;
-const collapsedDrawerWidthSm = 58;
+const drawerWidth = 180;
+const collapsedDrawerWidth = 44;
+const collapsedDrawerWidthSm = 44;
 
-const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_HEIGHT = 32;
+
+type NavItem = {
+  label: string;
+  icon: React.ReactNode;
+  to?: string;
+  action?: () => Promise<void>;
+};
+
+const navItems: NavItem[] = [
+  { label: "Dashboard", icon: <Dashboard />, to: "/" },
+  { label: "Cases", icon: <Work />, to: "/cases" },
+  { label: "Tasks", icon: <Memory />, to: "/tasks" },
+  {
+    label: "LeechCore",
+    icon: <DeveloperBoard />,
+    action: async () => {
+      await invoke("new_leechcore");
+    },
+  },
+  { label: "Settings", icon: <Settings />, to: "/settings" },
+];
 
 const openedMixin = (theme: Theme): CSSObject => ({
   width: drawerWidth,
@@ -49,30 +72,6 @@ const closedMixin = (theme: Theme): CSSObject => ({
   },
   marginTop: TITLEBAR_HEIGHT,
 });
-
-// const DrawerHeader = styled("div")(({ theme }) => ({
-//   display: "flex",
-//   alignItems: "center",
-//   justifyContent: "flex-end",
-//   padding: theme.spacing(0, 1),
-//   // necessary for content to be below app bar
-//   ...theme.mixins.toolbar,
-// }));
-
-function renderIcon(index: number) {
-  switch (index) {
-    case 0:
-      return <Dashboard />;
-    case 1:
-      return <Work />;
-    case 2:
-      return <Memory />;
-    case 3:
-      return <Settings />;
-    default:
-      return <QuestionMark />;
-  }
-}
 
 const Drawer = styled(MuiDrawer, {
   shouldForwardProp: (prop) => prop !== "open",
@@ -117,6 +116,18 @@ export default function MiniDrawer() {
     setOpen(false);
   };
 
+  const handleAction = async (action?: () => Promise<void>) => {
+    if (!action) {
+      return;
+    }
+
+    try {
+      await action();
+    } catch (error) {
+      console.error("Navigation action failed:", error);
+    }
+  };
+
   return (
     <>
       <TitlebarNav />
@@ -126,8 +137,8 @@ export default function MiniDrawer() {
             sx={{
               display: "flex",
               justifyContent: open ? "flex-end" : "center",
-              px: open ? 1 : 0,
-              py: 0.5,
+              px: open ? 0.5 : 0,
+              py: 0.25,
               borderBottom: "1px solid rgba(255,255,255,0.08)",
             }}
           >
@@ -141,39 +152,60 @@ export default function MiniDrawer() {
             </IconButton>
           </Box>
           <List>
-            {["", "Cases", "Tasks", "Settings"].map((text, index) => (
-              <ListItem key={index} disablePadding sx={{ display: "block" }}>
-                <ListItemButton
-                  sx={{
-                    minHeight: 40,
-                    justifyContent: open ? "initial" : "center",
-                    px: open ? 1.5 : 0,
-                  }}
-                  component={Link}
-                  to={`/${text.toLowerCase().replace(" ", "")}`}
-                >
+            {navItems.map((item) => {
+              const content = (
+                <>
                   <ListItemIcon
                     sx={{
                       minWidth: 0,
                       mr: open ? 1.5 : 0,
                       justifyContent: "center",
                       "& .MuiSvgIcon-root": {
-                        fontSize: 20,
+                        fontSize: 18,
                       },
                     }}
                   >
-                    {renderIcon(index)}
+                    {item.icon ?? <QuestionMark />}
                   </ListItemIcon>
                   <ListItemText
-                    primary={text === "" ? "Dashboard" : text}
+                    primary={item.label}
                     sx={{
                       opacity: open ? 1 : 0,
                       display: open ? "block" : "none",
                     }}
                   />
-                </ListItemButton>
-              </ListItem>
-            ))}
+                </>
+              );
+
+              return (
+                <ListItem key={item.label} disablePadding sx={{ display: "block" }}>
+                  {item.to ? (
+                    <ListItemButton
+                      sx={{
+                        minHeight: 32,
+                        justifyContent: open ? "initial" : "center",
+                        px: open ? 1.5 : 0,
+                      }}
+                      component={Link}
+                      to={item.to}
+                    >
+                      {content}
+                    </ListItemButton>
+                  ) : (
+                    <ListItemButton
+                      sx={{
+                        minHeight: 32,
+                        justifyContent: open ? "initial" : "center",
+                        px: open ? 1.5 : 0,
+                      }}
+                      onClick={() => void handleAction(item.action)}
+                    >
+                      {content}
+                    </ListItemButton>
+                  )}
+                </ListItem>
+              );
+            })}
           </List>
         </Drawer>
         <Box

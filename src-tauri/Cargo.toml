@@ -32,6 +32,8 @@ exhume_partitions = { path = "../../exhume/members/exhume_partitions" }
 exhume_lvm = { path = "../../exhume/members/exhume_lvm" }
 exhume_filesystem = { path = "../../exhume/members/exhume_filesystem" }
 exhume_artefacts = { path = "../../exhume/members/exhume_artefacts" }
+exhume_indexer = { path = "../../exhume/members/exhume_indexer" }
+exhume_memory = { path = "../../exhume/members/exhume_memory" }
 env_logger = "0.10"
 log = "0.4"
 file_type = "0.8.8"
@@ -44,9 +46,11 @@ sqlx = { version = "0.8", default-features = false, features = [
     "regexp",
 ] }
 futures = "0.3.31"
+tauri-plugin-mcp-bridge = "0.11"
 tauri-plugin-shell = "2"
 tauri-plugin-pty = "0.1.0"
 tauri-plugin-os = "2.3.0"
+tauri-plugin-macos-permissions = "2.3.0"
 regex = "1.12.2"
 anyhow = "1.0.100"
 sha2 = "0.10.9"
@@ -54,3 +58,8 @@ md-5 = "0.10.6"
 rig-core = "0.31.0"
 thiserror = "2.0.18"
 base64 = "0.22.1"
+reqwest = { version = "0.13.2", features = ["multipart"] }
+hex = "0.4.3"
+
+[patch.crates-io]
+memflow = { git = "https://github.com/forensicxlab/memflow", branch = "main" }

@@ -84,7 +84,7 @@ fn main() {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     case_id     INTEGER NOT NULL,
                     name        TEXT NOT NULL,
-                    type        TEXT NOT NULL CHECK (type IN ('Physical Disk image', 'Logical Disk image', 'Memory Image', 'Procmon dump')),
+                    type        TEXT NOT NULL CHECK (type IN ('Physical Disk image', 'Logical Disk image', 'Memory Image', 'Procmon dump', 'Folder')),
                     path        TEXT NOT NULL,
                     description TEXT NOT NULL,
                     status      INTEGER NOT NULL DEFAULT 0,
@@ -95,48 +95,31 @@ fn main() {
             "#,
             kind: MigrationKind::Up,
         },
-        // Migration 6: Create MBR/GPT partition entries referencing evidence.
+        // Migration 6: Create portable partitions table referencing evidence.
         Migration {
             version: 6,
-            description: "create_mbr_partition_entries_table",
+            description: "create_partitions_table",
             sql: r#"
-                CREATE TABLE IF NOT EXISTS mbr_partition_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_id        INTEGER NOT NULL,
-                    boot_indicator     INTEGER NOT NULL,
-                    start_chs          BLOB NOT NULL,
-                    end_chs            BLOB NOT NULL,
-                    start_lba          INTEGER NOT NULL,
-                    partition_type     INTEGER NOT NULL,
-                    size_sectors       INTEGER NOT NULL,
-                    sector_size        INTEGER NOT NULL,
-                    first_byte_addr INTEGER NOT NULL,
-                    description        TEXT NOT NULL,
-                    FOREIGN KEY (evidence_id)
-                        REFERENCES evidence(id)
-                        ON DELETE CASCADE
-                );
-                CREATE TABLE IF NOT EXISTS gpt_partition_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_id        INTEGER NOT NULL,
-                    partition_guid     TEXT NOT NULL,
-                    partition_type_guid TEXT NOT NULL,
-                    starting_lba       INTEGER NOT NULL,
-                    ending_lba         INTEGER NOT NULL,
-                    first_byte_addr       INTEGER NOT NULL,
-                    size_sectors         INTEGER NOT NULL,
-                    attributes         INTEGER NOT NULL,
-                    partition_name     TEXT NOT NULL,
-                    description        TEXT NOT NULL,
-                    FOREIGN KEY (evidence_id)
-                        REFERENCES evidence(id)
-                        ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS logical_partition_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    evidence_id        INTEGER NOT NULL,
-                    size               INTEGER NOT NULL,
+                CREATE TABLE IF NOT EXISTS partitions (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id         INTEGER NOT NULL,
+                    kind                TEXT NOT NULL CHECK (kind IN ('mbr', 'gpt', 'logical', 'folder')),
+                    first_byte_addr     INTEGER NOT NULL DEFAULT 0,
+                    size_sectors        INTEGER NOT NULL DEFAULT 0,
+                    sector_size         INTEGER NOT NULL DEFAULT 512,
+                    size_bytes          INTEGER NOT NULL DEFAULT 0,
+                    start_lba           INTEGER,
+                    end_lba             INTEGER,
+                    partition_guid      TEXT,
+                    partition_type_guid TEXT,
+                    partition_name      TEXT,
+                    partition_type      INTEGER,
+                    boot_indicator      INTEGER,
+                    start_chs           BLOB,
+                    end_chs             BLOB,
+                    attributes          INTEGER,
+                    description         TEXT NOT NULL DEFAULT '',
+                    fvek                TEXT,
                     FOREIGN KEY (evidence_id)
                         REFERENCES evidence(id)
                         ON DELETE CASCADE
@@ -180,6 +163,11 @@ fn main() {
                     permissions     TEXT,
                     owner           TEXT,
                     "group"         TEXT,
+                    display         TEXT,
+                    path_key        TEXT    NOT NULL,
+                    parent_path_key TEXT,
+                    depth           INTEGER NOT NULL DEFAULT 0,
+                    is_dir          INTEGER NOT NULL DEFAULT 0,
                     sig_name        TEXT,
                     sig_mime TEXT,
                     sig_exts TEXT,
@@ -223,6 +211,10 @@ fn main() {
             CREATE INDEX IF NOT EXISTS idx_sysfiles_created  ON system_files (created);
             CREATE INDEX IF NOT EXISTS idx_sysfiles_accessed ON system_files (accessed);
             CREATE INDEX IF NOT EXISTS idx_sysfiles_modified ON system_files (modified);
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_tree_path
+              ON system_files (evidence_id, partition_id, path_key);
+            CREATE INDEX IF NOT EXISTS idx_sysfiles_tree_parent
+              ON system_files (evidence_id, partition_id, parent_path_key, is_dir, name);
             "#,
             kind: MigrationKind::Up,
         },
@@ -268,33 +260,24 @@ fn main() {
         },
         Migration {
             version: 12,
-            description: "add_folder_to_evidence_type",
+            description: "evidence_images",
             sql: r#"
-                PRAGMA foreign_keys=OFF;
-                CREATE TABLE evidence_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    case_id     INTEGER NOT NULL,
-                    name        TEXT NOT NULL,
-                    type        TEXT NOT NULL CHECK (type IN ('Physical Disk image', 'Logical Disk image', 'Memory Image', 'Procmon dump', 'Folder')),
-                    path        TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    status      INTEGER NOT NULL DEFAULT 0,
-                    FOREIGN KEY (case_id)
-                        REFERENCES cases(id)
-                        ON DELETE CASCADE
-                );
-                INSERT INTO evidence_new SELECT * FROM evidence;
-                DROP TABLE evidence;
-                ALTER TABLE evidence_new RENAME TO evidence;
-                PRAGMA foreign_keys=ON;
-            "#,
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 13,
-            description: "add_display_to_system_files",
-            sql: r#"
-                ALTER TABLE system_files ADD COLUMN display TEXT;
+            CREATE TABLE IF NOT EXISTS evidence_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                evidence_id INTEGER NOT NULL,
+                caption TEXT NOT NULL CHECK (LENGTH(TRIM(caption)) > 0),
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                source_kind TEXT NOT NULL CHECK (source_kind IN ('camera', 'file')),
+                data BLOB NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (evidence_id)
+                    REFERENCES evidence(id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_evidence_images_evidence_id
+                ON evidence_images (evidence_id);
             "#,
             kind: MigrationKind::Up,
         },

@@ -23,9 +23,11 @@ import sqlWasm from "sql.js/dist/sql-wasm.wasm?url";
 
 interface SqliteViewerProps {
   fileId: number;
+  path?: string;
+  rootPath?: string;
 }
 
-const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
+const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId, path, rootPath }) => {
   const [db, setDb] = useState<Database | null>(null);
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -43,7 +45,11 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
           locateFile: () => sqlWasm,
         });
 
-        const fileBytes = await invoke<number[]>("read_file_bytes", { fileId });
+        const fileBytes = await invoke<number[]>("read_file_bytes", {
+          fileId,
+          path,
+          rootPath,
+        });
         const uint8Array = new Uint8Array(fileBytes);
         const database = new SQL.Database(uint8Array);
         setDb(database);
@@ -74,7 +80,7 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
         db.close();
       }
     };
-  }, [fileId]);
+  }, [fileId, path, rootPath]);
 
   useEffect(() => {
     if (!db || !selectedTable) return;
@@ -124,7 +130,13 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "100%"
+        }}>
         <CircularProgress />
         <Typography sx={{ ml: 2 }}>Loading Database...</Typography>
       </Box>
@@ -133,14 +145,21 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
 
   if (error) {
     return (
-      <Box p={2}>
+      <Box sx={{
+        p: 2
+      }}>
         <Alert severity="error">{error}</Alert>
       </Box>
     );
   }
 
   return (
-    <Box display="flex" height="100%" overflow="hidden">
+    <Box
+      sx={{
+        display: "flex",
+        height: "100%",
+        overflow: "hidden"
+      }}>
       {/* Tables Sidebar */}
       <Paper
         elevation={0}
@@ -165,9 +184,11 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
               >
                 <ListItemText
                   primary={table}
-                  primaryTypographyProps={{
-                    variant: "body2",
-                    noWrap: true,
+                  slotProps={{
+                    primary: {
+                      variant: "body2",
+                      noWrap: true,
+                    }
                   }}
                 />
               </ListItemButton>
@@ -175,11 +196,21 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
           ))}
         </List>
       </Paper>
-
       {/* Content Area */}
-      <Box flex={1} minWidth={0} display="flex" flexDirection="column">
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column"
+        }}>
         {selectedTable ? (
-          <Box flex={1} sx={{ height: "100%", width: "100%" }}>
+          <Box
+            sx={{
+              flex: 1,
+              height: "100%",
+              width: "100%"
+            }}>
             <DataGridPro
               rows={rows}
               columns={columns}
@@ -189,8 +220,14 @@ const SqliteViewer: React.FC<SqliteViewerProps> = ({ fileId }) => {
             />
           </Box>
         ) : (
-          <Box p={4} textAlign="center">
-            <Typography color="text.secondary">No tables found in this database.</Typography>
+          <Box
+            sx={{
+              p: 4,
+              textAlign: "center"
+            }}>
+            <Typography sx={{
+              color: "text.secondary"
+            }}>No tables found in this database.</Typography>
           </Box>
         )}
       </Box>

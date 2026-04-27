@@ -16,19 +16,28 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({ evidence }) => {
         boxShadow: 3,
       }}
     >
-      <Box display="flex" alignItems="center" mb={1}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          mb: 1
+        }}>
         <Fingerprint sx={{ mr: 1, color: "#8bc34a" }} fontSize="large" />
         <Typography variant="h6" color="textPrimary">
           {evidence.name}
         </Typography>
       </Box>
-      <Box mb={1}>
+      <Box sx={{
+        mb: 1
+      }}>
         <Typography variant="body1">
           <strong>Identifier:</strong> EV-{evidence.id}
         </Typography>
         <Typography variant="body1"></Typography>
       </Box>
-      <Box mb={1}>
+      <Box sx={{
+        mb: 1
+      }}>
         <Typography
           variant="body2"
           color="textSecondary"
@@ -38,7 +47,9 @@ const EvidenceDetails: React.FC<EvidenceDetailsProps> = ({ evidence }) => {
           <strong>Path:</strong> {evidence.path}
         </Typography>
       </Box>
-      <Box mb={1}>
+      <Box sx={{
+        mb: 1
+      }}>
         <Typography variant="body2" color="textSecondary">
           <strong>Description:</strong> {evidence.description}
         </Typography>

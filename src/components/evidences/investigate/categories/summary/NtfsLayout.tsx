@@ -66,20 +66,24 @@ export default function NtfsLayout({ metadata }: { metadata: any }) {
 
   return (
     <>
-      <Box mb={1}>
-        <Typography variant="caption" color="text.secondary">
+      <Box sx={{
+        mb: 1
+      }}>
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           NTFS ({asciiFromBytes(metadata.oem_id) || "NTFS"}) — {bytesPerSector}{" "}
           B/sector, {sectorsPerCluster} sectors/cluster
         </Typography>
       </Box>
-
       <Box
-        position="relative"
-        display="flex"
-        border="1px solid #ccc"
-        borderRadius="2px"
-        overflow="hidden"
-      >
+        sx={{
+          position: "relative",
+          display: "flex",
+          border: "1px solid #ccc",
+          borderRadius: "2px",
+          overflow: "hidden"
+        }}>
         {layout.map((section, idx) => {
           const widthPercent = (section.sectors / totalLayoutSectors) * 100;
           const offsetHex = bytesToHex(currentOffsetBytes);
@@ -89,17 +93,17 @@ export default function NtfsLayout({ metadata }: { metadata: any }) {
           return (
             <Box
               key={idx}
-              flex={`0 0 ${widthPercent}%`}
-              bgcolor={section.color}
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              position="relative"
               sx={{
+                flex: `0 0 ${widthPercent}%`,
+                bgcolor: section.color,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+
                 borderRight:
-                  idx < layout.length - 1 ? "1px solid #fff" : "none",
-              }}
-            >
+                  idx < layout.length - 1 ? "1px solid #fff" : "none"
+              }}>
               <Typography variant="caption" align="center" sx={{ p: 0.5 }}>
                 {section.name}
                 <br />
@@ -107,14 +111,14 @@ export default function NtfsLayout({ metadata }: { metadata: any }) {
                   ? "many sectors"
                   : `${section.sectors} sectors`}
               </Typography>
-
               {/* Offset label below */}
               <Box
-                position="absolute"
-                bottom="-20px"
-                left="0"
-                sx={{ fontSize: "0.7rem" }}
-              >
+                sx={{
+                  position: "absolute",
+                  bottom: "-20px",
+                  left: "0",
+                  fontSize: "0.7rem"
+                }}>
                 {offsetHex}
               </Box>
             </Box>
@@ -126,40 +130,43 @@ export default function NtfsLayout({ metadata }: { metadata: any }) {
           mftMirrorPercent >= 0 &&
           mftMirrorPercent <= 100 && (
             <Box
-              position="absolute"
-              top={0}
-              left={`${mftMirrorPercent}%`}
               sx={{
+                position: "absolute",
+                top: 0,
+                left: `${mftMirrorPercent}%`,
                 height: "100%",
                 width: "2px",
-                bgcolor: "rgba(255,255,255,0.9)",
-              }}
-            >
+                bgcolor: "rgba(255,255,255,0.9)"
+              }}>
               <Box
-                position="absolute"
-                top="-18px"
-                left="-36px"
                 sx={{
+                  position: "absolute",
+                  top: "-18px",
+                  left: "-36px",
                   fontSize: "0.7rem",
                   bgcolor: "rgba(0,0,0,0.35)",
                   px: 0.5,
-                  borderRadius: 1,
-                }}
-              >
+                  borderRadius: 1
+                }}>
                 MFTMirr
               </Box>
             </Box>
           )}
       </Box>
-
-      <Box mt={3}>
-        <Typography variant="caption" color="text.secondary">
+      <Box sx={{
+        mt: 3
+      }}>
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           MFT @ cluster {metadata.mft_cluster} (sector {mftStartSector}),
           MFTMirr @ cluster {metadata.mft_mirror_cluster} (sector{" "}
           {mftMirrorSector})
         </Typography>
         <br />
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" sx={{
+          color: "text.secondary"
+        }}>
           Total: {totalSectors} sectors ({totalBytes.toLocaleString()} bytes)
         </Typography>
       </Box>

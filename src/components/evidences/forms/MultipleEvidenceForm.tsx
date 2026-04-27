@@ -88,6 +88,7 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
               evidenceType={evidence.type}
               evidenceLocation={evidence.path}
               evidenceDescription={evidence.description}
+              evidenceImages={evidence.images ?? []}
               onEvidenceNameChange={(value) =>
                 updateEvidenceField(index, "name", value)
               }
@@ -99,6 +100,9 @@ const MultipleEvidenceForm: React.FC<MultipleEvidenceFormProps> = ({
               }
               onEvidenceDescriptionChange={(value) =>
                 updateEvidenceField(index, "description", value)
+              }
+              onEvidenceImagesChange={(value) =>
+                updateEvidenceField(index, "images", value)
               }
             />
           </AccordionDetails>

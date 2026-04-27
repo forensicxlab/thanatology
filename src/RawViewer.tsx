@@ -13,6 +13,7 @@ function useTauriFileReader(
   fileId: number,
   fileSize: number,
   path?: string,
+  rootPath?: string,
   chunkSize = 64 * 1024, // 64 KB default, tweak as needed
 ) {
   const [offset, setOffset] = useState(0);
@@ -23,7 +24,7 @@ function useTauriFileReader(
   useEffect(() => {
     setOffset(0);
     setHasMore(true);
-  }, [fileId, fileSize, chunkSize, path]);
+  }, [fileId, fileSize, chunkSize, path, rootPath]);
 
   const readNextChunk = useCallback(async () => {
     if (isReading || !hasMore) return "";
@@ -45,6 +46,7 @@ function useTauriFileReader(
           fileId: fileId,
           length,
           path,
+          rootPath,
         });
       } else {
         text = await invoke<string>("read_file_slice", {
@@ -52,6 +54,7 @@ function useTauriFileReader(
           offset,
           length,
           path,
+          rootPath,
         });
       }
 
@@ -66,7 +69,7 @@ function useTauriFileReader(
     } finally {
       setIsReading(false);
     }
-  }, [fileId, fileSize, chunkSize, offset, isReading, hasMore, path]);
+  }, [fileId, fileSize, chunkSize, offset, isReading, hasMore, path, rootPath]);
 
   return { readNextChunk, hasMore, isReading, offset };
 }
@@ -76,6 +79,7 @@ interface RawViewerProps {
   fileId: number;
   fileSize: number;
   path?: string;
+  rootPath?: string;
   /** Height of the editor viewport in px */
   height?: number | string;
   /** Width of the editor viewport in px */
@@ -108,6 +112,7 @@ const RawViewer: React.FC<RawViewerProps> = ({
   fileId,
   fileSize,
   path,
+  rootPath,
   height = "100%",
   width = "100%",
   chunkSize = 64 * 1024,
@@ -121,6 +126,7 @@ const RawViewer: React.FC<RawViewerProps> = ({
     fileId,
     fileSize,
     path,
+    rootPath,
     chunkSize,
   );
 

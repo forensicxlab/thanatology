@@ -97,7 +97,13 @@ const FolderImage: React.FC<FolderImageProps> = ({
     if (finalInsertStatus !== "idle") {
         if (finalInsertStatus === "loading") {
             return (
-                <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+                <Box
+                    sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        flexDirection: "column",
+                        mt: 2
+                    }}>
                     <CircularProgress size={40} />
                     <Typography variant="body2" sx={{ mt: 1 }}>
                         Saving preprocessing metadata…
@@ -107,12 +113,20 @@ const FolderImage: React.FC<FolderImageProps> = ({
         }
         if (finalInsertStatus === "success") {
             return (
-                <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+                <Box
+                    sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        flexDirection: "column",
+                        mt: 2
+                    }}>
                     <CheckCircleIcon fontSize="large" />
                     <Typography variant="h6" sx={{ mt: 1 }}>
                         Preprocessing metadata saved successfully!
                     </Typography>
-                    <Box mt={2}>
+                    <Box sx={{
+                        mt: 2
+                    }}>
                         <Button
                             variant="contained"
                             onClick={() => navigate(`/evidences/process/${evidenceData.id}`)}
@@ -129,7 +143,13 @@ const FolderImage: React.FC<FolderImageProps> = ({
         }
         if (finalInsertStatus === "error") {
             return (
-                <Box display="flex" alignItems="center" flexDirection="column" mt={2}>
+                <Box
+                    sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        flexDirection: "column",
+                        mt: 2
+                    }}>
                     <CancelIcon fontSize="large" color="error" />
                     <Typography variant="h6" color="error" sx={{ mt: 1 }}>
                         Error saving preprocessing metadata
@@ -137,7 +157,9 @@ const FolderImage: React.FC<FolderImageProps> = ({
                     <Typography variant="body2" sx={{ mt: 1 }}>
                         Please check the logs or try again.
                     </Typography>
-                    <Box mt={2}>
+                    <Box sx={{
+                        mt: 2
+                    }}>
                         <Button
                             variant="contained"
                             onClick={() => setFinalInsertStatus("idle")}

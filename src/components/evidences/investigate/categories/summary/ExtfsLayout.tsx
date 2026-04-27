@@ -43,11 +43,12 @@ export default function ExtfsLayout({ superblock }: { superblock: any }) {
   return (
     <>
       <Box
-        display="flex"
-        border="1px solid #ccc"
-        borderRadius="2px"
-        overflow="hidden"
-      >
+        sx={{
+          display: "flex",
+          border: "1px solid #ccc",
+          borderRadius: "2px",
+          overflow: "hidden"
+        }}>
         {layout.map((section, idx) => {
           const widthPercent = (section.blocks / totalBlocks) * 100;
           const offsetHex = "0x" + currentOffsetBytes.toString(16);
@@ -57,17 +58,17 @@ export default function ExtfsLayout({ superblock }: { superblock: any }) {
           return (
             <Box
               key={idx}
-              flex={`0 0 ${widthPercent}%`}
-              bgcolor={section.color}
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              position="relative"
               sx={{
+                flex: `0 0 ${widthPercent}%`,
+                bgcolor: section.color,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+
                 borderRight:
-                  idx < layout.length - 1 ? "1px solid #fff" : "none",
-              }}
-            >
+                  idx < layout.length - 1 ? "1px solid #fff" : "none"
+              }}>
               <Typography
                 variant="caption"
                 align="center"
@@ -81,11 +82,12 @@ export default function ExtfsLayout({ superblock }: { superblock: any }) {
               </Typography>
               {/* Offset label below */}
               <Box
-                position="absolute"
-                bottom="-20px"
-                left="0"
                 style={{ fontSize: "0.7rem" }}
-              >
+                sx={{
+                  position: "absolute",
+                  bottom: "-20px",
+                  left: "0"
+                }}>
                 {offsetHex}
               </Box>
             </Box>
