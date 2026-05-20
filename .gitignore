@@ -1,2 +1,5 @@
 node_modules/
 .DS_Store
+src-tauri/binaries/bin-macos/LeechCore/*
+!src-tauri/binaries/bin-macos/LeechCore/runtime/
+!src-tauri/binaries/bin-macos/LeechCore/runtime/**
