@@ -5,6 +5,7 @@ import { Box, Button, Typography, Paper, CircularProgress, List, ListItem, ListI
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEvidenceStore } from '../../../store/evidenceStore';
+import { useAiConfigStore } from '../../../store/aiConfigStore';
 
 interface ProgressEvent {
     evidence_id: string;
@@ -40,6 +41,9 @@ interface ChatMessage {
 
 const AgentChat: React.FC = () => {
     const { activeEvidenceDbPath } = useEvidenceStore();
+    const { config: aiConfig, loadConfig } = useAiConfigStore();
+
+    useEffect(() => { loadConfig(); }, [loadConfig]);
     const [instruction, setInstruction] = useState("");
     const [loading, setLoading] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -155,21 +159,16 @@ const AgentChat: React.FC = () => {
         setMessages(prev => [...prev, { role: "user", content: currentInstruction, backendContent: processedInstruction }]);
 
         try {
-            const aiProvider = localStorage.getItem("aiProvider") || "ollama";
-            const aiEndpoint = localStorage.getItem("aiEndpoint") || "http://localhost:11434";
-            const aiModel = localStorage.getItem("aiModel") || "llama3.1:latest";
-            const aiApiKey = localStorage.getItem("aiApiKey") || "";
-
-            setThinkingEvents([]); // Reset for new investigation
+            setThinkingEvents([]);
 
             const response = await invoke<Report>("investigate_with_agent", {
                 evidenceDbPath: activeEvidenceDbPath,
                 instruction: processedInstruction,
                 history: historyData,
-                aiProvider,
-                aiEndpoint,
-                aiModel,
-                aiApiKey,
+                aiProvider: aiConfig.provider,
+                aiEndpoint: aiConfig.endpoint,
+                aiModel: aiConfig.model,
+                aiApiKey: aiConfig.api_key,
             });
 
             setMessages(prev => [...prev, { role: "assistant", content: response.summary, report: response }]);

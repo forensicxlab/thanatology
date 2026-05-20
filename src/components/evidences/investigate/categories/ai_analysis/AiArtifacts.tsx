@@ -11,21 +11,16 @@ import {
     useGridApiRef,
     GridRenderCellParams,
 } from "@mui/x-data-grid-pro";
-import { Box, Typography, Paper, Stack, Chip } from "@mui/material";
+import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, Typography } from "@mui/material";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import Psychology from "@mui/icons-material/Psychology";
 import { useNavigate } from "react-router";
 import { emitTo } from "@tauri-apps/api/event";
 import { fetchAiArtifacts } from "../../../../../dbutils/sqlite";
-import * as ReactDOM from "react-dom";
 import { ArtifactWithFile } from "../../../../../dbutils/types";
 import { invoke } from "@tauri-apps/api/core";
-
-/* ------------------------------------------------------------------ */
-/* Utility                                                             */
-/* ------------------------------------------------------------------ */
-function sleep(ms: number) {
-    return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
+import { useEvidenceStore } from "../../../../../store/evidenceStore";
 
 interface AiArtifactsProps {
     evidenceId: number;
@@ -77,15 +72,16 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 }) => {
     const apiRef = useGridApiRef();
     const navigate = useNavigate();
+    const processingStatus = useEvidenceStore((s) => s.processingStatus);
+    const isProcessing = processingStatus === 2;
 
     const [rows, setRows] = useState<any[]>([]);
     const [rowCount, setRowCount] = useState(0);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     const [paginationModel, setPaginationModel] = useState({
         page: 0,
-        pageSize: 20,
+        pageSize: 25,
     });
 
     const [filterModel, setFilterModel] = useState<any>({
@@ -145,7 +141,6 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
     /* Data fetch */
     const loadArtifacts = useCallback(async () => {
         setLoading(true);
-        setError(null);
         try {
             const { page, pageSize } = paginationModel;
             const offset = page * pageSize;
@@ -160,30 +155,24 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 
             const dataWithId = data.map((r: any) => ({ ...r, id: r.artifact_id }));
 
-            ReactDOM.flushSync(() => {
-                setRowCount(total);
-                setRows(dataWithId);
-                setLoading(false);
-            });
-
-            await sleep(0);
-
-            apiRef.current?.autosizeColumns({
-                columns: AUTOSIZE_COLS,
-                includeHeaders: true,
-                includeOutliers: true,
-                disableColumnVirtualization: true,
-            });
+            setRowCount(total);
+            setRows(dataWithId);
+            setLoading(false);
         } catch (err) {
             setLoading(false);
-            setError((err as Error).message || "Unknown error");
-            console.log(error);
+            console.error(err);
         }
-    }, [apiRef, evidenceId, partitionId, paginationModel, filterModel]);
+    }, [evidenceId, partitionId, paginationModel, filterModel]);
 
     useEffect(() => {
         loadArtifacts();
     }, [loadArtifacts]);
+
+    useEffect(() => {
+        if (!isProcessing) return;
+        const timer = setInterval(() => { loadArtifacts(); }, 10_000);
+        return () => clearInterval(timer);
+    }, [isProcessing, loadArtifacts]);
 
     useEffect(() => {
         setPaginationModel((prev) => ({ ...prev, page: 0 }));
@@ -259,8 +248,37 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 
     const getDetailPanelHeight = useCallback(() => 300, []);
 
+    const NoRowsOverlay = () => (
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", py: 4 }}>
+            <Psychology sx={{ fontSize: 48, color: "text.disabled", mb: 1.5 }} />
+            <Typography variant="body1" sx={{ color: "text.secondary" }}>No AI analysis results yet</Typography>
+            <Typography variant="caption" sx={{ color: "text.disabled", mt: 0.5 }}>
+                Enable AI specialists in Settings and reprocess the evidence to populate this view
+            </Typography>
+        </Box>
+    );
+
     return (
-        <Box sx={{ width: "100%" }}>
+        <Box sx={{ display: "flex", flexDirection: "column", width: "100%", gap: 1 }}>
+            {isProcessing && (
+                <Alert
+                    severity="info"
+                    action={
+                        <Button
+                            size="small"
+                            startIcon={<RefreshIcon />}
+                            onClick={() => loadArtifacts()}
+                            disabled={loading}
+                        >
+                            Refresh
+                        </Button>
+                    }
+                    sx={{ borderRadius: 2 }}
+                >
+                    AI specialists are actively analyzing files in the background — results update every 10 s.
+                    <LinearProgress sx={{ mt: 0.75, borderRadius: 1 }} />
+                </Alert>
+            )}
             <DataGridPro
                 apiRef={apiRef}
                 density="compact"
@@ -280,6 +298,7 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
                 onFilterModelChange={setFilterModel}
                 rowCount={rowCount}
                 pageSizeOptions={[25, 50, 100]}
+                slots={{ noRowsOverlay: NoRowsOverlay }}
                 getDetailPanelContent={getDetailPanelContent}
                 getDetailPanelHeight={getDetailPanelHeight}
                 initialState={{

@@ -41,8 +41,8 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
   const isFolderEvidence = evidence.type === "Folder";
   const [isMbr, setIsMbr] = useState<boolean>(false);
   const [isGPT, setIsGPT] = useState<boolean>(false);
-
   const [isLogical, setIsLogical] = useState<boolean>(false);
+  const [realImageSize, setRealImageSize] = useState<number | null>(null);
 
   const { display_message } = useSnackbar();
 
@@ -67,6 +67,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
   useEffect(() => {
     if (partitionId === null) {
       setPartition(null);
+      setRealImageSize(null);
       return;
     }
 
@@ -75,8 +76,6 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
         const { mbrRows, gptRows, logicalRows } = await getPartitions(
           evidence.id,
         );
-
-        console.log(logicalRows);
 
         const mbrMatch = mbrRows.find((p) => p.id === partitionId);
         const gptMatch = gptRows.find((p) => p.id === partitionId);
@@ -136,6 +135,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
           <LogicalPartition
             logicalPartition={partition as LogicalPartitionEntry}
             index={0}
+            realImageSize={realImageSize ?? undefined}
           />
         )}
       </Grid>
@@ -151,7 +151,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
       )}
       {!isFolderEvidence && (
         <Grid size={12}>
-          <FileSystem path={evidence.path} partition={partition} />
+          <FileSystem path={evidence.path} partition={partition} onImageSizeResolved={setRealImageSize} />
         </Grid>
       )}
 
@@ -161,6 +161,7 @@ const Summary: React.FC<SummaryProps> = ({ evidence, partitionId }) => {
           <FileStatistics
             evidenceId={evidence.id}
             partitionId={partition.id}
+            imageSize={realImageSize ?? undefined}
           />
         </Grid>
       )}

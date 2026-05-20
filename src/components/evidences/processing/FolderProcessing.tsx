@@ -3,12 +3,13 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import { getEvidence } from "../../../dbutils/sqlite";
+import { useAiConfigStore } from "../../../store/aiConfigStore";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import {
     Evidence,
     ProcessedEvidenceMetadata,
 } from "../../../dbutils/types";
-import ProcessingTask from "./ProcessingTask";
+import ProcessingParticlesView from "./ProcessingParticlesView";
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import {
     setProcessingInProgress,
@@ -28,6 +29,9 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
 }) => {
     const { display_message } = useSnackbar();
     const navigate = useNavigate();
+    const { config: aiConfigStore, loadConfig } = useAiConfigStore();
+
+    useEffect(() => { loadConfig(); }, [loadConfig]);
     const [processing, setProcessing] = useState<boolean>(false);
     const [artefactIdentificationCompleted, setArtefactIdentificationCompleted] =
         useState(false);
@@ -107,15 +111,7 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
         try {
-            const aiConfig = {
-                provider: localStorage.getItem("aiProvider") || "ollama",
-                endpoint: localStorage.getItem("aiEndpoint") || "http://localhost:11434",
-                model: localStorage.getItem("aiModel") || "llama3.1:latest",
-                api_key: localStorage.getItem("aiApiKey") || "",
-                enable_image_specialist: localStorage.getItem("enableImageSpecialist") === "true",
-                enable_text_specialist: localStorage.getItem("enableTextSpecialist") === "true",
-                enable_audio_specialist: localStorage.getItem("enableAudioSpecialist") === "true",
-            };
+            const aiConfig = aiConfigStore;
 
             await invoke("process_folder", {
                 evidenceId: evidence.id,
@@ -159,7 +155,7 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
 
     const processingTask =
         evidence.status >= 2 && evidence.status < 5 ? (
-            <ProcessingTask
+            <ProcessingParticlesView
                 evidence={evidence}
                 onComplete={fetchEvidence}
                 onArtefactIdentificationComplete={() =>
@@ -198,12 +194,16 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
 
     return (
         <Box sx={{ flexGrow: 1, p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-                Folder Processing
-            </Typography>
-            <Typography variant="body1" gutterBottom>
-                Ready to index folder: <strong>{evidence.path}</strong>
-            </Typography>
+            {!processing && (
+                <>
+                    <Typography variant="h6" gutterBottom>
+                        Folder Processing
+                    </Typography>
+                    <Typography variant="body1" gutterBottom>
+                        Ready to index folder: <strong>{evidence.path}</strong>
+                    </Typography>
+                </>
+            )}
 
             {processingTask}
             <Box sx={{ textAlign: "center", mt: 2 }}>

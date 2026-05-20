@@ -137,7 +137,7 @@ const FilesExplorer: React.FC<FilesExplorerProps> = ({
     }
   }, [selectedTreeItem]);
 
-  const gridListingMode = gridScope.kind === "root" ? "subtree-files" : "direct-children";
+  const gridListingMode = "subtree-files";
 
   const selectionModeLabel = React.useMemo(() => {
     switch (selectedTreeItem.itemKind) {
@@ -282,11 +282,9 @@ const FilesExplorer: React.FC<FilesExplorerProps> = ({
             selectedItems={selectedItemId}
             onExpandedItemsChange={(_e, itemIds) => setExpandedItems(itemIds)}
             onSelectedItemsChange={(_e, itemId) => {
-              if (typeof itemId === "string" && !itemId.endsWith("::__loading")) {
-                setSelectedItemId(itemId);
-              } else {
-                setSelectedItemId(ROOT_ITEM_ID);
-              }
+              if (typeof itemId !== "string") return; // null = MUI deselect event, keep current
+              if (itemId.endsWith("::__loading")) return; // loading placeholder, ignore
+              setSelectedItemId(itemId);
             }}
             sx={{
               minWidth: "max-content",
@@ -355,6 +353,8 @@ const FilesExplorer: React.FC<FilesExplorerProps> = ({
               onRowActivate={handleGridRowActivate}
               filterModel={filterModel}
               onFilterModelChange={setFilterModel}
+              scope={gridScope}
+              listingMode={gridListingMode}
             />
           </Box>
         </Box>

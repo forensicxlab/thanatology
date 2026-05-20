@@ -4,6 +4,7 @@ import Typography from "@mui/material/Typography";
 import Paper from "@mui/material/Paper";
 import Button from "@mui/material/Button";
 import { getEvidence } from "../../../dbutils/sqlite";
+import { useAiConfigStore } from "../../../store/aiConfigStore";
 import Grid from "@mui/material/Grid";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import {
@@ -14,7 +15,7 @@ import {
 } from "../../../dbutils/types";
 import MBRPartition from "../common/MBRPartition";
 import GPTPartition from "../common/GPTPartition";
-import ProcessingTask from "./ProcessingTask";
+import ProcessingParticlesView from "./ProcessingParticlesView";
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import {
   getSelectedPartitions,
@@ -35,6 +36,9 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 }) => {
   const { display_message } = useSnackbar();
   const navigate = useNavigate();
+  const { config: aiConfigStore, loadConfig } = useAiConfigStore();
+
+  useEffect(() => { loadConfig(); }, [loadConfig]);
 
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
@@ -138,15 +142,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
 
     try {
-      const aiConfig = {
-        provider: localStorage.getItem("aiProvider") || "ollama",
-        endpoint: localStorage.getItem("aiEndpoint") || "http://localhost:11434",
-        model: localStorage.getItem("aiModel") || "llama3.1:latest",
-        api_key: localStorage.getItem("aiApiKey") || "",
-        enable_image_specialist: localStorage.getItem("enableImageSpecialist") === "true",
-        enable_text_specialist: localStorage.getItem("enableTextSpecialist") === "true",
-        enable_audio_specialist: localStorage.getItem("enableAudioSpecialist") === "true",
-      };
+      const aiConfig = aiConfigStore;
 
       await invoke("process_partitions", {
         evidenceId: evidence.id,
@@ -189,7 +185,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
   const processingTask =
     evidence.status >= 2 && evidence.status < 5 ? (
-      <ProcessingTask
+      <ProcessingParticlesView
         evidence={evidence}
         onComplete={fetchEvidence}
         onArtefactIdentificationComplete={() =>
@@ -228,7 +224,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
   return (
     <Box sx={{ flexGrow: 1, p: 2 }}>
-      {mbrPartitions && mbrPartitions.length > 0 && (
+      {!processing && mbrPartitions && mbrPartitions.length > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
             Selected Partitions
@@ -243,7 +239,7 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
         </Paper>
       )}
 
-      {gptPartitions && gptPartitions.length > 0 && (
+      {!processing && gptPartitions && gptPartitions.length > 0 && (
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
             Selected Partitions

@@ -19,6 +19,7 @@ pub struct FsInfo {
     pub filesystem_type: String,
     pub block_size: u64,
     pub metadata: Value,
+    pub image_size: u64,
 }
 
 fn resolve_host_file_path(path: Option<&str>, root_path: Option<&str>) -> Option<PathBuf> {
@@ -124,6 +125,7 @@ pub fn get_fs_info(
             filesystem_type,
             block_size,
             metadata,
+            image_size: 0,
         };
 
         let mut state_lock = state.lock().unwrap();
@@ -132,7 +134,14 @@ pub fn get_fs_info(
     }
 
     let mut body: Body = Body::new(path.to_string(), "auto");
-    let bytes_size = body.get_sector_size() as u64 * size;
+    // For a whole-disk logical image (offset == 0), always use the body's declared
+    // logical size so compressed formats (AFF4, EWF) report the uncompressed size.
+    // For sub-partitions (offset > 0) the caller-supplied sector count is authoritative.
+    let bytes_size = if offset == 0 {
+        body.get_image_size()
+    } else {
+        body.get_sector_size() as u64 * size
+    };
     let key_material = fvek.and_then(|h| hex::decode(h).ok()).map(|f| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(f) });
     let fs = match detect_filesystem(&mut body, offset, bytes_size, key_material) {
         Ok(fs) => fs,
@@ -151,6 +160,7 @@ pub fn get_fs_info(
         filesystem_type,
         block_size,
         metadata,
+        image_size: body.get_image_size(),
     };
 
     let mut state_lock = state.lock().unwrap();

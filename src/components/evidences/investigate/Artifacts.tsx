@@ -30,6 +30,7 @@ interface ArtifactsProps {
   evidence_id: number;
   partition_id: number;
   category: string;
+  tag?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +74,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   evidence_id,
   partition_id,
   category,
+  tag,
 }) => {
   const apiRef = useGridApiRef();
   const navigate = useNavigate();
@@ -165,7 +167,8 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         partition_id,
         offset,
         pageSize,
-        filterModel
+        filterModel,
+        tag,
       );
 
       const dataWithId = data.map((r: any) => ({ ...r, id: r.artifact_id })) as ArtifactWithFile[];
@@ -206,7 +209,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
       setError((err as Error).message || "Unknown error");
       console.log(error);
     }
-  }, [apiRef, category, evidence_id, partition_id, paginationModel, filterModel]);
+  }, [apiRef, category, tag, evidence_id, partition_id, paginationModel, filterModel]);
 
   /* Initial load + refresh when deps change */
   useEffect(() => {
@@ -287,7 +290,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         field: "absolute_path",
         headerName: "File",
         renderCell: (params: GridRenderCellParams) => (
-          <div style={{ color: "orange" }}>{params.value}</div>
+          <div>{params.value}</div>
         ),
       },
 
@@ -380,7 +383,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         filterModel={filterModel}
         onFilterModelChange={setFilterModel}
         rowCount={rowCount}
-        pageSizeOptions={[25, 50, 100]}
+        pageSizeOptions={[20, 25, 50, 100]}
         getDetailPanelContent={getDetailPanelContent}
         getDetailPanelHeight={getDetailPanelHeight}
         initialState={{
@@ -391,6 +394,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
               group: false,
               modified: false,
               accessed: false,
+              tag: !tag,
             },
           },
         }}

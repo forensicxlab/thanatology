@@ -100,7 +100,7 @@ const InvestigateLinux: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { setActiveEvidence, clearActiveEvidence } = useEvidenceStore();
+  const { setActiveEvidence, setProcessingStatus, clearActiveEvidence } = useEvidenceStore();
 
   const handleChange = (_event: React.SyntheticEvent, newValue: number) => {
     setValue(newValue);
@@ -127,6 +127,8 @@ const InvestigateLinux: React.FC = () => {
   };
 
   useEffect(() => {
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
     const fetchEvidence = async () => {
       try {
         if (!evidence_id) {
@@ -139,6 +141,20 @@ const InvestigateLinux: React.FC = () => {
           setError(`No evidence found for ID ${evidence_id}.`);
         } else {
           setEvidence(fetchedEvidence);
+          setProcessingStatus(fetchedEvidence.status);
+
+          if (fetchedEvidence.status === 2) {
+            pollTimer = setInterval(async () => {
+              const refreshed = await getEvidence(null, evidence_id);
+              if (refreshed) {
+                setProcessingStatus(refreshed.status);
+                if (refreshed.status !== 2 && pollTimer) {
+                  clearInterval(pollTimer);
+                  pollTimer = null;
+                }
+              }
+            }, 5000);
+          }
         }
       } catch (err) {
         console.error("Error fetching evidence:", err);
@@ -151,9 +167,10 @@ const InvestigateLinux: React.FC = () => {
     fetchEvidence();
 
     return () => {
+      if (pollTimer) clearInterval(pollTimer);
       clearActiveEvidence();
     };
-  }, [evidence_id, setActiveEvidence, clearActiveEvidence]);
+  }, [evidence_id, setActiveEvidence, setProcessingStatus, clearActiveEvidence]);
 
   useEffect(() => {
     if (evidence) {

@@ -84,15 +84,19 @@ export default function TitlebarNav() {
 
         {/* Drag region (keep buttons OUTSIDE of this box) */}
         <Tooltip title="Back">
-          <IconButton disabled={!canBack} onClick={back}>
-            <ArrowBackIcon fontSize="small" />
-          </IconButton>
+          <span>
+            <IconButton disabled={!canBack} onClick={back}>
+              <ArrowBackIcon fontSize="small" />
+            </IconButton>
+          </span>
         </Tooltip>
 
         <Tooltip title="Forward">
-          <IconButton disabled={!canForward} onClick={forward}>
-            <ArrowForwardIcon fontSize="small" />
-          </IconButton>
+          <span>
+            <IconButton disabled={!canForward} onClick={forward}>
+              <ArrowForwardIcon fontSize="small" />
+            </IconButton>
+          </span>
         </Tooltip>
 
         <Box data-tauri-drag-region sx={{ flex: 1, height: "100%", pl: 1 }} />

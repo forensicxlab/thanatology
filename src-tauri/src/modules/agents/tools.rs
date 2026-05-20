@@ -247,11 +247,13 @@ pub struct AnalyzeImageTool {
     pub app: tauri::AppHandle,
     pub evidence_id: i64,
     pub api_key: String,
+    pub provider: String,
+    pub endpoint: String,
 }
 
 impl AnalyzeImageTool {
-    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64, api_key: String) -> Self {
-        Self { evidence_pool, app, evidence_id, api_key }
+    pub fn new(evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64, api_key: String, provider: String, endpoint: String) -> Self {
+        Self { evidence_pool, app, evidence_id, api_key, provider, endpoint }
     }
 }
 
@@ -378,11 +380,34 @@ impl Tool for AnalyzeImageTool {
             return Err(ExtractFileError { message: "Image file is too large to process visually (>20MB).".to_string() });
         }
 
-        // Convert the file bytes to a base64 data URI
         let base64_data = BASE64.encode(&content);
+
+        if self.provider == "copilot" {
+            // Route to the local dfi-copilot image2text service
+            let base_url = self.endpoint.trim_end_matches('/');
+            let url = format!("{}:8001/v1/describe", base_url);
+            let http = reqwest::Client::new();
+            let body = serde_json::json!({
+                "image_base64": base64_data,
+                "prompt": "You are a forensic image analyst. Describe this image in granular technical detail. Note any visible text (OCR), objects, people, documents, weapons, suspicious items, environment details, and anomalies."
+            });
+            let resp = http.post(&url).json(&body).send().await
+                .map_err(|e| ExtractFileError { message: format!("copilot image2text request failed: {}", e) })?;
+            if !resp.status().is_success() {
+                return Err(ExtractFileError { message: format!("copilot image2text returned HTTP {}", resp.status()) });
+            }
+            let json: serde_json::Value = resp.json().await
+                .map_err(|e| ExtractFileError { message: format!("copilot image2text response parse error: {}", e) })?;
+            let description = json.get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            return Ok(description);
+        }
+
+        // OpenAI gpt-4o vision path
         let data_uri = format!("data:{};base64,{}", mime_type, base64_data);
 
-        // Sub-Agent invocation: Send the multimodal prompt to OpenAI using the user's API key
         if self.api_key.is_empty() {
             return Err(ExtractFileError { message: "OpenAI API Key is missing. Vision model requires a valid OpenAI Key.".to_string() });
         }
@@ -393,7 +418,7 @@ impl Tool for AnalyzeImageTool {
             .preamble("You are a forensic image analyst. Describe this image in granular technical detail. Note file types, texts visible via OCR, objects, metadata if rendered, environment details, and anomalies.")
             .build();
 
-        let image_message = rig::completion::Message::User { 
+        let image_message = rig::completion::Message::User {
             content: rig::one_or_many::OneOrMany::many(
                 vec![
                     rig::completion::message::UserContent::text("Please analyze this evidence image visually."),

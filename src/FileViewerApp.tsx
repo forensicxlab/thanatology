@@ -3,19 +3,14 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
-  Collapse,
   Divider,
-  IconButton,
   Paper,
   Stack,
   Tab,
   Tabs,
   Toolbar,
   Typography,
-  Tooltip,
 } from "@mui/material";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import HexViewerWindow from "./HexViewerWindow";
 import { HexViewerHandle } from "./HexViewer";
 import RawViewer from "./RawViewer";
@@ -23,7 +18,6 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { PeViewer } from "./components/PeViewer";
 import { PmlViewer } from "./components/PmlViewer";
 import { listen } from "@tauri-apps/api/event";
-import WindowsEventsTimeliner from "./components/evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
 import {
   Dialog,
   DialogTitle,
@@ -32,7 +26,13 @@ import {
   CircularProgress,
   TextField,
 } from "@mui/material";
-type ViewerTab = "raw" | "hex" | "artefacts" | "sqlite" | "pe" | "pml";
+import {
+  DataGridPro,
+  GridColDef,
+} from "@mui/x-data-grid-pro";
+import BottomActionBar from "./components/navigation/BottomActionBar";
+import WindowsEventsTimeliner from "./components/evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
+type ViewerTab = "raw" | "hex" | "artefacts" | "sqlite" | "pe" | "pml" | "metadata";
 
 type FileOpenPayload = {
   Identifier: number;
@@ -49,7 +49,7 @@ import utc from "dayjs/plugin/utc";
 import timezone from "dayjs/plugin/timezone";
 import SqliteViewer from "./components/SqliteViewer";
 import { invoke } from "@tauri-apps/api/core";
-import { getEvidenceDbPath } from "./dbutils/db";
+import { getEvidenceDb, getEvidenceDbPath } from "./dbutils/db";
 import { getEvidence } from "./dbutils/sqlite";
 
 dayjs.extend(utc);
@@ -57,7 +57,13 @@ dayjs.extend(timezone);
 // optional default:
 dayjs.tz.setDefault("UTC");
 
-const RIGHT_PANEL_WIDTH = 420;
+type MetadataRow = { id: string; property: string; value: string };
+
+const METADATA_COLUMNS: GridColDef[] = [
+  { field: "property", headerName: "Property", flex: 1, minWidth: 150 },
+  { field: "value", headerName: "Value", flex: 2, minWidth: 200 },
+];
+
 const toSqliteUrl = (p: string) =>
   p.startsWith("sqlite:") ? p : `sqlite:${p}`;
 
@@ -65,9 +71,7 @@ const FileViewer: React.FC = () => {
   const hexRef = useRef<HexViewerHandle>(null);
   const [tab, setTab] = useState<ViewerTab>("raw");
   const [file, setFile] = useState<FileOpenPayload | null>(null);
-
-  // Right panel open/close
-  const [rightOpen, setRightOpen] = useState(true);
+  const [fileMetadata, setFileMetadata] = useState<MetadataRow[]>([]);
 
   const [isSqlite, setIsSqlite] = useState(false);
 
@@ -282,18 +286,20 @@ const FileViewer: React.FC = () => {
     setHashLoading(true);
     setHashes({ md5: "", sha256: "" });
     try {
-      const md5 = await invoke<string>("compute_hash", {
-        fileId: file.Identifier,
-        algorithm: "md5",
-        path: file.path,
-        rootPath: file.evidenceRootPath,
-      });
-      const sha256 = await invoke<string>("compute_hash", {
-        fileId: file.Identifier,
-        algorithm: "sha256",
-        path: file.path,
-        rootPath: file.evidenceRootPath,
-      });
+      const [md5, sha256] = await Promise.all([
+        invoke<string>("compute_hash", {
+          fileId: file.Identifier,
+          algorithm: "md5",
+          path: file.path,
+          rootPath: file.evidenceRootPath,
+        }),
+        invoke<string>("compute_hash", {
+          fileId: file.Identifier,
+          algorithm: "sha256",
+          path: file.path,
+          rootPath: file.evidenceRootPath,
+        }),
+      ]);
       setHashes({ md5, sha256 });
     } catch (err) {
       console.error("Failed to compute hash:", err);
@@ -302,13 +308,41 @@ const FileViewer: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (!file) {
+      setFileMetadata([]);
+      return;
+    }
+    (async () => {
+      try {
+        const db = await getEvidenceDb(file.evidenceId);
+        const rows = await db.select<any[]>(
+          "SELECT * FROM system_files WHERE id = $1",
+          [file.fileId],
+        );
+        const record = rows[0];
+        if (record) {
+          const metaRows: MetadataRow[] = Object.entries(record)
+            .filter(([, v]) => v !== null && v !== undefined && v !== "")
+            .map(([k, v]) => ({ id: k, property: k, value: String(v) }));
+          setFileMetadata(metaRows);
+        }
+      } catch (err) {
+        console.error("Failed to fetch file metadata:", err);
+        setFileMetadata([]);
+      }
+    })();
+  }, [file]);
+
   return (
     <Box
       sx={{
         height: "100vh",
         display: "flex",
         flexDirection: "column",
-        minHeight: 0
+        minHeight: 0,
+        pb: "28px",
+        boxSizing: "border-box",
       }}>
       {/* Action toolbar */}
       <Paper
@@ -329,24 +363,6 @@ const FileViewer: React.FC = () => {
           <Button size="small" variant="outlined" onClick={handleHash}>
             Compute Hash
           </Button>
-
-          <Box sx={{
-            flex: 1
-          }} />
-
-          <Stack direction="row" spacing={1} sx={{
-            alignItems: "center"
-          }}>
-            <Tooltip title={rightOpen ? "Hide panel" : "Show panel"}>
-              <IconButton
-                size="small"
-                onClick={() => setRightOpen((v) => !v)}
-                aria-label={rightOpen ? "Hide right panel" : "Show right panel"}
-              >
-                {rightOpen ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-              </IconButton>
-            </Tooltip>
-          </Stack>
         </Toolbar>
       </Paper>
       {/* Main content row */}
@@ -380,6 +396,7 @@ const FileViewer: React.FC = () => {
             >
               <Tab value="raw" label="RawViewer" />
               <Tab value="hex" label="HexViewer" />
+              <Tab value="metadata" label="File Metadata" />
               {isSqlite && <Tab value="sqlite" label="SQLite Viewer" />}
               {peData && <Tab value="pe" label="PE Analysis" />}
               {pmlData && <Tab value="pml" label="Procmon Events" />}
@@ -483,6 +500,20 @@ const FileViewer: React.FC = () => {
               </Paper>
             )}
 
+            {tab === "metadata" && (
+              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+                <DataGridPro
+                  rows={fileMetadata}
+                  columns={METADATA_COLUMNS}
+                  density="compact"
+                  disableColumnFilter
+                  disableColumnMenu
+                  hideFooter
+                  style={{ height: "100%", border: "none" }}
+                />
+              </Paper>
+            )}
+
             {tab === "artefacts" && evtxData && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
                 <Box
@@ -518,88 +549,6 @@ const FileViewer: React.FC = () => {
           </Box>
         </Box>
 
-        {/* Right: closable panel */}
-        <Collapse in={rightOpen} orientation="horizontal" unmountOnExit>
-          <Box
-            sx={{
-              display: "flex",
-              height: "100%",
-              minHeight: 0
-            }}>
-            <Divider orientation="vertical" flexItem />
-
-            <Box
-              sx={{
-                width: RIGHT_PANEL_WIDTH,
-                minWidth: RIGHT_PANEL_WIDTH,
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 0
-              }}>
-              {/* Metadata (top) */}
-              <Box
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  p: 1
-                }}>
-                <Paper
-                  variant="outlined"
-                  sx={{ height: "100%", p: 2, minHeight: 0 }}
-                >
-                  <Typography variant="subtitle2" gutterBottom>
-                    File Metadata
-                  </Typography>
-
-                  <Box
-                    sx={{
-                      height: "100%",
-                      borderRadius: 1,
-                      border: "1px dashed",
-                      borderColor: "divider",
-                      p: 2,
-                      color: "text.secondary",
-                    }}
-                  >
-                    Metadata component goes here
-                  </Box>
-                </Paper>
-              </Box>
-
-              <Divider flexItem />
-
-              {/* AI prompt (bottom) */}
-              <Box
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  p: 1
-                }}>
-                <Paper
-                  variant="outlined"
-                  sx={{ height: "100%", p: 2, minHeight: 0 }}
-                >
-                  <Typography variant="subtitle2" gutterBottom>
-                    Ask AI about this file
-                  </Typography>
-
-                  <Box
-                    sx={{
-                      height: "100%",
-                      borderRadius: 1,
-                      border: "1px dashed",
-                      borderColor: "divider",
-                      p: 2,
-                      color: "text.secondary",
-                    }}
-                  >
-                    AI prompt component goes here
-                  </Box>
-                </Paper>
-              </Box>
-            </Box>
-          </Box>
-        </Collapse>
       </Box>
       <Dialog
         open={hashOpen}
@@ -647,6 +596,7 @@ const FileViewer: React.FC = () => {
           <Button onClick={() => setHashOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+      <BottomActionBar />
     </Box>
   );
 };

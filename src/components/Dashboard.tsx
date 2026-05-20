@@ -90,20 +90,19 @@ const Dashboard = () => {
       <Grid container spacing={2} sx={{
         justifyContent: "center"
       }}>
-        {tiles.map((tile, index) => (
+        {tiles.filter((tile) => tile.enabled).map((tile, index) => (
           <Grid key={index}>
             <Card
               sx={{
                 width: 160,
                 textAlign: "center",
-                opacity: tile.enabled ? 1 : 0.5,
               }}
             >
               {tile.enabled ? (
                 <CardActionArea onClick={tile.onClick}>
                   <CardContent sx={{ py: 1.5, px: 2 }}>
                     {tile.icon}
-                    <Typography variant="subtitle2" component="div" fontWeight={600}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                       {tile.title}
                     </Typography>
                     <Typography variant="caption" sx={{
@@ -117,7 +116,7 @@ const Dashboard = () => {
                 // For disabled tiles, render without the CardActionArea
                 (<Box sx={{ py: 1.5, px: 2 }}>
                   {tile.icon}
-                  <Typography variant="subtitle2" component="div" fontWeight={600}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                     {tile.title}
                   </Typography>
                   <Typography variant="caption" sx={{

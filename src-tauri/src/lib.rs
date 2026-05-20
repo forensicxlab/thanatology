@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub mod modules;
 
@@ -29,11 +29,18 @@ use modules::th_filesystem::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     pub provider: String,
+    pub endpoint: String,
     pub api_key: String,
     pub model: String,
     pub enable_text_specialist: bool,
     pub enable_image_specialist: bool,
     pub enable_audio_specialist: bool,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: u32,
+}
+
+fn default_batch_size() -> u32 {
+    10
 }
 
 use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
@@ -76,6 +83,97 @@ struct EvidenceImageResponse {
 struct ProcessingStatusPayload {
     message: String,
     status: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PhysicalDevice {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub size_human: String,
+    pub is_internal: bool,
+    pub protocol: String,
+}
+
+#[cfg(target_os = "macos")]
+fn list_physical_devices_macos() -> Result<Vec<PhysicalDevice>, String> {
+    use std::process::Command;
+
+    let list_out = Command::new("diskutil")
+        .args(["list"])
+        .output()
+        .map_err(|e| format!("Failed to run diskutil list: {e}"))?;
+
+    let list_str = String::from_utf8_lossy(&list_out.stdout);
+    let disk_re = regex::Regex::new(r"^(/dev/disk\d+)\s+\(([^)]+)\):").unwrap();
+
+    let mut disk_entries: Vec<(String, bool)> = Vec::new();
+    for line in list_str.lines() {
+        if let Some(caps) = disk_re.captures(line.trim()) {
+            let path = caps[1].to_string();
+            let attrs = caps[2].to_string();
+            // Skip virtual (synthesized) disks like APFS containers
+            let is_internal = attrs.contains("internal") && !attrs.contains("virtual");
+            let is_virtual = attrs.contains("virtual");
+            if !is_virtual {
+                disk_entries.push((path, is_internal));
+            }
+        }
+    }
+
+    let mut devices = Vec::new();
+    for (path, is_internal) in disk_entries {
+        let info_out = Command::new("diskutil")
+            .args(["info", &path])
+            .output()
+            .map_err(|e| format!("Failed to run diskutil info for {path}: {e}"))?;
+
+        let info_str = String::from_utf8_lossy(&info_out.stdout);
+        let mut name = String::new();
+        let mut size: u64 = 0;
+        let mut size_human = String::new();
+        let mut protocol = String::new();
+
+        for line in info_str.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("Device/Media Name:") {
+                name = rest.trim().to_string();
+            } else if let Some(rest) = line.strip_prefix("Disk Size:") {
+                let rest = rest.trim();
+                // Format: "500.1 GB (500107862016 Bytes) (exactly ...)"
+                if let Some(human) = rest.split('(').next() {
+                    size_human = human.trim().to_string();
+                }
+                if let Some(bytes_part) = rest.split('(').nth(1) {
+                    if let Some(bytes_str) = bytes_part.split_whitespace().next() {
+                        size = bytes_str.parse().unwrap_or(0);
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("Protocol:") {
+                protocol = rest.trim().to_string();
+            }
+        }
+
+        if name.is_empty() {
+            name = path.replace("/dev/", "");
+        }
+
+        devices.push(PhysicalDevice { path, name, size, size_human, is_internal, protocol });
+    }
+
+    Ok(devices)
+}
+
+#[tauri::command]
+fn list_physical_devices() -> Result<Vec<PhysicalDevice>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        list_physical_devices_macos()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Device listing is not supported on this platform.".to_string())
+    }
 }
 
 fn as_sqlite_url(path_or_url: &str) -> String {
@@ -139,6 +237,16 @@ async fn copy_evidence_scoped_rows(
     .execute(evidence_pool)
     .await?;
 
+    // Flush previous analysis results to prevent duplicates when restarting after abort.
+    for table in ["artifact_objects", "artifacts", "system_files"] {
+        let del = format!("DELETE FROM {} WHERE evidence_id = ?;", table);
+        sqlx::query(&del)
+            .bind(evidence_id)
+            .execute(evidence_pool)
+            .await
+            .ok();
+    }
+
     // Copy portable partitions for this evidence.
     for table in ["partitions"] {
         let del = format!("DELETE FROM {} WHERE evidence_id = ?;", table);
@@ -183,8 +291,13 @@ pub struct ExtractionModule {
     pub description: String,
 }
 
+pub struct ProcessingEntry {
+    pub cancel: Arc<AtomicBool>,
+    pub handle: tauri::async_runtime::JoinHandle<()>,
+}
+
 pub struct ProcessingState {
-    pub tokens: Mutex<HashMap<i64, Arc<AtomicBool>>>,
+    pub tokens: Mutex<HashMap<i64, ProcessingEntry>>,
 }
 
 #[tauri::command]
@@ -193,15 +306,16 @@ async fn cancel_processing(
     state: tauri::State<'_, ProcessingState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    if let Ok(tokens) = state.tokens.lock() {
-        if let Some(token) = tokens.get(&evidence_id) {
-            token.store(true, Ordering::Relaxed);
-        } else {
-            return Err("No active processing task found for this evidence.".to_string());
-        }
+    let entry = if let Ok(mut tokens) = state.tokens.lock() {
+        tokens.remove(&evidence_id)
+            .ok_or_else(|| "No active processing task found for this evidence.".to_string())?
     } else {
         return Err("Failed to acquire state lock.".to_string());
-    }
+    };
+
+    // Signal graceful stop, then immediately kill the task at its next await point.
+    entry.cancel.store(true, Ordering::Relaxed);
+    entry.handle.abort();
 
     let base_dir = app
         .path()
@@ -516,117 +630,107 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
     Ok(fs)
 }
 
+/// Shared setup for both process_partitions and process_folder:
+/// creates the evidence DB directory, opens both pools, initialises
+/// the schema, attaches the main DB, and copies the evidence rows.
+/// Returns None (after emitting an error event) if anything fails.
+async fn setup_evidence_pools(
+    evidence_id: i64,
+    main_db_path: &str,
+    evidence_db_path: &str,
+    app: &AppHandle,
+) -> Option<(SqlitePool, SqlitePool)> {
+    if let Some(parent) = std::path::Path::new(evidence_db_path).parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+                format!("Failed to create evidence DB directory: {e}"), app);
+            error!("Failed to create evidence DB directory: {e}");
+            return None;
+        }
+    }
+
+    let main_pool = match open_pool(main_db_path).await {
+        Ok(p) => p,
+        Err(err) => {
+            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+                format!("Main DB connection error: {err:?}"), app);
+            error!("Main DB connection error: {err:?}");
+            return None;
+        }
+    };
+
+    let evidence_pool = match open_pool(evidence_db_path).await {
+        Ok(p) => p,
+        Err(err) => {
+            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+                format!("Evidence DB connection error: {err:?}"), app);
+            error!("Evidence DB connection error: {err:?}");
+            return None;
+        }
+    };
+
+    match has_user_tables(&evidence_pool).await {
+        Ok(false) => {
+            if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
+                emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+                    format!("Failed to initialize evidence DB schema: {err:?}"), app);
+                error!("Failed to initialize evidence DB schema: {err:?}");
+                return None;
+            }
+        }
+        Ok(true) => {}
+        Err(err) => {
+            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+                format!("Failed checking evidence DB schema: {err:?}"), app);
+            error!("Failed checking evidence DB schema: {err:?}");
+            return None;
+        }
+    }
+
+    if let Err(err) = attach_main_db(&evidence_pool, main_db_path).await {
+        emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+            format!("Failed to attach main DB: {err:?}"), app);
+        error!("Failed to attach main DB: {err:?}");
+        return None;
+    }
+
+    if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
+        emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
+            format!("Failed to copy evidence rows into evidence DB: {err:?}"), app);
+        error!("Failed to copy evidence rows into evidence DB: {err:?}");
+        return None;
+    }
+
+    Some((main_pool, evidence_pool))
+}
+
 #[tauri::command]
 fn process_partitions(
     evidence_id: i64,
     main_db_path: String,
     evidence_db_path: String,
+    ai_config: AiConfig,
     app: AppHandle,
 ) {
-    tauri::async_runtime::spawn(async move {
-        // Ensure per-evidence DB folder exists
-        if let Some(parent) = std::path::Path::new(&evidence_db_path).parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed to create evidence DB directory: {e}"),
-                    &app,
-                );
-                error!("Failed to create evidence DB directory: {e}");
-                return;
-            }
-        }
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let cancel_for_task = cancel_token.clone();
+    let app_for_task = app.clone();
 
-        // Connect pools
-        let main_pool = match open_pool(&main_db_path).await {
-            Ok(p) => p,
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Main DB connection error: {err:?}"),
-                    &app,
-                );
-                error!("Main DB connection error: {err:?}");
+    let handle = tauri::async_runtime::spawn(async move {
+        let app = app_for_task;
+        let cancel_token = cancel_for_task;
 
-                return;
-            }
-        };
-
-        let evidence_pool = match open_pool(&evidence_db_path).await {
-            Ok(p) => p,
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Evidence DB connection error: {err:?}"),
-                    &app,
-                );
-                error!("Evidence DB connection error: {err:?}");
-
-                return;
-            }
-        };
-
-        // Initialize evidence DB schema once using the portable Exhume schema.
-        match has_user_tables(&evidence_pool).await {
-            Ok(false) => {
-                if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
-                    emit_progress_event(
-                        &evidence_id,
-                        ProgressMessageLevel::Main,
-                        ProgressMessageType::Error,
-                        format!("Failed to initialize evidence DB schema: {err:?}"),
-                        &app,
-                    );
-                    error!("Failed to initialize evidence DB schema: {err:?}");
-
-                    return;
+        let (main_pool, evidence_pool) = match setup_evidence_pools(
+            evidence_id, &main_db_path, &evidence_db_path, &app,
+        ).await {
+            Some(pools) => pools,
+            None => {
+                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                    tokens.remove(&evidence_id);
                 }
-            }
-            Ok(true) => {}
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed checking evidence DB schema: {err:?}"),
-                    &app,
-                );
-                error!("Failed checking evidence DB schema: {err:?}");
-
                 return;
             }
-        }
-
-        // Attach main DB (filesystem path) and copy evidence rows into evidence DB
-        if let Err(err) = attach_main_db(&evidence_pool, &main_db_path).await {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Failed to attach main DB: {err:?}"),
-                &app,
-            );
-            error!("Failed to attach main DB: {err:?}");
-            return;
-        }
-
-        if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Failed to copy evidence rows into evidence DB: {err:?}"),
-                &app,
-            );
-            error!("Failed to copy evidence rows into evidence DB: {err:?}");
-            return;
-        }
+        };
 
         // Load evidence path from MAIN DB (authoritative)
         let evidence_row = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
@@ -657,9 +761,11 @@ fn process_partitions(
             evidence_status
         };
 
-        // Sector size reference
+        // Sector size and image size reference (uses logical size from body metadata,
+        // not the container file size — critical for compressed formats like AFF4).
         let body_for_info = Body::new(evidence_path.clone(), "auto");
         let sector_size_u64 = body_for_info.get_sector_size() as u64;
+        let image_size = body_for_info.get_image_size();
 
         // Load partitions FROM EVIDENCE DB (no shared locks with other evidences)
         let mut partition_rows = sqlx::query(
@@ -672,24 +778,8 @@ fn process_partitions(
 
         // Create logical partition entry (in evidence DB) if none exist
         if partition_rows.is_empty() {
-            let file_len = match Body::new(evidence_path.clone(), "auto").seek(std::io::SeekFrom::End(0)) {
-                Ok(size) => size,
-                Err(err) => {
-                    let msg = format!("Failed to determine evidence file size: {err}");
-                    emit_progress_event(
-                        &evidence_id,
-                        ProgressMessageLevel::Main,
-                        ProgressMessageType::Error,
-                        msg.clone(),
-                        &app,
-                    );
-                    error!("{msg}");
-                    return;
-                }
-            };
-
             let size_sectors = if sector_size_u64 > 0 {
-                file_len / sector_size_u64
+                image_size / sector_size_u64
             } else {
                 0
             };
@@ -700,7 +790,7 @@ fn process_partitions(
             .bind(evidence_id)
             .bind(size_sectors as i64)
             .bind(sector_size_u64 as i64)
-            .bind(file_len as i64)
+            .bind(image_size as i64)
             .execute(&evidence_pool)
             .await
             {
@@ -743,11 +833,22 @@ fn process_partitions(
             let size_sectors: i64 = r.get("size_sectors");
             let size_bytes: i64 = r.get("size_bytes");
             let fvek: Option<String> = r.try_get("fvek").unwrap_or(None);
+
+            // For logical (whole-image) partitions, always recompute from the body's
+            // declared image size so that compressed formats (AFF4, EWF, …) report the
+            // correct uncompressed size rather than the container file size.
+            let (effective_size_bytes, effective_size_sectors) = if kind.as_str() == "logical" {
+                let s = if sector_size_u64 > 0 { image_size / sector_size_u64 } else { 0 };
+                (image_size, s)
+            } else {
+                (size_bytes as u64, size_sectors as u64)
+            };
+
             work.push(WorkPartition {
                 id,
                 first_byte_addr: fba as u64,
-                size_sectors: size_sectors as u64,
-                size_bytes: size_bytes as u64,
+                size_sectors: effective_size_sectors,
+                size_bytes: effective_size_bytes,
                 kind: match kind.as_str() {
                     "mbr" => "MBR",
                     "gpt" => "GPT",
@@ -773,11 +874,6 @@ fn process_partitions(
 
         // Indexation (writes ONLY to evidence DB)
         let total = work.len() as u64;
-
-        let cancel_token = Arc::new(AtomicBool::new(false));
-        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-            tokens.insert(evidence_id, cancel_token.clone());
-        }
 
         if actual_status < 3 {
             for (idx, p) in work.iter().enumerate() {
@@ -968,6 +1064,14 @@ fn process_partitions(
                 };
 
                 extract_artefacts(evidence_id, p.id, &app, &evidence_pool, &mut fs, &registry, Some(cancel_token.clone())).await;
+
+                modules::agents::specialists::run_specialists(
+                    evidence_id,
+                    p.id,
+                    evidence_pool.clone(),
+                    &app,
+                    ai_config.clone(),
+                ).await;
             }
 
             update_evidence_status(&evidence_pool, evidence_id, 5)
@@ -976,10 +1080,15 @@ fn process_partitions(
         }
 
         update_evidence_status(&main_pool, evidence_id, 5).await.ok();
+        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id).ok();
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
             tokens.remove(&evidence_id);
-        }
+        };
     });
+
+    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+        tokens.insert(evidence_id, ProcessingEntry { cancel: cancel_token, handle });
+    }
 }
 
 #[tauri::command]
@@ -988,114 +1097,30 @@ fn process_folder(
     main_db_path: String,
     evidence_db_path: String,
     folder_path: String,
+    ai_config: AiConfig,
     app: AppHandle,
 ) {
-    tauri::async_runtime::spawn(async move {
-         // Ensure per-evidence DB folder exists
-         if let Some(parent) = std::path::Path::new(&evidence_db_path).parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed to create evidence DB directory: {e}"),
-                    &app,
-                );
-                error!("Failed to create evidence DB directory: {e}");
-                return;
-            }
-        }
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let cancel_for_task = cancel_token.clone();
+    let app_for_task = app.clone();
 
-        // Connect pools
-        let main_pool = match open_pool(&main_db_path).await {
-            Ok(p) => p,
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Main DB connection error: {err:?}"),
-                    &app,
-                );
-                error!("Main DB connection error: {err:?}");
+    let handle = tauri::async_runtime::spawn(async move {
+        let app = app_for_task;
+        let cancel_token = cancel_for_task;
 
-                return;
-            }
-        };
-
-        let evidence_pool = match open_pool(&evidence_db_path).await {
-            Ok(p) => p,
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Evidence DB connection error: {err:?}"),
-                    &app,
-                );
-                error!("Evidence DB connection error: {err:?}");
-
-                return;
-            }
-        };
-
-        // Initialize evidence DB schema once using the portable Exhume schema.
-        match has_user_tables(&evidence_pool).await {
-            Ok(false) => {
-                if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
-                    emit_progress_event(
-                        &evidence_id,
-                        ProgressMessageLevel::Main,
-                        ProgressMessageType::Error,
-                        format!("Failed to initialize evidence DB schema: {err:?}"),
-                        &app,
-                    );
-                    error!("Failed to initialize evidence DB schema: {err:?}");
-
-                    return;
+        let (main_pool, evidence_pool) = match setup_evidence_pools(
+            evidence_id, &main_db_path, &evidence_db_path, &app,
+        ).await {
+            Some(pools) => pools,
+            None => {
+                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                    tokens.remove(&evidence_id);
                 }
-            }
-            Ok(true) => {}
-            Err(err) => {
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    format!("Failed checking evidence DB schema: {err:?}"),
-                    &app,
-                );
-                error!("Failed checking evidence DB schema: {err:?}");
-
                 return;
             }
-        }
+        };
 
-        // Attach main DB (filesystem path) and copy evidence rows into evidence DB
-        if let Err(err) = attach_main_db(&evidence_pool, &main_db_path).await {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Failed to attach main DB: {err:?}"),
-                &app,
-            );
-            error!("Failed to attach main DB: {err:?}");
-            return;
-        }
-
-        if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
-            emit_progress_event(
-                &evidence_id,
-                ProgressMessageLevel::Main,
-                ProgressMessageType::Error,
-                format!("Failed to copy evidence rows into evidence DB: {err:?}"),
-                &app,
-            );
-            error!("Failed to copy evidence rows into evidence DB: {err:?}");
-            return;
-        }
-        
-         // Create logical partition entry (in evidence DB) if none exist
+        // Create logical partition entry (in evidence DB) if none exist
          // For folders, we treat it as one logical partition
         let mut partition_rows =
             sqlx::query("SELECT id FROM partitions WHERE evidence_id = ? AND kind IN ('logical', 'folder') ORDER BY id")
@@ -1132,11 +1157,6 @@ fn process_folder(
         }
         
         let partition_id = partition_rows[0].get::<i64, _>("id");
-
-        let cancel_token = Arc::new(AtomicBool::new(false));
-        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-            tokens.insert(evidence_id, cancel_token.clone());
-        }
 
         if cancel_token.load(Ordering::Relaxed) {
             emit_progress_event(
@@ -1240,15 +1260,25 @@ fn process_folder(
         let registry = build_registry();
         extract_artefacts(evidence_id, partition_id, &app, &evidence_pool, &mut detected_fs, &registry, Some(cancel_token.clone())).await;
 
-        update_evidence_status(&evidence_pool, evidence_id, 5)
-            .await
-            .ok();
+        modules::agents::specialists::run_specialists(
+            evidence_id,
+            partition_id,
+            evidence_pool.clone(),
+            &app,
+            ai_config,
+        ).await;
 
+        update_evidence_status(&evidence_pool, evidence_id, 5).await.ok();
+        update_evidence_status(&main_pool, evidence_id, 5).await.ok();
+        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id).ok();
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
             tokens.remove(&evidence_id);
-        }
-            
+        };
     });
+
+    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+        tokens.insert(evidence_id, ProcessingEntry { cancel: cancel_token, handle });
+    }
 }
 
 #[tauri::command]
@@ -1372,6 +1402,45 @@ async fn new_leechcore(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn save_ai_config(config: AiConfig, app: AppHandle) -> Result<(), String> {
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
+    let config_path = base_dir.join("ai_config.json");
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize AI config: {}", e))?;
+    std::fs::write(&config_path, json)
+        .map_err(|e| format!("Failed to write AI config file: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn load_ai_config(app: AppHandle) -> Result<AiConfig, String> {
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
+    let config_path = base_dir.join("ai_config.json");
+    if !config_path.exists() {
+        return Ok(AiConfig {
+            provider: "ollama".to_string(),
+            endpoint: "http://localhost:11434".to_string(),
+            api_key: String::new(),
+            model: "llama3.1:latest".to_string(),
+            enable_text_specialist: false,
+            enable_image_specialist: false,
+            enable_audio_specialist: false,
+            batch_size: 10,
+        });
+    }
+    let json = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read AI config file: {}", e))?;
+    serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to parse AI config: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     env_logger::Builder::new()
@@ -1416,8 +1485,9 @@ pub fn run(init_migrations: Vec<Migration>) {
                                 // Trigger cancellation for all tasks and collect active evidence IDs
                                 let state_guard = app_clone.state::<ProcessingState>();
                                 let active_evidences: Vec<i64> = if let Ok(tokens) = state_guard.tokens.lock() {
-                                    for (_, token) in tokens.iter() {
-                                        token.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    for (_, entry) in tokens.iter() {
+                                        entry.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        entry.handle.abort();
                                     }
                                     tokens.keys().cloned().collect()
                                 } else {
@@ -1432,7 +1502,7 @@ pub fn run(init_migrations: Vec<Migration>) {
                                         if let Ok(pool) = sqlx::SqlitePool::connect(&format!("sqlite:{}", main_db_path)).await {
                                             for eid in active_evidences {
                                                 // Force status to "Stopped/Error" (-1)
-                                                let _ = sqlx::query("UPDATE evidence SET status = -1 WHERE id = ? AND status > 0 AND status < 3")
+                                                let _ = sqlx::query("UPDATE evidence SET status = -1 WHERE id = ? AND (status = -2 OR (status > 0 AND status < 5))")
                                                     .bind(eid)
                                                     .execute(&pool)
                                                     .await;
@@ -1459,6 +1529,26 @@ pub fn run(init_migrations: Vec<Migration>) {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_pty::init())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(base_dir) = app_handle.path().app_local_data_dir() {
+                    let main_db_path = format!("sqlite:{}/thanatology.db", base_dir.display());
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&main_db_path).await {
+                        let result = sqlx::query("UPDATE evidence SET status = -1 WHERE status = -2")
+                            .execute(&pool)
+                            .await;
+                        if let Ok(r) = result {
+                            if r.rows_affected() > 0 {
+                                info!("Startup cleanup: reset {} evidence(s) stuck at status -2 to -1", r.rows_affected());
+                            }
+                        }
+                        pool.close().await;
+                    }
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_case_with_evidence,
             check_evidence_exists,
@@ -1478,7 +1568,6 @@ pub fn run(init_migrations: Vec<Migration>) {
             read_file_prefix,
             read_file_slice_bytes,
             read_file_bytes,
-            process_partitions,
             modules::th_memory::discover_memory_dma,
             modules::th_memory::run_memory_module,
             process_folder,
@@ -1492,6 +1581,9 @@ pub fn run(init_migrations: Vec<Migration>) {
             reset_evidence,
             save_evidence_images,
             get_evidence_images,
+            save_ai_config,
+            load_ai_config,
+            list_physical_devices,
             modules::agents::investigate_with_agent,
             modules::agents::search_files_for_mention,
         ]);

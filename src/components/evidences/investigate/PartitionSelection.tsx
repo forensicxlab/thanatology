@@ -37,7 +37,8 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
   useEffect(() => {
     const fetchPartitions = async () => {
       try {
-        const { mbrRows, gptRows, logicalRows } = await getPartitions(evidenceId);
+        const { mbrRows, gptRows, logicalRows } =
+          await getPartitions(evidenceId);
 
         const combined: PartitionOption[] = [
           ...mbrRows.map((row: MBRPartitionEntry) => ({
@@ -106,19 +107,14 @@ export const PartitionSelection: React.FC<PartitionSelectionProps> = ({
         mb: 0,
       }}
     >
-      <InputLabel id="partition-selector-label">Partition</InputLabel>
+      <InputLabel id="partition-selector-label">Select a partition</InputLabel>
       <Select
         labelId="partition-selector-label"
         id="partition-selector"
-        label="Partition"
+        label="Select a partition"
         value={selectedKey}
         onChange={handlePartitionChange}
-        displayEmpty
       >
-        <MenuItem value="">
-          <em>Select a partition</em>
-        </MenuItem>
-
         {logicalItems.length > 0 && (
           <MenuItem disabled sx={{ opacity: 0.7, typography: "caption" }}>
             Logical

@@ -23,7 +23,6 @@ import EvidenceList from "../evidences/lists/EvidenceList";
 import { Case, Evidence } from "../../dbutils/types";
 import { getCaseWithEvidences, deleteEvidences } from "../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
-import { GridRowSelectionModel } from "@mui/x-data-grid-pro";
 
 interface CaseDetailsProps {
   database: Database | null;
@@ -33,31 +32,11 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const { id } = useParams<{ id: string }>();
   const [caseDetails, setCaseDetails] = useState<Case | null>(null);
   const [evidences, setEvidences] = useState<Evidence[]>([]);
-  const [selectionModel, setSelectionModel] = useState<GridRowSelectionModel>({
-    type: "include",
-    ids: new Set(),
-  });
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<number[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
   const [openNewEvidenceDialog, setOpenNewEvidenceDialog] =
     useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
-
-  // Helper: normalize the selection model into number[]
-  const getSelectedEvidenceIds = (): number[] => {
-    const sm = selectionModel as any;
-
-    // New style: { type: 'include' | 'exclude', ids: Set<GridRowId> }
-    if (sm && typeof sm === "object" && "ids" in sm && sm.ids instanceof Set) {
-      return Array.from(sm.ids).map((id) => Number(id));
-    }
-
-    // Old style: GridRowId[]
-    if (Array.isArray(sm)) {
-      return sm.map((id) => Number(id));
-    }
-
-    return [];
-  };
 
   const fetchCaseData = async () => {
     try {
@@ -85,7 +64,6 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   }, [id, database]);
 
   const handleDeleteSelected = async () => {
-    const selectedEvidenceIds = getSelectedEvidenceIds();
     if (selectedEvidenceIds.length === 0) {
       // Nothing selected => just close dialog defensively
       setDeleteDialogOpen(false);
@@ -99,8 +77,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
         prev.filter((evidence) => !selectedEvidenceIds.includes(evidence.id)),
       );
 
-      // Clear selection in a way compatible with both APIs
-      setSelectionModel({ type: "include", ids: new Set() });
+      setSelectedEvidenceIds([]);
 
       // Explicitly close the dialog
       setDeleteDialogOpen(false);
@@ -114,8 +91,6 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const handleAddEvidence = () => {
     setOpenNewEvidenceDialog(true);
   };
-
-  const selectedEvidenceIds = getSelectedEvidenceIds();
 
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
@@ -144,7 +119,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
         <Grid size={12}>
           <EvidenceList
             evidences={evidences}
-            onSelectionChange={setSelectionModel}
+            onSelectionChange={setSelectedEvidenceIds}
             onEvidenceChange={fetchCaseData}
           />
         </Grid>

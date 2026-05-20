@@ -41,6 +41,7 @@ import type {
 interface Props {
   evidenceId: number;
   partitionId: number;
+  imageSize?: number;
 }
 
 /* ── Colour maps ──────────────────────────────────────────────────── */
@@ -200,7 +201,7 @@ const HorizBar: React.FC<{
 
 /* ── Main component ───────────────────────────────────────────────── */
 
-const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId }) => {
+const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize }) => {
   const [stats, setStats]           = useState<FileStats | null>(null);
   const [mimeData, setMimeData]     = useState<MimeTypeCount[]>([]);
   const [artifactData, setArtifactData] = useState<ArtifactCategoryCount[]>([]);
@@ -288,8 +289,9 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId }) => {
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             icon={<StorageIcon sx={{ fontSize: 16 }} />}
-            label="Total Size"
-            value={formatBytes(stats.total_size)}
+            label={imageSize != null && imageSize > 0 ? "Image Size" : "Total Size"}
+            value={imageSize != null && imageSize > 0 ? formatBytes(imageSize) : formatBytes(stats.total_size)}
+            sub={imageSize != null && imageSize > 0 ? `Indexed: ${formatBytes(stats.total_size)}` : undefined}
           />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>

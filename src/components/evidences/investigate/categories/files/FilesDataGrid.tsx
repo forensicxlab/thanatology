@@ -14,7 +14,8 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import { InfoOutlined } from "@mui/icons-material";
 import UnixToISO8601UTC from "../../../common/UnixToUTC";
 import { getFiles } from "../../../../../dbutils/sqlite";
-import { File } from "../../../../../dbutils/types";
+import type { FileListingMode } from "../../../../../dbutils/sqlite";
+import { File, FileQueryScope } from "../../../../../dbutils/types";
 import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
@@ -29,9 +30,16 @@ interface FileDataGridProps {
   onFilterModelChange?: (m: GridFilterModel) => void;
   timelineFilter?: TimelineFileFilter | null;
   onClearTimelineFilter?: () => void;
+  scope?: FileQueryScope;
+  listingMode?: FileListingMode;
+  /**
+   * true (default): autoPageSize + height:100% mode — requires a parent with a concrete pixel height (e.g. FilesExplorer).
+   * false: fixed pageSizeOptions + natural height mode — safe inside scroll containers (e.g. Timeliner).
+   */
+  autoSize?: boolean;
 }
 
-const pageSizeDefault = 30;
+const pageSizeDefault = 20;
 
 const FileDataGrid: React.FC<FileDataGridProps> = ({
   evidence_id,
@@ -42,7 +50,14 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   onFilterModelChange,
   timelineFilter,
   onClearTimelineFilter,
+  scope,
+  listingMode,
+  autoSize = true,
 }) => {
+  const onRowsLoadedRef = React.useRef(onRowsLoaded);
+  React.useLayoutEffect(() => {
+    onRowsLoadedRef.current = onRowsLoaded;
+  });
   const apiRef = useGridApiRef();
 
   const [rows, setRows] = React.useState<File[]>([]);
@@ -116,7 +131,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         flex: 1.5,
         minWidth: 200,
         renderCell: (p: GridRenderCellParams) => (
-          <div style={{ color: "orange" }}>{p.value}</div>
+          <div>{p.value}</div>
         ),
       },
       { field: "size", headerName: "Size (B)", type: "number", minWidth: 110 },
@@ -170,8 +185,10 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
       partition_id,
       offset,
       pageSize,
-      filterModel as any, // your sqlite builder already tolerates the GridFilterModel shape
+      filterModel as any,
       timelineFilter ?? undefined,
+      scope,
+      listingMode,
     );
 
     ReactDOM.flushSync(() => {
@@ -180,7 +197,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
       setRowCount(total);
     });
 
-    onRowsLoaded?.(newRows);
+    onRowsLoadedRef.current?.(newRows);
 
     apiRef.current?.autosizeColumns({
       columns: [
@@ -203,9 +220,10 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     evidence_id,
     partition_id,
     apiRef,
-    onRowsLoaded,
     filterModel,
     timelineFilter,
+    scope,
+    listingMode,
   ]);
 
   React.useEffect(() => {
@@ -222,13 +240,13 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   );
 
   return (
-    <div style={{ width: "100%" }}>
+    <div style={{ width: "100%", ...(autoSize ? { height: "100%", display: "flex", flexDirection: "column" } : {}) }}>
       {timelineFilter?.start != null && timelineFilter?.end != null && (
         <Stack
           direction="row"
           alignItems="center"
           gap={1}
-          sx={{ mb: 1, flexWrap: "wrap" }}
+          sx={{ mb: 1, flexWrap: "wrap", flexShrink: 0 }}
         >
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Timeline filter:
@@ -266,9 +284,12 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         }}
         pagination
         paginationMode="server"
+        filterMode="server"
         paginationModel={paginationModel}
         onPaginationModelChange={setPaginationModel}
-        pageSizeOptions={[10, 20, 50]}
+        {...(autoSize
+          ? { autoPageSize: true, style: { flex: 1, minHeight: 0 } }
+          : { pageSizeOptions: [10, 20, 50, 100] })}
         rowHeight={50}
         density="compact"
         showToolbar

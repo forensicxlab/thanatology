@@ -8,7 +8,7 @@ import "./App.css";
 import { ThemeProvider } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
 import MiniDrawer from "./components/navigation/MiniDrawer";
-import { BrowserRouter as Router, Routes, Route } from "react-router";
+import { BrowserRouter as Router, Routes, Route, useParams } from "react-router";
 import Dashboard from "./components/Dashboard";
 import Cases from "./components/cases/Cases";
 import Tasks from "./components/Tasks";
@@ -25,6 +25,20 @@ import RawViewer from "./RawViewer";
 import { createGlassTheme } from "./glassTheme";
 import { NavHistoryProvider } from "./components/navigation/NavHistory";
 import { ThemeModeProvider, useThemeMode } from "./ThemeContext";
+
+const ViewerRoute: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  return (
+    <RawViewer
+      fileId={parseInt(id ?? "0", 10)}
+      fileSize={0}
+      height="80vh"
+      language="plaintext"
+      theme="vs-dark"
+      chunkSize={64 * 1024}
+    />
+  );
+};
 
 LicenseInfo.setLicenseKey("LICENCE_KEY_HERE");
 
@@ -83,18 +97,7 @@ const AppWithTheme: React.FC = () => {
                     path="evidences/investigate/:id"
                     element={<LinuxInvestigation />}
                   />
-                  <Route
-                    path="viewer/:id"
-                    element={
-                      <RawViewer
-                        fileId={52}
-                        height={"80vh"}
-                        language="plaintext"
-                        theme="vs-dark"
-                        chunkSize={64 * 1024}
-                      />
-                    }
-                  />
+                  <Route path="viewer/:id" element={<ViewerRoute />} />
                 </Route>
               </Routes>
             </NavHistoryProvider>

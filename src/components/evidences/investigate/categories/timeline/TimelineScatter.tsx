@@ -12,14 +12,13 @@ import Checkbox from "@mui/material/Checkbox";
 import FormGroup from "@mui/material/FormGroup";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Box from "@mui/material/Box";
-import Paper from "@mui/material/Paper";
-import Divider from "@mui/material/Divider";
 import Button from "@mui/material/Button";
 import { ScatterChartPro } from "@mui/x-charts-pro/ScatterChartPro";
 import { getTimestampCountsByType } from "../../../../../dbutils/sqlite";
 import type { TimestampType } from "../../../../../dbutils/types";
+import { unixToISO8601UTCString } from "../../../common/UnixToUTC";
+import { stableStringifyFilterModel } from "./timelineUtils";
 
-import UnixToISO8601UTC from "../../../common/UnixToUTC";
 import dayjs, { Dayjs } from "dayjs";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -44,16 +43,6 @@ const COLORS: Record<TimestampType, string> = {
 };
 const ALL_TYPES: TimestampType[] = ["created", "accessed", "modified"];
 
-function toISO8601UTCString(ts: number): string {
-  if (ts.toString().length === 10) ts *= 1000;
-  const d = new Date(ts);
-  const pad = (n: number, w = 2) => n.toString().padStart(w, "0");
-  const micro = (ms: number) => (ms * 1000).toString().padStart(6, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(
-    d.getUTCHours(),
-  )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${micro(d.getUTCMilliseconds())}Z`;
-}
-
 const BUCKET_MS: Record<Bucket, number> = {
   second: 1000,
   minute: 60_000,
@@ -66,31 +55,6 @@ const SCATTER_ZOOM_INTERACTION_CONFIG = {
   pan: ["drag", "wheel"] as const,
 };
 
-function stableStringifyFilterModel(m: GridFilterModel | undefined) {
-  const items = [...(m?.items ?? [])]
-    .map((it) => ({
-      field: it.field,
-      operator: it.operator,
-      value: it.value ?? null,
-    }))
-    .sort((a, b) =>
-      `${a.field}|${a.operator}|${a.value}`.localeCompare(
-        `${b.field}|${b.operator}|${b.value}`,
-      ),
-    );
-
-  const qf = [...(m?.quickFilterValues ?? [])].map(String).sort();
-
-  return JSON.stringify({
-    logicOperator: (m?.logicOperator ?? "and").toLowerCase(),
-    quickFilterLogicOperator: (
-      m?.quickFilterLogicOperator ?? "and"
-    ).toLowerCase(),
-    items,
-    quickFilterValues: qf,
-  });
-}
-
 function makeRangeFilter(
   startMs: number | null,
   endMs: number | null,
@@ -100,66 +64,21 @@ function makeRangeFilter(
   return { start: startMs, end: endMs, types };
 }
 
-// Tooltip showing "{count} file(s) — <timestamp>" prominently
-type ItemPoint = {
-  seriesId: string;
-  color: string;
-  value: { x: number; y: number };
-  label?: string;
-};
-function TooltipContent(props: {
-  item?: ItemPoint | null;
-  items?: ItemPoint[];
-}) {
-  const item = props.item ?? props.items?.[0] ?? null;
-  if (!item) return null;
-
-  const seriesLabel =
-    item.label ??
-    (typeof item.seriesId === "string"
-      ? item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)
-      : String(item.seriesId));
-
-  const ts = item.value?.x;
-  const count = item.value?.y ?? "";
-
-  return (
-    <Paper sx={{ p: 1.5, maxWidth: 380 }}>
-      {/* Header: count + timestamp */}
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-        {count} file(s) — <UnixToISO8601UTC timestamp={ts} />
-      </Typography>
-      <Divider sx={{ my: 1 }} />
-      {/* Series badge */}
-      <Stack
-        direction="row"
-        sx={{
-          alignItems: "center",
-          gap: 1,
-        }}
-      >
-        <Box
-          sx={{
-            width: 12,
-            height: 12,
-            borderRadius: "50%",
-            bgcolor: item.color,
-          }}
-        />
-        <Typography variant="body2">{seriesLabel}</Typography>
-      </Stack>
-    </Paper>
-  );
-}
 
 export default function TimelineScatter({
   evidenceId,
   partitionId,
-  bucket = "second",
+  bucket = "day",
   onFilesFilterChange,
   gridFilterModel,
 }: Props) {
   const [markerSize, setMarkerSize] = React.useState(3);
+  const [selectedPointKey, setSelectedPointKey] = React.useState<{
+    type: TimestampType;
+    dataIndex: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [seriesData, setSeriesData] = React.useState<
@@ -200,6 +119,7 @@ export default function TimelineScatter({
     let cancelled = false;
     (async () => {
       try {
+        setSelectedPointKey(null);
         setError(null);
         setLoading(true);
 
@@ -231,7 +151,9 @@ export default function TimelineScatter({
         if ((!rangeApplied[0] || !rangeApplied[1]) && xs.length > 0) {
           const min = Math.min(...xs);
           const max = Math.max(...xs);
-          setRangePending([dayjs(min), dayjs(max)]);
+          const autoRange: [Dayjs, Dayjs] = [dayjs(min), dayjs(max)];
+          setRangePending(autoRange);
+          setRangeApplied(autoRange);
         }
       } catch (e: any) {
         if (!cancelled) {
@@ -264,16 +186,42 @@ export default function TimelineScatter({
     color: COLORS[t],
     data: seriesData
       .filter((d) => d.type === t)
-      .map((d, idx) => ({ id: idx, x: d.x, y: d.y })), // add id for robust click behavior
-    preview: { markerSize },
+      .map((d, idx) => ({ id: idx, x: d.x, y: d.y })),
+    markerSize,
     valueFormatter: (v: { x: number; y: number } | null) =>
-      v ? `${v.y} file(s) — ${toISO8601UTCString(v.x)}` : "",
+      v ? `${v.y} file(s) — ${unixToISO8601UTCString(v.x)}` : "",
   }));
+
+  const selectedSeries = selectedPointKey
+    ? {
+        id: "__selected__" as const,
+        label: "Selected",
+        color: "#f44336",
+        data: [{ id: 0, x: selectedPointKey.x, y: selectedPointKey.y }],
+        markerSize: markerSize + 2,
+        valueFormatter: (v: { x: number; y: number } | null) =>
+          v ? `${v.y} file(s) — ${unixToISO8601UTCString(v.x)}` : "",
+      }
+    : null;
+
+  const allSeries = selectedSeries ? [...chartSeries, selectedSeries] : chartSeries;
 
   const handlePointClick = React.useCallback(
     (_event: unknown, scatterItemIdentifier: any) => {
       const { seriesId, dataIndex } = scatterItemIdentifier ?? {};
       if (seriesId == null || dataIndex == null) return;
+
+      // Click on the red selected overlay — re-apply the stored filter
+      if (seriesId === "__selected__") {
+        if (!selectedPointKey) return;
+        const bucketEnd = selectedPointKey.x + BUCKET_MS[bucketApplied] - 1;
+        onFilesFilterChange?.({
+          start: selectedPointKey.x,
+          end: bucketEnd,
+          types: [selectedPointKey.type],
+        });
+        return;
+      }
 
       const type = seriesId as TimestampType;
       const s = chartSeries.find((cs) => cs.id === type);
@@ -283,19 +231,39 @@ export default function TimelineScatter({
       const bucketStart = pt.x as number;
       const bucketEnd = bucketStart + BUCKET_MS[bucketApplied] - 1;
 
+      setSelectedPointKey({ type, dataIndex, x: bucketStart, y: pt.y });
+
       onFilesFilterChange?.({
         start: bucketStart,
         end: bucketEnd,
         types: [type],
       });
     },
-    [chartSeries, bucketApplied, onFilesFilterChange],
+    [chartSeries, bucketApplied, onFilesFilterChange, selectedPointKey],
   );
 
   const hasChartData = chartSeries.some((series) => series.data.length > 0);
 
   const xMin = rangeApplied[0]?.valueOf() ?? undefined;
   const xMax = rangeApplied[1]?.valueOf() ?? undefined;
+
+  const handleZoomChange = React.useCallback(
+    (zoomData: { axisId: string; start: number; end: number }[]) => {
+      const timeZoom = zoomData.find((z) => z.axisId === "time");
+      if (!timeZoom) return;
+      const effectiveMin =
+        xMin ?? (seriesData.length > 0 ? Math.min(...seriesData.map((d) => d.x)) : null);
+      const effectiveMax =
+        xMax ?? (seriesData.length > 0 ? Math.max(...seriesData.map((d) => d.x)) : null);
+      if (effectiveMin == null || effectiveMax == null) return;
+      const range = effectiveMax - effectiveMin;
+      setRangePending([
+        dayjs(Math.round(effectiveMin + (timeZoom.start / 100) * range)),
+        dayjs(Math.round(effectiveMin + (timeZoom.end / 100) * range)),
+      ]);
+    },
+    [xMin, xMax, seriesData],
+  );
 
   const applyChanges = () => {
     setBucketApplied(bucketPending);
@@ -312,6 +280,7 @@ export default function TimelineScatter({
   };
 
   const clearFiltersAndReload = () => {
+    setSelectedPointKey(null);
     setRangePending([null, null]);
     setRangeApplied([null, null]);
     onFilesFilterChange?.(null);
@@ -517,23 +486,23 @@ export default function TimelineScatter({
                 scaleType: "time",
                 label: "Timestamp (UTC)",
                 valueFormatter: (v: number | null) =>
-                  v == null ? "" : toISO8601UTCString(v),
+                  v == null ? "" : unixToISO8601UTCString(v),
                 min: xMin,
                 max: xMax,
                 zoom: { slider: { enabled: true, preview: true } },
               },
             ]}
             yAxis={[{ id: "count", label: "Events", min: 0 }]}
-            series={chartSeries as any}
+            series={allSeries as any}
             onItemClick={handlePointClick}
-            slots={{ tooltip: TooltipContent as any }}
+            onZoomChange={handleZoomChange}
           />
         )}
 
         <Typography variant="caption" sx={{ alignSelf: "center" }}>
           Bucket (applied): {bucketApplied}. Range:{" "}
           {rangeApplied[0] && rangeApplied[1]
-            ? `${toISO8601UTCString(rangeApplied[0].valueOf())} → ${toISO8601UTCString(
+            ? `${unixToISO8601UTCString(rangeApplied[0].valueOf())} → ${unixToISO8601UTCString(
                 rangeApplied[1].valueOf(),
               )}`
             : "none (full dataset)"}

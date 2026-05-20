@@ -124,6 +124,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
           label: basename(r.absolute_path) || r.identifier?.toString() || `File ${r.identifier}`,
           size: r.size,
           absolutePath: r.absolute_path,
+          hostPath: r.host_path ?? null,
         })),
     [files],
   );

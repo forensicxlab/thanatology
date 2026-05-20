@@ -1,5 +1,5 @@
 // NewEvidenceForm.tsx
-import React from "react";
+import React, { useState } from "react";
 import {
   Alert,
   Box,
@@ -9,12 +9,34 @@ import {
   Select,
   InputLabel,
   FormControl,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableContainer,
+  CircularProgress,
+  Typography,
 } from "@mui/material";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   EvidenceImageDraft,
 } from "../../../dbutils/types";
 import EvidenceImageAttachments from "./EvidenceImageAttachments";
+
+type PhysicalDevice = {
+  path: string;
+  name: string;
+  size: number;
+  size_human: string;
+  is_internal: boolean;
+  protocol: string;
+};
 
 export interface NewEvidenceFormProps {
   evidenceName: string;
@@ -44,6 +66,8 @@ export interface NewEvidenceFormProps {
   onSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
   // When true, the component will render without a form wrapper and submit button.
   hideSubmitButton?: boolean;
+  // When true, disables the submit button.
+  isSubmitDisabled?: boolean;
 }
 
 const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
@@ -60,11 +84,39 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
     onEvidenceImagesChange,
     onSubmit,
     hideSubmitButton,
+    isSubmitDisabled,
   } = props;
+
+  const [nameTouched, setNameTouched] = useState(false);
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devices, setDevices] = useState<PhysicalDevice[]>([]);
+  const [deviceScanError, setDeviceScanError] = useState<string | null>(null);
 
   const hasImageCaptionError = evidenceImages.some(
     (image) => image.caption.trim().length === 0,
   );
+
+  const handleScanDevices = async () => {
+    setDeviceDialogOpen(true);
+    setDevicesLoading(true);
+    setDeviceScanError(null);
+    setDevices([]);
+    try {
+      const result = await invoke<PhysicalDevice[]>("list_physical_devices");
+      setDevices(result);
+    } catch (e: any) {
+      setDeviceScanError(e?.message ?? String(e));
+    } finally {
+      setDevicesLoading(false);
+    }
+  };
+
+  const handleSelectDevice = (device: PhysicalDevice) => {
+    onEvidenceLocationChange(device.path);
+    onEvidenceTypeChange("Physical Disk image");
+    setDeviceDialogOpen(false);
+  };
 
   const handleFileSelect = async () => {
     try {
@@ -97,6 +149,9 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
         label="Evidence Name"
         value={evidenceName}
         onChange={(e) => onEvidenceNameChange(e.target.value)}
+        onBlur={() => setNameTouched(true)}
+        error={nameTouched && !evidenceName.trim()}
+        helperText={nameTouched && !evidenceName.trim() ? "Required" : undefined}
         fullWidth
         required
       />
@@ -133,14 +188,71 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
       </FormControl>
 
       <TextField
-        label="Selected File"
+        label="Selected File / Device"
         value={evidenceLocation}
         fullWidth
         slotProps={{ input: { readOnly: true } }}
+        helperText={!evidenceLocation ? "Select a file or scan for connected devices" : undefined}
       />
-      <Button variant="contained" onClick={handleFileSelect}>
-        Locate the evidence...
-      </Button>
+      <Box sx={{ display: "flex", gap: 1 }}>
+        <Button variant="contained" onClick={handleFileSelect} sx={{ flex: 1 }}>
+          Locate the evidence...
+        </Button>
+        <Button variant="outlined" onClick={handleScanDevices} sx={{ flex: 1 }}>
+          Scan for devices...
+        </Button>
+      </Box>
+
+      <Dialog open={deviceDialogOpen} onClose={() => setDeviceDialogOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Select a Device</DialogTitle>
+        <DialogContent>
+          {devicesLoading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", py: 4, gap: 2 }}>
+              <CircularProgress size={24} />
+              <Typography variant="body2">Scanning connected devices...</Typography>
+            </Box>
+          ) : deviceScanError ? (
+            <Alert severity="error">{deviceScanError}</Alert>
+          ) : devices.length === 0 ? (
+            <Typography variant="body2" sx={{ color: "text.secondary", textAlign: "center", py: 4 }}>
+              No devices found.
+            </Typography>
+          ) : (
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Device</TableCell>
+                    <TableCell>Name / Model</TableCell>
+                    <TableCell>Size</TableCell>
+                    <TableCell>Location</TableCell>
+                    <TableCell>Protocol</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {devices.map((dev) => (
+                    <TableRow
+                      key={dev.path}
+                      hover
+                      onClick={() => handleSelectDevice(dev)}
+                      sx={{ cursor: "pointer" }}
+                    >
+                      <TableCell>{dev.path}</TableCell>
+                      <TableCell>{dev.name}</TableCell>
+                      <TableCell>{dev.size_human}</TableCell>
+                      <TableCell>{dev.is_internal ? "Internal" : "External"}</TableCell>
+                      <TableCell>{dev.protocol}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeviceDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Description */}
       <TextField
@@ -166,7 +278,12 @@ const NewEvidenceForm: React.FC<NewEvidenceFormProps> = (props) => {
 
       {/* Conditionally render submit button if not embedded */}
       {!hideSubmitButton && (
-        <Button type="submit" variant="contained" color="primary">
+        <Button
+          type="submit"
+          variant="contained"
+          color="primary"
+          disabled={isSubmitDisabled || hasImageCaptionError}
+        >
           Create Evidence
         </Button>
       )}

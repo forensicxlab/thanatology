@@ -113,7 +113,7 @@ const FileRow = React.memo(function FileRow({
                     </Typography>
                 }
                 secondary={
-                    <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                    <Stack component="span" direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
                         <Chip
                             label={file.sig_mime?.split("/")[0]}
                             size="small"
@@ -121,11 +121,12 @@ const FileRow = React.memo(function FileRow({
                             variant="outlined"
                             sx={{ height: 18, fontSize: "0.65rem" }}
                         />
-                        <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.65rem" }}>
+                        <Typography component="span" variant="caption" sx={{ color: "text.secondary", fontSize: "0.65rem" }}>
                             {formatSize(file.size)}
                         </Typography>
                     </Stack>
                 }
+                slotProps={{ secondary: { component: "span" } }}
             />
         </ListItemButton>
     );

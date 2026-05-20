@@ -560,7 +560,7 @@ export async function getEvidencesStatus(
     db = await Database.load("sqlite:thanatology.db");
   }
   const evidences: Evidence[] = await db.select(
-    "SELECT * FROM evidence WHERE status = 2",
+    "SELECT * FROM evidence WHERE status >= 1",
   );
   return evidences;
 }
@@ -998,10 +998,14 @@ export async function fetchArtifactsByCategory(
   offset: number,
   limit: number,
   filterModel?: FilterModel,
+  tag?: string,
 ): Promise<{ rows: any[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
 
-  const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, 3);
+  // $1=category, $2=evidenceId, $3=partitionId, [$4=tag if provided]
+  const fixedParamCount = tag ? 4 : 3;
+  const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, fixedParamCount);
+  const tagWhere = tag ? ` AND artifacts.tag = $4` : "";
   const extraWhere = built.where ? ` AND (${built.where})` : "";
 
   const query = `
@@ -1036,8 +1040,9 @@ export async function fetchArtifactsByCategory(
       artifacts.category = $1 AND
       artifacts.evidence_id = $2 AND
       artifacts.partition_id = $3
+      ${tagWhere}
       ${extraWhere}
-    LIMIT $${built.params.length + 4} OFFSET $${built.params.length + 5}
+    LIMIT $${built.params.length + fixedParamCount + 1} OFFSET $${built.params.length + fixedParamCount + 2}
   `;
 
   const countQuery = `
@@ -1048,10 +1053,11 @@ export async function fetchArtifactsByCategory(
       artifacts.category = $1 AND
       artifacts.evidence_id = $2 AND
       artifacts.partition_id = $3
+      ${tagWhere}
       ${extraWhere}
   `;
 
-  const queryParams = [category, evidenceId, partitionId, ...built.params];
+  const queryParams = [category, evidenceId, partitionId, ...(tag ? [tag] : []), ...built.params];
 
   const countResult = (await db.select(countQuery, queryParams)) as any[];
   const rowCount = countResult[0].count;
@@ -1063,6 +1069,24 @@ export async function fetchArtifactsByCategory(
   ])) as any[];
 
   return { rows, rowCount };
+}
+
+export async function fetchApplicationTags(
+  evidenceId: number,
+  partitionId: number,
+): Promise<string[]> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows = (await db.select(
+    `SELECT DISTINCT artifacts.tag
+     FROM artifacts
+     INNER JOIN system_files ON artifacts.file_id = system_files.id
+     WHERE artifacts.category = $1
+       AND artifacts.evidence_id = $2
+       AND artifacts.partition_id = $3
+     ORDER BY artifacts.tag ASC`,
+    ["Application", evidenceId, partitionId],
+  )) as { tag: string }[];
+  return rows.map((r) => r.tag);
 }
 
 /**
@@ -1401,8 +1425,9 @@ function buildFileScope(
           : ROOT_PATH_KEY;
 
       clauses.push(`parent_path_key = $${++lastIndex}`);
+      clauses.push("is_dir = 0");
       params.push(parentPath);
-      orderBy = "is_dir DESC, LOWER(name) ASC, name ASC, id ASC";
+      orderBy = "LOWER(name) ASC, name ASC, id ASC";
     }
 
     return { clauses, params, lastIndex, orderBy };
@@ -2004,8 +2029,11 @@ export async function fetchAiArtifacts(
   const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, 3);
   const extraWhere = built.where ? ` AND (${built.where})` : "";
 
+  // Single query using COUNT(*) OVER () so the total count and the page rows come from the
+  // same transaction snapshot — avoids races when the backend is actively writing.
   const query = `
     SELECT
+      COUNT(*) OVER () AS total_count,
       ao.id AS artifact_id,
       ao.kind AS artifact_name,
       ao.parser,
@@ -2026,8 +2054,8 @@ export async function fetchAiArtifacts(
       sf.sig_name,
       sf.sig_mime,
       sf.sig_exts,
-      json_extract(ao.json, '$.score') as score,
-      json_extract(ao.json, '$.summary') as description,
+      json_extract(ao.json, '$.score') AS score,
+      json_extract(ao.json, '$.summary') AS description,
       ao.json AS metadata
     FROM
       artifact_objects ao
@@ -2038,24 +2066,11 @@ export async function fetchAiArtifacts(
       ao.evidence_id = $1 AND
       ao.partition_id = $2
       ${extraWhere.replace(/artifacts\./g, 'ao.')}
+    ORDER BY score DESC
     LIMIT $${built.params.length + 3} OFFSET $${built.params.length + 4}
   `;
 
-  const countQuery = `
-    SELECT COUNT(*) as count
-    FROM artifact_objects ao
-    INNER JOIN system_files sf ON ao.file_id = sf.id
-    WHERE
-      ao.parser = 'ai_specialist' AND
-      ao.evidence_id = $1 AND
-      ao.partition_id = $2
-      ${extraWhere.replace(/artifacts\./g, 'ao.')}
-  `;
-
   const queryParams = [evidenceId, partitionId, ...built.params];
-
-  const countResult = (await db.select(countQuery, queryParams)) as any[];
-  const rowCount = countResult[0].count;
 
   const rowsRaw = (await db.select(query, [
     ...queryParams,
@@ -2063,18 +2078,13 @@ export async function fetchAiArtifacts(
     offset,
   ])) as any[];
 
-  // Transform JSON payload into explicit keys so DataGrid sees `score` and `summary` automatically if needed.
-  const rows = rowsRaw.map((r: any) => {
-    let parsedMetadata: any = {};
-    try {
-      parsedMetadata = JSON.parse(r.metadata);
-    } catch (e) { }
+  const rowCount = rowsRaw.length > 0 ? Number(rowsRaw[0].total_count ?? 0) : 0;
 
+  const rows = rowsRaw.map((r: any) => {
     return {
       ...r,
-      score: parsedMetadata.score || null,
-      description: parsedMetadata.summary || "No summary available",
-      metadata: r.metadata
+      score: r.score !== null && r.score !== undefined ? Number(r.score) : null,
+      description: r.description ?? "No summary available",
     };
   });
 

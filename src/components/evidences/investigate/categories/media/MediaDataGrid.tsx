@@ -75,7 +75,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         flex: 1.5,
         minWidth: 200,
         renderCell: (p: GridRenderCellParams) => (
-          <div style={{ color: "orange" }}>{p.value}</div>
+          <div>{p.value}</div>
         ),
       },
       { field: "size", headerName: "Size (B)", type: "number", minWidth: 110 },

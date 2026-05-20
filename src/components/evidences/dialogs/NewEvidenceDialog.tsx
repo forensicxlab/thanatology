@@ -106,6 +106,7 @@ const NewEvidenceDialog: React.FC<NewEvidenceDialogProps> = ({
           onEvidenceDescriptionChange={setEvidenceDescription}
           onEvidenceImagesChange={setEvidenceImages}
           onSubmit={handleSubmit}
+          isSubmitDisabled={!evidenceName.trim() || !evidenceLocation}
         />
       </DialogContent>
       <DialogActions>

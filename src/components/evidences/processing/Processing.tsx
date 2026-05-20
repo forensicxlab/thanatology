@@ -45,7 +45,7 @@ const Processing: React.FC = () => {
         </Box>
       ) : (
         <Box sx={{ flexGrow: 1, p: 2 }}>
-          {evidence && evidence.status < 3 && (
+          {evidence && evidence.status < 2 && (
             <EvidenceDetails evidence={evidence} />
           )}
           {evidence && evidence.type === "Folder" ? (

@@ -192,6 +192,7 @@ export interface FsInfo {
   block_size: number;
   filesystem_type: string;
   metadata: Record<string, unknown>;
+  image_size?: number;
 }
 export interface File {
   id: number;
@@ -216,6 +217,7 @@ export interface File {
   sig_name: string | null;
   sig_mime: string | null;
   sig_exts: string | null;
+  host_path?: string | null;
   metadata: string; // JSON as string from DB
 }
 

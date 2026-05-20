@@ -32,6 +32,7 @@ export interface MediaEntry {
   label?: string;
   size?: number;
   absolutePath?: string;
+  hostPath?: string | null;
 }
 
 interface MediaGalleryProps {
@@ -46,9 +47,10 @@ interface MediaGalleryProps {
  *  Helpers                                                           *
  * ═══════════════════════════════════════════════════════════════════ */
 
-const loadFile = async (id: number, mime = "application/octet-stream") => {
+const loadFile = async (id: number, mime = "application/octet-stream", hostPath?: string | null) => {
   const bytes = (await invoke<number[]>("read_file_bytes", {
     fileId: id,
+    path: hostPath ?? undefined,
   })) as number[];
   const uint8 = Uint8Array.from(bytes);
   const blob = new Blob([uint8], { type: mime });
@@ -89,7 +91,7 @@ const ThumbnailCard = React.memo(function ThumbnailCard({
     }
 
     let url: string | null = null;
-    loadFile(entry.id, entry.mime)
+    loadFile(entry.id, entry.mime, entry.hostPath)
       .then((u) => {
         url = u;
         if (mountedRef.current) {
@@ -327,7 +329,7 @@ export default function MediaGallery({
       // Load slides for current page of media
       const slides = await Promise.all(
         media.map(async (m): Promise<Slide> => {
-          const src = await loadFile(m.id, m.mime);
+          const src = await loadFile(m.id, m.mime, m.hostPath);
           if (m.kind === "image") {
             return { _id: m.id, src, alt: m.label };
           }

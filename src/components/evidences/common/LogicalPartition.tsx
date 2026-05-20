@@ -6,11 +6,13 @@ import { LogicalPartitionEntry } from "../../../dbutils/types";
 interface LogicalPartitionProps {
   logicalPartition: LogicalPartitionEntry;
   index: number | null;
+  realImageSize?: number;
 }
 
 const LogicalPartition: React.FC<LogicalPartitionProps> = ({
   logicalPartition,
   index,
+  realImageSize,
 }) => {
   return (
     <Paper
@@ -34,11 +36,13 @@ const LogicalPartition: React.FC<LogicalPartitionProps> = ({
         )}
       </Box>
       <Typography variant="body2">
-        <Typography variant="body2">
-          <strong>Description:</strong> {`${logicalPartition.description}`}
-        </Typography>
+        <strong>Description:</strong> {`${logicalPartition.description}`}
+      </Typography>
+      <Typography variant="body2">
         <strong>Size:</strong>{" "}
-        {`0x${logicalPartition.size.toString(16).toUpperCase()}`}
+        {realImageSize != null && realImageSize > 0
+          ? `0x${realImageSize.toString(16).toUpperCase()}`
+          : `0x${logicalPartition.size.toString(16).toUpperCase()}`}
       </Typography>
     </Paper>
   );
