@@ -1,11 +1,11 @@
-use exhume_filesystem::filesystem::DirectoryCommon;
 use exhume_filesystem::Filesystem;
+use exhume_filesystem::filesystem::DirectoryCommon;
 use serde::Serialize;
 use sqlx::{Pool, Sqlite};
 use tauri::AppHandle;
 
 use crate::modules::utils::th_progress::{
-    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
+    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
 };
 use tokio::sync::mpsc;
 
@@ -54,15 +54,24 @@ pub async fn identify_file_types<T: Filesystem>(
                     event.message,
                     &app_clone,
                 ),
-                exhume_indexer::IndexerEventType::Progress { current, total } => emit_progress_event(
+                exhume_indexer::IndexerEventType::Progress { current, total } => {
+                    emit_progress_event(
+                        &event.evidence_id,
+                        ProgressMessageLevel::Module,
+                        ProgressMessageType::Progress,
+                        ProgressPayload {
+                            current,
+                            total,
+                            message: event.message,
+                        },
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::ParserProgress { .. } => emit_progress_event(
                     &event.evidence_id,
                     ProgressMessageLevel::Module,
-                    ProgressMessageType::Progress,
-                    ProgressPayload {
-                        current,
-                        total,
-                        message: event.message,
-                    },
+                    ProgressMessageType::Info,
+                    event.message,
                     &app_clone,
                 ),
             };

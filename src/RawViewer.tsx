@@ -1,5 +1,4 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
-import { FixedSizeList as List } from "react-window";
 import { invoke } from "@tauri-apps/api/core";
 // RawMonacoViewer.tsx
 import Card from "@mui/material/Card";

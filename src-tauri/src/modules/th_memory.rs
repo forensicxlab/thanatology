@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use exhume_memory::{
-    BitlockerHit, BitlockerScanCallbacks, BitlockerScanRequest, ConnectorKind,
-    ConnectorOptions, MemdumpCallbacks, MemdumpRequest, MemoryProgressUpdate, MemoryService,
-    ModuleRecord, OsKind, ProcessRecord, PsListRequest, TriageRequest, scan_bitlocker_with_callbacks,
+    BitlockerHit, BitlockerScanCallbacks, BitlockerScanRequest, ConnectorKind, ConnectorOptions,
+    MemdumpCallbacks, MemdumpRequest, MemoryProgressUpdate, MemoryService, ModuleRecord, OsKind,
+    ProcessRecord, PsListRequest, TriageRequest, scan_bitlocker_with_callbacks,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -148,11 +148,25 @@ struct MemoryGridColumn {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum MemorySessionEvent {
     ResetResults,
-    Status { level: String, message: String },
-    Progress { current: u64, total: u64, message: String },
-    ResultSchema { title: String, columns: Vec<MemoryGridColumn> },
-    ResultRow { row: Value },
-    Complete { summary: String },
+    Status {
+        level: String,
+        message: String,
+    },
+    Progress {
+        current: u64,
+        total: u64,
+        message: String,
+    },
+    ResultSchema {
+        title: String,
+        columns: Vec<MemoryGridColumn>,
+    },
+    ResultRow {
+        row: Value,
+    },
+    Complete {
+        summary: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -203,13 +217,7 @@ pub async fn discover_memory_dma(
         "Preparing LeechCore runtime and validating DMA access.",
         &app,
     );
-    emit_progress(
-        &request.session_id,
-        0,
-        3,
-        "Preparing DMA probe",
-        &app,
-    );
+    emit_progress(&request.session_id, 0, 3, "Preparing DMA probe", &app);
 
     let session_id = request.session_id.clone();
     let connector = request.connector.clone();
@@ -224,7 +232,11 @@ pub async fn discover_memory_dma(
         emit_status(
             &session_id,
             "info",
-            format!("Opening {} connector: {}", connector_type.as_str(), connector),
+            format!(
+                "Opening {} connector: {}",
+                connector_type.as_str(),
+                connector
+            ),
             &app_handle,
         );
         emit_progress(
@@ -252,7 +264,9 @@ pub async fn discover_memory_dma(
         );
 
         service
-            .probe(&PsListRequest { limit: process_limit })
+            .probe(&PsListRequest {
+                limit: process_limit,
+            })
             .context("DMA probe failed")
     })
     .await
@@ -263,14 +277,13 @@ pub async fn discover_memory_dma(
         message
     })?;
 
-    emit_progress(
+    emit_progress(&request.session_id, 3, 3, "DMA validation completed", &app);
+    emit_schema(
         &request.session_id,
-        3,
-        3,
-        "DMA validation completed",
+        "DMA Process Sample",
+        process_columns(),
         &app,
     );
-    emit_schema(&request.session_id, "DMA Process Sample", process_columns(), &app);
     for process in &probe.processes {
         emit_row(&request.session_id, process_row(process), &app);
     }
@@ -341,7 +354,12 @@ pub async fn run_memory_module(
 
         match module_kind {
             MemoryModuleKind::Pslist => {
-                emit_schema(&session_id, "Process Listing", process_columns(), &app_handle);
+                emit_schema(
+                    &session_id,
+                    "Process Listing",
+                    process_columns(),
+                    &app_handle,
+                );
                 let report = service
                     .pslist(&PsListRequest { limit })
                     .context("pslist failed")?;
@@ -349,7 +367,10 @@ pub async fn run_memory_module(
                     emit_row(&session_id, process_row(process), &app_handle);
                 }
                 emit_progress(&session_id, 1, 1, "Process listing completed", &app_handle);
-                let summary = format!("pslist completed with {} processes.", report.processes.len());
+                let summary = format!(
+                    "pslist completed with {} processes.",
+                    report.processes.len()
+                );
                 emit_status(&session_id, "success", summary.clone(), &app_handle);
                 emit_complete(&session_id, summary.clone(), &app_handle);
                 Ok(MemoryModuleExecutionResponse {
@@ -360,14 +381,16 @@ pub async fn run_memory_module(
             }
             MemoryModuleKind::Triage => {
                 let report = service
-                    .triage(&TriageRequest {
-                        limit,
-                        pid,
-                    })
+                    .triage(&TriageRequest { limit, pid })
                     .context("triage failed")?;
 
                 let (title, row_count, summary) = if let Some(selected) = report.selected_process {
-                    emit_schema(&session_id, "Process Modules", module_columns(), &app_handle);
+                    emit_schema(
+                        &session_id,
+                        "Process Modules",
+                        module_columns(),
+                        &app_handle,
+                    );
                     for module in &selected.modules {
                         emit_row(&session_id, module_row(module), &app_handle);
                     }
@@ -379,11 +402,19 @@ pub async fn run_memory_module(
                     );
                     ("Process Modules", selected.modules.len(), summary)
                 } else {
-                    emit_schema(&session_id, "Triage Process Sample", process_columns(), &app_handle);
+                    emit_schema(
+                        &session_id,
+                        "Triage Process Sample",
+                        process_columns(),
+                        &app_handle,
+                    );
                     for process in &report.processes {
                         emit_row(&session_id, process_row(process), &app_handle);
                     }
-                    let summary = format!("triage completed with {} processes.", report.processes.len());
+                    let summary = format!(
+                        "triage completed with {} processes.",
+                        report.processes.len()
+                    );
                     ("Triage Process Sample", report.processes.len(), summary)
                 };
 
@@ -398,7 +429,12 @@ pub async fn run_memory_module(
                 })
             }
             MemoryModuleKind::Bitlocker => {
-                emit_schema(&session_id, "BitLocker Material", bitlocker_columns(), &app_handle);
+                emit_schema(
+                    &session_id,
+                    "BitLocker Material",
+                    bitlocker_columns(),
+                    &app_handle,
+                );
                 let progress_app = app_handle.clone();
                 let progress_session = session_id.clone();
                 let hit_app = app_handle.clone();
@@ -433,10 +469,7 @@ pub async fn run_memory_module(
                 let summary = if report.hits.is_empty() {
                     "BitLocker scan completed with no material found.".to_string()
                 } else {
-                    format!(
-                        "BitLocker scan completed with {} hits.",
-                        report.hits.len()
-                    )
+                    format!("BitLocker scan completed with {} hits.", report.hits.len())
                 };
                 emit_status(&session_id, "success", summary.clone(), &app_handle);
                 emit_complete(&session_id, summary.clone(), &app_handle);
@@ -448,7 +481,12 @@ pub async fn run_memory_module(
             }
             MemoryModuleKind::Memdump => {
                 let output = output_path.context("memdump requires an output path")?;
-                emit_schema(&session_id, "Memdump Summary", memdump_columns(), &app_handle);
+                emit_schema(
+                    &session_id,
+                    "Memdump Summary",
+                    memdump_columns(),
+                    &app_handle,
+                );
                 let progress_app = app_handle.clone();
                 let progress_session = session_id.clone();
                 let callbacks = MemdumpCallbacks {
@@ -513,7 +551,11 @@ fn build_memory_service(
         os_kind: os_kind.into(),
         linux_profile: linux_profile.and_then(|p| {
             let p = p.trim().to_string();
-            if p.is_empty() { None } else { Some(PathBuf::from(p)) }
+            if p.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(p))
+            }
         }),
     })
 }
@@ -532,7 +574,9 @@ fn memory_modules(os_kind: MemoryOsKind) -> Vec<MemoryModuleDescriptor> {
         MemoryModuleDescriptor {
             id: "triage".to_string(),
             name: "Process Triage".to_string(),
-            description: "Inspect a process by PID and list its loaded modules. The PID filter is optional.".to_string(),
+            description:
+                "Inspect a process by PID and list its loaded modules. The PID filter is optional."
+                    .to_string(),
             supports_process_filter: true,
             supports_address_range: false,
             requires_output_path: false,
@@ -540,7 +584,8 @@ fn memory_modules(os_kind: MemoryOsKind) -> Vec<MemoryModuleDescriptor> {
         MemoryModuleDescriptor {
             id: "bitlocker".to_string(),
             name: "BitLocker Recovery".to_string(),
-            description: "Scan physical memory for FVEK and VMK material using exhume_memory.".to_string(),
+            description: "Scan physical memory for FVEK and VMK material using exhume_memory."
+                .to_string(),
             supports_process_filter: false,
             supports_address_range: true,
             requires_output_path: false,
@@ -653,12 +698,16 @@ fn parse_optional_u64(value: Option<&str>, field_name: &str) -> Result<Option<u6
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
-    parse_u64(value).with_context(|| format!("failed to parse {field_name}: {value}"))
+    parse_u64(value)
+        .with_context(|| format!("failed to parse {field_name}: {value}"))
         .map(Some)
 }
 
 fn parse_u64(value: &str) -> Result<u64> {
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         Ok(u64::from_str_radix(hex, 16)?)
     } else {
         Ok(value.parse()?)
@@ -675,7 +724,8 @@ fn normalize_optional(value: String) -> Option<String> {
 }
 
 fn emit_memory_event(session_id: &str, event: MemorySessionEvent, app: &AppHandle) {
-    app.emit(&format!("memory_session_{session_id}"), event).ok();
+    app.emit(&format!("memory_session_{session_id}"), event)
+        .ok();
 }
 
 fn reset_results(session_id: &str, app: &AppHandle) {
@@ -716,7 +766,12 @@ fn emit_progress(
     );
 }
 
-fn emit_schema(session_id: &str, title: impl Into<String>, columns: Vec<MemoryGridColumn>, app: &AppHandle) {
+fn emit_schema(
+    session_id: &str,
+    title: impl Into<String>,
+    columns: Vec<MemoryGridColumn>,
+    app: &AppHandle,
+) {
     emit_memory_event(
         session_id,
         MemorySessionEvent::ResultSchema {

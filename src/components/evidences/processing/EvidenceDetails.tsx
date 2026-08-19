@@ -1,5 +1,5 @@
 import React from "react";
-import { Paper, Typography, Box, Chip } from "@mui/material";
+import { Typography, Box } from "@mui/material";
 import DescriptionIcon from "@mui/icons-material/Description";
 import { Evidence } from "../../../dbutils/types";
 import { Fingerprint } from "@mui/icons-material";

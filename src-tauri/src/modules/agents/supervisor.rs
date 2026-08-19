@@ -1,9 +1,11 @@
+use crate::modules::utils::th_progress::{
+    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+};
 use rig::{
     agent::Agent,
     completion::{CompletionModel, Prompt},
 };
 use serde::{Deserialize, Serialize};
-use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -31,13 +33,16 @@ pub struct Supervisor<M: CompletionModel> {
 
 impl<M: CompletionModel> Supervisor<M> {
     pub fn new(agent: Agent<M>, evidence_id: i64, app: tauri::AppHandle) -> Self {
-        Self { agent, evidence_id, app }
+        Self {
+            agent,
+            evidence_id,
+            app,
+        }
     }
 
     /// Entry point for an investigation. The supervisor takes a high-level task,
     /// and uses its Rig agent to determine the steps.
     pub async fn investigate(&self, task: InvestigationTask) -> Result<Report, String> {
-        
         emit_progress_event(
             &self.evidence_id,
             ProgressMessageLevel::Main,
@@ -50,7 +55,11 @@ impl<M: CompletionModel> Supervisor<M> {
         if !task.history.is_empty() {
             history_block.push_str("=== Conversation History ===\n");
             for msg in &task.history {
-                history_block.push_str(&format!("{}: {}\n\n", msg.role.to_uppercase(), msg.content));
+                history_block.push_str(&format!(
+                    "{}: {}\n\n",
+                    msg.role.to_uppercase(),
+                    msg.content
+                ));
             }
             history_block.push_str("============================\n\n");
         }
@@ -90,10 +99,15 @@ impl<M: CompletionModel> Supervisor<M> {
             &self.app,
         );
 
-        // Attempt to parse the structured JSON from the LLM. 
+        // Attempt to parse the structured JSON from the LLM.
         // If it returns markdown code blocks, strip them.
-        let cleaned_response = response.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
-        
+        let cleaned_response = response
+            .trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
         match serde_json::from_str::<Report>(cleaned_response) {
             Ok(report) => Ok(report),
             Err(_) => {

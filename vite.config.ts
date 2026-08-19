@@ -7,6 +7,17 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        agent: "agent.html",
+        escalidraw: "escalidraw.html",
+        fileviewer: "fileviewer.html",
+        leechcore: "leechcore.html",
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -23,6 +23,7 @@ import EvidenceList from "../evidences/lists/EvidenceList";
 import { Case, Evidence } from "../../dbutils/types";
 import { getCaseWithEvidences, deleteEvidences } from "../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
+import { useSnackbar } from "../SnackbarProvider";
 
 interface CaseDetailsProps {
   database: Database | null;
@@ -37,6 +38,7 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const [openNewEvidenceDialog, setOpenNewEvidenceDialog] =
     useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
+  const { display_message } = useSnackbar();
 
   const fetchCaseData = async () => {
     try {
@@ -72,17 +74,31 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
 
     try {
       setDeleting(true);
-      await deleteEvidences(selectedEvidenceIds);
+      const result = await deleteEvidences(selectedEvidenceIds);
       setEvidences((prev) =>
-        prev.filter((evidence) => !selectedEvidenceIds.includes(evidence.id)),
+        prev.filter(
+          (evidence) => !result.deletedEvidenceIds.includes(evidence.id),
+        ),
       );
 
       setSelectedEvidenceIds([]);
 
       // Explicitly close the dialog
       setDeleteDialogOpen(false);
+      if (result.cleanupWarnings.length > 0) {
+        display_message(
+          "warning",
+          `Evidence records were deleted, but some generated files could not be removed: ${result.cleanupWarnings.join(" ")}`,
+        );
+      } else {
+        display_message(
+          "success",
+          `${result.deletedEvidenceIds.length} evidence item(s) deleted.`,
+        );
+      }
     } catch (error) {
       console.error("Error deleting evidences:", error);
+      display_message("error", `Failed to delete evidence: ${String(error)}`);
     } finally {
       setDeleting(false);
     }

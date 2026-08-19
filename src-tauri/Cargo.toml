@@ -33,6 +33,7 @@ exhume_filesystem = { path = "../../exhume/members/exhume_filesystem" }
 exhume_artefacts = { path = "../../exhume/members/exhume_artefacts" }
 exhume_indexer = { path = "../../exhume/members/exhume_indexer" }
 exhume_memory = { path = "../../exhume/members/exhume_memory" }
+exhume_agent = { path = "../../exhume/members/exhume_agent", default-features = false }
 env_logger = "0.10"
 log = "0.4"
 file_type = "0.8.8"
@@ -57,11 +58,18 @@ md-5 = "0.10.6"
 rig-core = "0.31.0"
 thiserror = "2.0.18"
 base64 = "0.22.1"
-reqwest = { version = "0.13.2", features = ["multipart"] }
+reqwest = { version = "0.13.2", features = ["multipart", "stream", "json"] }
 hex = "0.4.3"
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+plist = { version = "=1.7.0", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
+fs2 = "0.4.3"
+zip = { version = "7.4.0", default-features = false, features = ["deflate"] }
 
 [patch.crates-io]
-memflow = { git = "https://github.com/forensicxlab/memflow", branch = "main" }
+# DEV ONLY: keep crates.io consumers on the sibling forensicxlab checkout.
+# RELEASE AFTER PUSH: remove this override after every manifest uses an
+# immutable forensicxlab Git `rev`.
+memflow = { path = "../../memflow-framework/memflow/memflow" }
 exhume_artefacts  = { path = "../../exhume/members/exhume_artefacts" }
 exhume_body       = { path = "../../exhume/members/exhume_body" }
 exhume_filesystem = { path = "../../exhume/members/exhume_filesystem" }
@@ -71,6 +79,10 @@ exhume_exfat      = { path = "../../exhume/members/exhume_exfat" }
 exhume_lvm        = { path = "../../exhume/members/exhume_lvm" }
 exhume_ntfs       = { path = "../../exhume/members/exhume_ntfs" }
 exhume_apfs       = { path = "../../exhume/members/exhume_apfs" }
-exhume_agent      = { path = "../../exhume/members/exhume_agent" }
 exhume_indexer    = { path = "../../exhume/members/exhume_indexer" }
 exhume_memory     = { path = "../../exhume/members/exhume_memory" }
+
+# DEV ONLY: connector forks still declare the forensicxlab Git source.
+# Patching that source prevents a second, type-incompatible memflow instance.
+[patch."https://github.com/forensicxlab/memflow"]
+memflow = { path = "../../memflow-framework/memflow/memflow" }

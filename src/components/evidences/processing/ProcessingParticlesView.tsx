@@ -13,11 +13,13 @@ import {
 } from "@mui/material";
 import { StopCircle } from "@mui/icons-material";
 import { Evidence } from "../../../dbutils/types";
+import ParserActivityStatus, {
+  ParserProgressPayload,
+} from "./ParserActivityStatus";
 
 interface ProcessingParticlesViewProps {
   evidence: Evidence;
   onComplete?: () => void;
-  onArtefactIdentificationComplete?: () => void;
 }
 
 interface ProgressPayload {
@@ -29,13 +31,44 @@ interface ProgressPayload {
 interface ProgressMessagePayload {
   message: string;
   status?: number;
+  phase?: ProcessingPhase;
 }
+
+type ProcessingPhase =
+  | "artefact_identification"
+  | "artefact_parsing"
+  | "ai_analysis"
+  | "complete";
 
 function getProgressMessage(payload: string | ProgressMessagePayload): string {
   return typeof payload === "string" ? payload : payload.message;
 }
 
-const PIPELINE_STEPS = ["Indexing", "File ID & Artifacts", "AI Specialists"];
+const PIPELINE_STEPS = [
+  "Indexing files",
+  "File types",
+  "Artefact discovery",
+  "Artefact parsing",
+  "AI specialists",
+];
+
+function stepForStatus(status: number): number {
+  if (status >= 6) return PIPELINE_STEPS.length;
+  if (status >= 5) return 4;
+  if (status >= 4) return 2;
+  if (status >= 3) return 1;
+  return 0;
+}
+
+function stepForPhase(phase?: ProcessingPhase): number | null {
+  switch (phase) {
+    case "artefact_identification": return 2;
+    case "artefact_parsing": return 3;
+    case "ai_analysis": return 4;
+    case "complete": return PIPELINE_STEPS.length;
+    default: return null;
+  }
+}
 
 // ─── Particle system ──────────────────────────────────────────────────────────
 
@@ -90,15 +123,15 @@ function makeParticles(): Particle[] {
 const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
   evidence,
   onComplete,
-  onArtefactIdentificationComplete,
 }) => {
   const evidenceId = evidence.id;
 
-  const [activeStep, setActiveStep] = useState(evidence.status >= 3 ? 1 : 0);
+  const [activeStep, setActiveStep] = useState(stepForStatus(evidence.status));
   const [cancelling, setCancelling] = useState(false);
   const [mainProgress, setMainProgress] = useState("");
   const [moduleProgress, setModuleProgress] = useState("Initializing…");
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [parserActivity, setParserActivity] = useState<ParserProgressPayload | null>(null);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const particlesRef = useRef<Particle[]>(makeParticles());
@@ -108,8 +141,8 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
   // Phase colour rules:
   //   step 0, total ≤ 0  → discovery: stay WHITE
   //   step 0, total > 0  → indexing:  WHITE → BLUE  by %
-  //   step 1             → file ID:   BLUE  → GREEN by %
-  //   step 2+            → artefacts: GREEN → PURPLE by %
+  //   steps 1-2          → identification: BLUE → GREEN by %
+  //   step 3+            → parsing/AI: GREEN → PURPLE by %
   useEffect(() => {
     const ps    = particlesRef.current;
     const hasPct = progress !== null && progress.total > 0;
@@ -120,9 +153,9 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
         )
       : 0;
 
-    if (activeStep >= 2) {
+    if (activeStep >= 3) {
       ps.forEach((p, i) => { p.target = i < n ? { ...COL_PURPLE } : { ...COL_GREEN }; });
-    } else if (activeStep === 1) {
+    } else if (activeStep >= 1) {
       ps.forEach((p, i) => { p.target = i < n ? { ...COL_GREEN } : { ...COL_BLUE }; });
     } else if (hasPct) {
       ps.forEach((p, i) => { p.target = i < n ? { ...COL_BLUE } : { ...COL_WHITE }; });
@@ -259,30 +292,49 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
       mainInfo:    `main_progress_info_${evidenceId}`,
       mainSuccess: `main_progress_success_${evidenceId}`,
       mainError:   `main_progress_error_${evidenceId}`,
+      mainProgress: `main_progress_progress_${evidenceId}`,
       modInfo:     `module_progress_info_${evidenceId}`,
       modSuccess:  `module_progress_success_${evidenceId}`,
       modError:    `module_progress_error_${evidenceId}`,
       modProgress: `module_progress_progress_${evidenceId}`,
+      modParser:   `module_progress_parser_${evidenceId}`,
     };
 
     const unsubs = [
-      listen<number>(`pipeline_complete_${evidenceId}`, () => onComplete?.()),
+      listen<number>(`pipeline_complete_${evidenceId}`, () => {
+        setActiveStep(PIPELINE_STEPS.length);
+        onComplete?.();
+      }),
+      listen<number>(`artefacts_complete_${evidenceId}`, () => {
+        setActiveStep(4);
+        onComplete?.();
+      }),
 
       listen<string | ProgressMessagePayload>(ev.mainInfo, ({ payload }) => {
         setMainProgress(getProgressMessage(payload));
+        if (typeof payload !== "string") {
+          const step = stepForPhase(payload.phase);
+          if (step !== null) setActiveStep(step);
+        }
       }),
       listen<string | ProgressMessagePayload>(ev.mainSuccess, ({ payload }) => {
         setMainProgress(getProgressMessage(payload));
-        if (typeof payload !== "string" && payload.status === 4) {
-          setActiveStep(2);
-          onArtefactIdentificationComplete?.();
+        setProgress(null);
+        if (typeof payload !== "string") {
+          const step = stepForPhase(payload.phase) ?? stepForStatus(payload.status ?? evidence.status);
+          setActiveStep(step);
+          if (payload.phase !== "artefact_parsing") setParserActivity(null);
         } else {
-          setActiveStep((prev) => (prev < 1 ? 1 : prev));
+          setActiveStep((previous) => Math.max(previous, 1));
         }
         onComplete?.();
       }),
       listen<string | ProgressMessagePayload>(ev.mainError, ({ payload }) => {
         setMainProgress(getProgressMessage(payload));
+      }),
+      listen<ProgressPayload>(ev.mainProgress, ({ payload }) => {
+        setProgress({ current: payload.current, total: payload.total });
+        if (payload.message) setModuleProgress(payload.message);
       }),
 
       listen<string | ProgressMessagePayload>(ev.modInfo, ({ payload }) => {
@@ -291,6 +343,7 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
       listen<string | ProgressMessagePayload>(ev.modSuccess, ({ payload }) => {
         setModuleProgress(getProgressMessage(payload));
         setProgress(null);
+        setParserActivity(null);
       }),
       listen<string | ProgressMessagePayload>(ev.modError, ({ payload }) => {
         setModuleProgress(getProgressMessage(payload));
@@ -309,10 +362,22 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
           setModuleProgress(payload.message);
         }
       }),
+      listen<ParserProgressPayload>(ev.modParser, ({ payload }) => {
+        setActiveStep(3);
+        setParserActivity(payload);
+        setModuleProgress(payload.message);
+        setProgress({
+          current:
+            payload.phase === "started"
+              ? Math.max(payload.current - 1, 0)
+              : payload.current,
+          total: payload.total,
+        });
+      }),
     ];
 
     return () => { unsubs.forEach((p) => p.then((u) => u())); };
-  }, [evidenceId, onArtefactIdentificationComplete, onComplete]);
+  }, [evidence.status, evidenceId, onComplete]);
 
   const handleCancel = async () => {
     setCancelling(true);
@@ -320,6 +385,7 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
       await invoke("cancel_processing", { evidenceId });
       setMainProgress("Stopping…");
       setProgress(null);
+      setParserActivity(null);
       onComplete?.();
     } catch (err) {
       setCancelling(false);
@@ -327,7 +393,7 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
     }
   };
 
-  const isDiscovery = progress !== null && progress.total <= 0;
+  const isDiscovery = activeStep === 0 && progress !== null && progress.total <= 0;
 
   return (
     <Box
@@ -372,6 +438,9 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
           {moduleProgress}
         </Typography>
+        {parserActivity && (
+          <ParserActivityStatus activity={parserActivity} />
+        )}
       </Box>
 
       <Tooltip title={cancelling ? "Stopping…" : "Cancel Processing"}>

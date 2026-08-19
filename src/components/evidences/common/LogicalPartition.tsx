@@ -1,5 +1,5 @@
 import React from "react";
-import { Paper, Typography, Box, Chip } from "@mui/material";
+import { Paper, Typography, Box } from "@mui/material";
 import StorageIcon from "@mui/icons-material/Storage";
 import { LogicalPartitionEntry } from "../../../dbutils/types";
 

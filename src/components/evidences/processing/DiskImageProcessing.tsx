@@ -24,6 +24,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { useSnackbar } from "../../SnackbarProvider";
 import { useNavigate } from "react-router";
+import { getEvidenceStatusInfo } from "../../../dbutils/evidenceStatus";
 
 interface DiskImageProcessingProps {
   evidence: Evidence;
@@ -43,8 +44,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
   const [processing, setProcessing] = useState<boolean>(false);
-  const [artefactIdentificationCompleted, setArtefactIdentificationCompleted] =
-    useState(false);
 
   const [mainDbPath, setMainDbPath] = useState<string>("");
   const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
@@ -85,10 +84,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     }
     fetchPartitions();
   }, [evidence, display_message]);
-
-  useEffect(() => {
-    setArtefactIdentificationCompleted(false);
-  }, [evidence.id]);
 
   async function fetchEvidence() {
     try {
@@ -161,6 +156,14 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   };
 
   const handleReviewEvidence = async () => {
+    const statusInfo = getEvidenceStatusInfo(evidence.status);
+    if (!statusInfo.isReviewable) {
+      display_message(
+        "warning",
+        statusInfo.blockedReason ?? "Artefact parsing has not completed yet.",
+      );
+      return;
+    }
     try {
       const exists: boolean = await invoke("check_evidence_exists", {
         path: evidence.path,
@@ -180,37 +183,26 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
     }
   };
 
-  const showCompletionScreen =
-    artefactIdentificationCompleted || evidence.status >= 5;
+  const showCompletionScreen = evidence.status >= 5;
 
   const processingTask =
     evidence.status >= 2 && evidence.status < 5 ? (
       <ProcessingParticlesView
         evidence={evidence}
         onComplete={fetchEvidence}
-        onArtefactIdentificationComplete={() =>
-          setArtefactIdentificationCompleted(true)
-        }
       />
     ) : null;
 
   if (showCompletionScreen) {
     return (
-      <>
-        {evidence.status < 5 && processingTask && (
-          <Box sx={{ display: "none" }}>{processingTask}</Box>
-        )}
-        <Box sx={{ textAlign: "center", mt: 4 }}>
+      <Box sx={{ textAlign: "center", mt: 4 }}>
           <CheckCircleIcon sx={{ fontSize: 80, color: "green" }} />
           <Typography variant="h5" gutterBottom>
-            {evidence.status >= 5
-              ? "Disk Indexing Completed"
-              : "Artefact Identification Completed"}
+            Evidence Ready for Review
           </Typography>
           <Typography variant="body1">
-            {evidence.status >= 5
-              ? "The full processing pipeline is now completed. You can start or continue the investigation."
-              : "Known artefacts have been identified. You can start or continue the investigation while artefact extraction finishes in the background."}
+            Artefact parsing is complete. You can review the evidence while any
+            remaining AI specialist analysis continues in the background.
           </Typography>
           <Box sx={{ mt: 3 }}>
             <Button variant="contained" onClick={handleReviewEvidence}>
@@ -218,7 +210,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
             </Button>
           </Box>
         </Box>
-      </>
     );
   }
 

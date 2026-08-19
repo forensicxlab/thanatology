@@ -1,12 +1,9 @@
 import * as React from "react";
 import Stack from "@mui/material/Stack";
-import Button from "@mui/material/Button";
-import Typography from "@mui/material/Typography";
 import TimelineScatter from "./TimelineScatter";
-import FileDataGrid from "../files/FilesDataGrid";
-import type { GridFilterModel } from "@mui/x-data-grid-pro";
-import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
-import { stableStringifyFilterModel } from "./timelineUtils";
+import TimelineEventsGrid from "./TimelineEventsGrid";
+import type { TimelineEventsFilter } from "../../../../../dbutils/sqlite";
+import { useTimeFilterStore } from "../../../../../store/timeFilterStore";
 
 export default function Timeliner({
   evidenceId,
@@ -15,84 +12,44 @@ export default function Timeliner({
   evidenceId: number;
   partitionId: number;
 }) {
-  const [timelineFilter, setTimelineFilter] =
-    React.useState<TimelineFileFilter | null>(null);
+  const [eventsFilter, setEventsFilter] = React.useState<TimelineEventsFilter | null>(null);
 
-  // Grid filter: draft (drives grid UI + grid querying)
-  const [gridFilterDraft, setGridFilterDraft] = React.useState<GridFilterModel>(
-    {
-      items: [],
+  const globalStart = useTimeFilterStore((s) => s.start);
+  const globalEnd = useTimeFilterStore((s) => s.end);
+  const setRange = useTimeFilterStore((s) => s.setRange);
+
+  // Brushing the scatter promotes its range to the global scope, so the whole
+  // investigation follows the selection made here.
+  const handleScatterFilter = React.useCallback(
+    (filter: TimelineEventsFilter | null) => {
+      setEventsFilter(filter);
+      if (filter && (filter.start != null || filter.end != null)) {
+        setRange(filter.start, filter.end);
+      }
     },
+    [setRange],
   );
 
-  // Grid filter: applied to timeline (drives chart querying)
-  const [gridFilterAppliedToChart, setGridFilterAppliedToChart] =
-    React.useState<GridFilterModel>({ items: [] });
-
-  const draftKey = React.useMemo(
-    () => stableStringifyFilterModel(gridFilterDraft),
-    [gridFilterDraft],
-  );
-  const appliedKey = React.useMemo(
-    () => stableStringifyFilterModel(gridFilterAppliedToChart),
-    [gridFilterAppliedToChart],
-  );
-
-  const gridHasPendingChanges = draftKey !== appliedKey;
-
-  const applyGridFiltersToChart = React.useCallback(() => {
-    // clone to avoid accidental mutation surprises
-    setGridFilterAppliedToChart(structuredClone(gridFilterDraft));
-  }, [gridFilterDraft]);
-
-  const cancelGridPending = React.useCallback(() => {
-    setGridFilterDraft(structuredClone(gridFilterAppliedToChart));
-  }, [gridFilterAppliedToChart]);
+  // Conversely, a range chosen in the scope bar drives this tab's grid.
+  const effectiveFilter = React.useMemo<TimelineEventsFilter | null>(() => {
+    if (eventsFilter) {
+      return { ...eventsFilter, start: globalStart, end: globalEnd };
+    }
+    if (globalStart == null && globalEnd == null) return null;
+    return { start: globalStart, end: globalEnd, event_types: null };
+  }, [eventsFilter, globalStart, globalEnd]);
 
   return (
-    <Stack sx={{
-      gap: 2
-    }}>
+    <Stack sx={{ gap: 2 }}>
       <TimelineScatter
         evidenceId={evidenceId}
         partitionId={partitionId}
-        onFilesFilterChange={setTimelineFilter}
-        // IMPORTANT: chart uses the APPLIED grid filters, not draft
-        gridFilterModel={gridFilterAppliedToChart}
+        onEventFilterChange={handleScatterFilter}
       />
-      {gridHasPendingChanges && (
-        <Stack
-          direction="row"
-          sx={{
-            gap: 1,
-            justifyContent: "center",
-            alignItems: "center"
-          }}>
-          <Typography variant="caption" sx={{
-            color: "text.secondary"
-          }}>
-            Grid filters changed. Apply them to refresh the timeline.
-          </Typography>
-          <Button
-            size="small"
-            variant="contained"
-            onClick={applyGridFiltersToChart}
-          >
-            Apply to timeline
-          </Button>
-          <Button size="small" variant="outlined" onClick={cancelGridPending}>
-            Cancel
-          </Button>
-        </Stack>
-      )}
-      <FileDataGrid
-        evidence_id={evidenceId}
-        partition_id={partitionId}
-        timelineFilter={timelineFilter}
-        onClearTimelineFilter={() => setTimelineFilter(null)}
-        filterModel={gridFilterDraft}
-        onFilterModelChange={setGridFilterDraft}
-        autoSize={false}
+      <TimelineEventsGrid
+        evidenceId={evidenceId}
+        partitionId={partitionId}
+        filter={effectiveFilter}
       />
     </Stack>
   );

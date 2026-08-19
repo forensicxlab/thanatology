@@ -1,4 +1,3 @@
-// components/TimelineScatter.tsx
 import * as React from "react";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -14,37 +13,52 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import { ScatterChartPro } from "@mui/x-charts-pro/ScatterChartPro";
-import { getTimestampCountsByType } from "../../../../../dbutils/sqlite";
-import type { TimestampType } from "../../../../../dbutils/types";
+import { getTimelineEventCounts } from "../../../../../dbutils/sqlite";
+import type { TimelineEventsFilter } from "../../../../../dbutils/sqlite";
 import { unixToISO8601UTCString } from "../../../common/UnixToUTC";
-import { stableStringifyFilterModel } from "./timelineUtils";
 
 import dayjs, { Dayjs } from "dayjs";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DateTimeRangePicker } from "@mui/x-date-pickers-pro/DateTimeRangePicker";
 import { MultiInputDateTimeRangeField } from "@mui/x-date-pickers-pro/MultiInputDateTimeRangeField";
-import type { GridFilterModel } from "@mui/x-data-grid-pro";
-import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
+
+type Bucket = "second" | "minute" | "hour" | "day";
+
 type Props = {
   evidenceId: number;
   partitionId: number;
-  bucket?: "second" | "minute" | "hour" | "day";
-  gridFilterModel?: GridFilterModel;
-  onFilesFilterChange?: (filter: TimelineFileFilter | null) => void;
+  bucket?: Bucket;
+  onEventFilterChange?: (filter: TimelineEventsFilter | null) => void;
 };
 
-type Bucket = NonNullable<Props["bucket"]>;
-
-const COLORS: Record<TimestampType, string> = {
-  created: "#4caf50",
-  accessed: "#2196f3",
-  modified: "#ff9800",
+const KNOWN_COLORS: Record<string, string> = {
+  "file.created": "#4caf50",
+  "file.accessed": "#2196f3",
+  "file.modified": "#ff9800",
+  "windows.evtx.event": "#9c27b0",
+  "windows.pml.event": "#f44336",
+  "mobile.communication.message": "#00bcd4",
+  "mobile.communication.attachment": "#ff5722",
 };
-const ALL_TYPES: TimestampType[] = ["created", "accessed", "modified"];
+
+const FALLBACK_PALETTE = [
+  "#3f51b5", "#e91e63", "#795548", "#607d8b",
+  "#009688", "#ff4081", "#673ab7", "#cddc39",
+];
+
+const KNOWN_LABELS: Record<string, string> = {
+  "file.created": "File Created",
+  "file.accessed": "File Accessed",
+  "file.modified": "File Modified",
+  "windows.evtx.event": "Windows Event Log",
+  "windows.pml.event": "Process Monitor",
+  "mobile.communication.message": "Message",
+  "mobile.communication.attachment": "Attachment",
+};
 
 const BUCKET_MS: Record<Bucket, number> = {
-  second: 1000,
+  second: 1_000,
   minute: 60_000,
   hour: 3_600_000,
   day: 86_400_000,
@@ -55,26 +69,29 @@ const SCATTER_ZOOM_INTERACTION_CONFIG = {
   pan: ["drag", "wheel"] as const,
 };
 
-function makeRangeFilter(
-  startMs: number | null,
-  endMs: number | null,
-  types: TimestampType[],
-): TimelineFileFilter | null {
-  if (!startMs || !endMs || types.length === 0) return null;
-  return { start: startMs, end: endMs, types };
+function strHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
+function colorForType(et: string): string {
+  return KNOWN_COLORS[et] ?? FALLBACK_PALETTE[strHash(et) % FALLBACK_PALETTE.length];
+}
+
+function labelForType(et: string): string {
+  return KNOWN_LABELS[et] ?? et;
+}
 
 export default function TimelineScatter({
   evidenceId,
   partitionId,
-  bucket = "day",
-  onFilesFilterChange,
-  gridFilterModel,
+  bucket: bucketProp = "day",
+  onEventFilterChange,
 }: Props) {
   const [markerSize, setMarkerSize] = React.useState(3);
-  const [selectedPointKey, setSelectedPointKey] = React.useState<{
-    type: TimestampType;
+  const [selectedKey, setSelectedKey] = React.useState<{
+    event_type: string;
     dataIndex: number;
     x: number;
     y: number;
@@ -82,76 +99,62 @@ export default function TimelineScatter({
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [seriesData, setSeriesData] = React.useState<
-    { type: TimestampType; x: number; y: number }[]
+    { event_type: string; x: number; y: number }[]
   >([]);
 
-  const [visibleTypes, setVisibleTypes] = React.useState<
-    Record<TimestampType, boolean>
-  >({
-    created: true,
-    accessed: true,
-    modified: true,
-  });
-  // Pending vs Applied controls
-  const [bucketPending, setBucketPending] = React.useState<Bucket>(bucket);
-  const [rangePending, setRangePending] = React.useState<
-    [Dayjs | null, Dayjs | null]
-  >([null, null]);
+  const [visibleTypes, setVisibleTypes] = React.useState<Record<string, boolean>>({});
 
-  const [bucketApplied, setBucketApplied] = React.useState<Bucket>(bucket);
-  const [rangeApplied, setRangeApplied] = React.useState<
-    [Dayjs | null, Dayjs | null]
-  >([null, null]);
+  // Tracks the last emitted time range so checkbox changes can re-emit in range mode.
+  // null when in point-click mode or when filter is cleared.
+  const [rangeFilterBase, setRangeFilterBase] = React.useState<{
+    start: number;
+    end: number;
+  } | null>(null);
+
+  const [bucketPending, setBucketPending] = React.useState<Bucket>(bucketProp);
+  const [rangePending, setRangePending] = React.useState<[Dayjs | null, Dayjs | null]>([null, null]);
+  const [bucketApplied, setBucketApplied] = React.useState<Bucket>(bucketProp);
+  const [rangeApplied, setRangeApplied] = React.useState<[Dayjs | null, Dayjs | null]>([null, null]);
 
   const hasPendingChanges =
     bucketPending !== bucketApplied ||
-    (rangePending[0]?.valueOf() ?? null) !==
-      (rangeApplied[0]?.valueOf() ?? null) ||
-    (rangePending[1]?.valueOf() ?? null) !==
-      (rangeApplied[1]?.valueOf() ?? null);
-
-  const gridFilterKey = React.useMemo(
-    () => stableStringifyFilterModel(gridFilterModel),
-    [gridFilterModel],
-  );
+    (rangePending[0]?.valueOf() ?? null) !== (rangeApplied[0]?.valueOf() ?? null) ||
+    (rangePending[1]?.valueOf() ?? null) !== (rangeApplied[1]?.valueOf() ?? null);
 
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        setSelectedPointKey(null);
+        setSelectedKey(null);
         setError(null);
         setLoading(true);
 
-        const start = rangeApplied[0]?.valueOf() ?? null;
-        const end = rangeApplied[1]?.valueOf() ?? null;
-
-        const rows = await getTimestampCountsByType(evidenceId, partitionId, {
+        const rows = await getTimelineEventCounts(evidenceId, partitionId, {
           bucket: bucketApplied,
-          start,
-          end,
-          filterModel: gridFilterModel as any,
+          start: rangeApplied[0]?.valueOf() ?? null,
+          end: rangeApplied[1]?.valueOf() ?? null,
         });
 
         if (cancelled) return;
 
         const data = rows
-          .filter(
-            (r) =>
-              Number.isFinite(r.ts) &&
-              Number.isFinite(r.count) &&
-              r.ts > 0 &&
-              r.count > 0,
-          )
-          .map((r) => ({ type: r.type, x: r.ts, y: r.count }));
+          .filter(r => Number.isFinite(r.ts) && Number.isFinite(r.count) && r.ts > 0 && r.count > 0)
+          .map(r => ({ event_type: r.event_type, x: r.ts, y: r.count }));
 
         setSeriesData(data);
 
-        const xs = data.map((d) => d.x);
-        if ((!rangeApplied[0] || !rangeApplied[1]) && xs.length > 0) {
-          const min = Math.min(...xs);
-          const max = Math.max(...xs);
-          const autoRange: [Dayjs, Dayjs] = [dayjs(min), dayjs(max)];
+        setVisibleTypes(prev => {
+          const newTypes = [...new Set(data.map(d => d.event_type))];
+          const additions: Record<string, boolean> = {};
+          for (const t of newTypes) {
+            if (!(t in prev)) additions[t] = true;
+          }
+          return Object.keys(additions).length > 0 ? { ...prev, ...additions } : prev;
+        });
+
+        if ((!rangeApplied[0] || !rangeApplied[1]) && data.length > 0) {
+          const xs = data.map(d => d.x);
+          const autoRange: [Dayjs, Dayjs] = [dayjs(Math.min(...xs)), dayjs(Math.max(...xs))];
           setRangePending(autoRange);
           setRangeApplied(autoRange);
         }
@@ -164,43 +167,40 @@ export default function TimelineScatter({
         if (!cancelled) setLoading(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-    // IMPORTANT: depend on gridFilterKey (APPLIED), not raw model
+    return () => { cancelled = true; };
   }, [
     evidenceId,
     partitionId,
     bucketApplied,
     rangeApplied?.[0]?.valueOf(),
     rangeApplied?.[1]?.valueOf(),
-    gridFilterKey,
   ]);
 
-  const enabledTypes = ALL_TYPES.filter((t) => visibleTypes[t]);
+  const enabledTypes = Object.entries(visibleTypes)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
 
-  const chartSeries = enabledTypes.map((t) => ({
-    id: t,
-    label: t.charAt(0).toUpperCase() + t.slice(1),
-    color: COLORS[t],
+  const chartSeries = enabledTypes.map(et => ({
+    id: et,
+    label: labelForType(et),
+    color: colorForType(et),
     data: seriesData
-      .filter((d) => d.type === t)
+      .filter(d => d.event_type === et)
       .map((d, idx) => ({ id: idx, x: d.x, y: d.y })),
     markerSize,
     valueFormatter: (v: { x: number; y: number } | null) =>
-      v ? `${v.y} file(s) — ${unixToISO8601UTCString(v.x)}` : "",
+      v ? `${v.y} event(s) — ${unixToISO8601UTCString(v.x)}` : "",
   }));
 
-  const selectedSeries = selectedPointKey
+  const selectedSeries = selectedKey
     ? {
-        id: "__selected__" as const,
+        id: "__selected__",
         label: "Selected",
         color: "#f44336",
-        data: [{ id: 0, x: selectedPointKey.x, y: selectedPointKey.y }],
+        data: [{ id: 0, x: selectedKey.x, y: selectedKey.y }],
         markerSize: markerSize + 2,
         valueFormatter: (v: { x: number; y: number } | null) =>
-          v ? `${v.y} file(s) — ${unixToISO8601UTCString(v.x)}` : "",
+          v ? `${v.y} event(s) — ${unixToISO8601UTCString(v.x)}` : "",
       }
     : null;
 
@@ -211,50 +211,43 @@ export default function TimelineScatter({
       const { seriesId, dataIndex } = scatterItemIdentifier ?? {};
       if (seriesId == null || dataIndex == null) return;
 
-      // Click on the red selected overlay — re-apply the stored filter
       if (seriesId === "__selected__") {
-        if (!selectedPointKey) return;
-        const bucketEnd = selectedPointKey.x + BUCKET_MS[bucketApplied] - 1;
-        onFilesFilterChange?.({
-          start: selectedPointKey.x,
-          end: bucketEnd,
-          types: [selectedPointKey.type],
+        if (!selectedKey) return;
+        setRangeFilterBase(null);
+        onEventFilterChange?.({
+          start: selectedKey.x,
+          end: selectedKey.x + BUCKET_MS[bucketApplied] - 1,
+          event_types: [selectedKey.event_type],
         });
         return;
       }
 
-      const type = seriesId as TimestampType;
-      const s = chartSeries.find((cs) => cs.id === type);
+      const s = chartSeries.find(cs => cs.id === seriesId);
       const pt = s?.data?.[dataIndex];
       if (!pt) return;
 
       const bucketStart = pt.x as number;
-      const bucketEnd = bucketStart + BUCKET_MS[bucketApplied] - 1;
-
-      setSelectedPointKey({ type, dataIndex, x: bucketStart, y: pt.y });
-
-      onFilesFilterChange?.({
+      setSelectedKey({ event_type: seriesId, dataIndex, x: bucketStart, y: pt.y });
+      setRangeFilterBase(null);
+      onEventFilterChange?.({
         start: bucketStart,
-        end: bucketEnd,
-        types: [type],
+        end: bucketStart + BUCKET_MS[bucketApplied] - 1,
+        event_types: [seriesId],
       });
     },
-    [chartSeries, bucketApplied, onFilesFilterChange, selectedPointKey],
+    [chartSeries, bucketApplied, onEventFilterChange, selectedKey],
   );
 
-  const hasChartData = chartSeries.some((series) => series.data.length > 0);
-
+  const hasChartData = chartSeries.some(s => s.data.length > 0);
   const xMin = rangeApplied[0]?.valueOf() ?? undefined;
   const xMax = rangeApplied[1]?.valueOf() ?? undefined;
 
   const handleZoomChange = React.useCallback(
-    (zoomData: { axisId: string; start: number; end: number }[]) => {
-      const timeZoom = zoomData.find((z) => z.axisId === "time");
+    (zoomData: { axisId: string | number; start: number; end: number }[]) => {
+      const timeZoom = zoomData.find(z => z.axisId === "time");
       if (!timeZoom) return;
-      const effectiveMin =
-        xMin ?? (seriesData.length > 0 ? Math.min(...seriesData.map((d) => d.x)) : null);
-      const effectiveMax =
-        xMax ?? (seriesData.length > 0 ? Math.max(...seriesData.map((d) => d.x)) : null);
+      const effectiveMin = xMin ?? (seriesData.length > 0 ? Math.min(...seriesData.map(d => d.x)) : null);
+      const effectiveMax = xMax ?? (seriesData.length > 0 ? Math.max(...seriesData.map(d => d.x)) : null);
       if (effectiveMin == null || effectiveMax == null) return;
       const range = effectiveMax - effectiveMin;
       setRangePending([
@@ -268,10 +261,19 @@ export default function TimelineScatter({
   const applyChanges = () => {
     setBucketApplied(bucketPending);
     setRangeApplied(rangePending);
-
-    const startMs = rangePending[0]?.valueOf() ?? null;
-    const endMs = rangePending[1]?.valueOf() ?? null;
-    onFilesFilterChange?.(makeRangeFilter(startMs, endMs, enabledTypes));
+    const start = rangePending[0]?.valueOf() ?? null;
+    const end = rangePending[1]?.valueOf() ?? null;
+    if (start && end) {
+      setRangeFilterBase({ start, end });
+      onEventFilterChange?.({
+        start,
+        end,
+        event_types: enabledTypes.length > 0 ? [...enabledTypes] : null,
+      });
+    } else {
+      setRangeFilterBase(null);
+      onEventFilterChange?.(null);
+    }
   };
 
   const cancelPending = () => {
@@ -280,24 +282,22 @@ export default function TimelineScatter({
   };
 
   const clearFiltersAndReload = () => {
-    setSelectedPointKey(null);
+    setSelectedKey(null);
+    setRangeFilterBase(null);
     setRangePending([null, null]);
     setRangeApplied([null, null]);
-    onFilesFilterChange?.(null);
+    onEventFilterChange?.(null);
   };
+
+  const knownTypes = Object.keys(visibleTypes);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Stack
-        sx={{
-          gap: 2,
-        }}
-      >
+      <Stack sx={{ gap: 2 }}>
         <Typography variant="h6" sx={{ alignSelf: "center" }}>
-          File Timestamps Timeline (Created / Accessed / Modified)
+          Supertimeline
         </Typography>
 
-        {/* Controls */}
         <Stack
           direction={{ xs: "column", sm: "row" }}
           sx={{
@@ -307,14 +307,13 @@ export default function TimelineScatter({
             flexWrap: "wrap",
           }}
         >
-          {/* Bucket selector (pending) */}
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="bucket-select-label">Bucket</InputLabel>
             <Select
               labelId="bucket-select-label"
               value={bucketPending}
               label="Bucket"
-              onChange={(e) => setBucketPending(e.target.value as Bucket)}
+              onChange={e => setBucketPending(e.target.value as Bucket)}
               disabled={loading}
             >
               <MenuItem value="second">Second</MenuItem>
@@ -324,61 +323,54 @@ export default function TimelineScatter({
             </Select>
           </FormControl>
 
-          {/* Type visibility toggles */}
-          <FormControl component="fieldset" variant="standard" sx={{ ml: 1 }}>
-            <FormGroup row>
-              {ALL_TYPES.map((t) => (
-                <FormControlLabel
-                  key={t}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={visibleTypes[t]}
-                      onChange={(e) =>
-                        setVisibleTypes((prev) => ({
-                          ...prev,
-                          [t]: e.target.checked,
-                        }))
-                      }
-                    />
-                  }
-                  label={
-                    <Stack
-                      direction="row"
-                      sx={{
-                        gap: 1,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          bgcolor: COLORS[t],
+          {knownTypes.length > 0 && (
+            <FormControl component="fieldset" variant="standard">
+              <FormGroup row>
+                {knownTypes.map(et => (
+                  <FormControlLabel
+                    key={et}
+                    control={
+                      <Checkbox
+                        size="small"
+                        checked={visibleTypes[et] ?? true}
+                        onChange={e => {
+                          const newVisible = { ...visibleTypes, [et]: e.target.checked };
+                          setVisibleTypes(newVisible);
+                          if (rangeFilterBase) {
+                            const newEnabled = Object.entries(newVisible)
+                              .filter(([, v]) => v)
+                              .map(([k]) => k);
+                            onEventFilterChange?.({
+                              start: rangeFilterBase.start,
+                              end: rangeFilterBase.end,
+                              event_types: newEnabled.length > 0 ? newEnabled : null,
+                            });
+                          }
                         }}
                       />
-                      <span style={{ textTransform: "capitalize" }}>{t}</span>
-                    </Stack>
-                  }
-                />
-              ))}
-            </FormGroup>
-          </FormControl>
+                    }
+                    label={
+                      <Stack direction="row" sx={{ gap: 0.5, alignItems: "center" }}>
+                        <Box
+                          sx={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            bgcolor: colorForType(et),
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span style={{ fontSize: "0.8rem" }}>{labelForType(et)}</span>
+                      </Stack>
+                    }
+                  />
+                ))}
+              </FormGroup>
+            </FormControl>
+          )}
 
-          {/* Marker size */}
-          <Stack
-            direction="row"
-            sx={{
-              gap: 2,
-              alignItems: "center",
-            }}
-          >
-            <Typography
-              id="marker-size-slider"
-              variant="body2"
-              sx={{ whiteSpace: "nowrap" }}
-            >
+          <Stack direction="row" sx={{ gap: 2, alignItems: "center" }}>
+            <Typography id="marker-size-slider" variant="body2" sx={{ whiteSpace: "nowrap" }}>
               Marker size: {markerSize}
             </Typography>
             <Slider
@@ -394,23 +386,15 @@ export default function TimelineScatter({
             />
           </Stack>
 
-          {/* Date & Time range picker (pending) */}
           <DateTimeRangePicker
             value={rangePending}
-            onChange={(newValue) => setRangePending(newValue)}
+            onChange={newValue => setRangePending(newValue)}
             slots={{ field: MultiInputDateTimeRangeField }}
             slotProps={{ textField: { size: "small" } }}
             disabled={loading}
           />
 
-          {/* Action buttons */}
-          <Stack
-            direction="row"
-            sx={{
-              gap: 1,
-              alignItems: "center",
-            }}
-          >
+          <Stack direction="row" sx={{ gap: 1, alignItems: "center" }}>
             <Button
               variant="contained"
               size="small"
@@ -433,7 +417,7 @@ export default function TimelineScatter({
               onClick={clearFiltersAndReload}
               disabled={loading}
             >
-              Clear filters & reload
+              Clear & reload
             </Button>
           </Stack>
         </Stack>
@@ -444,36 +428,23 @@ export default function TimelineScatter({
           </Typography>
         )}
 
-        {/* Chart area */}
         {error ? (
           <Typography color="error" sx={{ alignSelf: "center" }}>
             {error}
           </Typography>
         ) : loading ? (
-          <Stack
-            sx={{
-              alignItems: "center",
-              justifyContent: "center",
-              height: 600,
-            }}
-          >
+          <Stack sx={{ alignItems: "center", justifyContent: "center", height: 600 }}>
             <CircularProgress />
             <Typography variant="body2" sx={{ mt: 1 }}>
               Loading data…
             </Typography>
           </Stack>
         ) : !hasChartData ? (
-          <Stack
-            sx={{
-              alignItems: "center",
-              justifyContent: "center",
-              height: 300,
-            }}
-          >
+          <Stack sx={{ alignItems: "center", justifyContent: "center", height: 300 }}>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
               {enabledTypes.length === 0
-                ? "Select at least one timestamp type to display the timeline."
-                : "No timestamp data matched the current filters."}
+                ? "Select at least one event type to display the timeline."
+                : "No events matched the current filters."}
             </Typography>
           </Stack>
         ) : (

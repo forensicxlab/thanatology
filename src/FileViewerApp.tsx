@@ -1,38 +1,60 @@
 // FileViewer.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   Paper,
   Stack,
   Tab,
   Tabs,
+  TextField,
   Toolbar,
   Typography,
 } from "@mui/material";
+import { DataGridPro, GridColDef } from "@mui/x-data-grid-pro";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
+import dayjs from "dayjs";
+import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc";
+
 import HexViewerWindow from "./HexViewerWindow";
 import { HexViewerHandle } from "./HexViewer";
 import RawViewer from "./RawViewer";
-import { save } from "@tauri-apps/plugin-dialog";
 import { PeViewer } from "./components/PeViewer";
 import { PmlViewer } from "./components/PmlViewer";
-import { listen } from "@tauri-apps/api/event";
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  CircularProgress,
-  TextField,
-} from "@mui/material";
-import {
-  DataGridPro,
-  GridColDef,
-} from "@mui/x-data-grid-pro";
 import BottomActionBar from "./components/navigation/BottomActionBar";
 import WindowsEventsTimeliner from "./components/evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
-type ViewerTab = "raw" | "hex" | "artefacts" | "sqlite" | "pe" | "pml" | "metadata";
+import ArtefactObjectsGrid from "./components/evidences/investigate/categories/files/ArtefactObjectsGrid";
+import ApfsXattrInspector, {
+  parseApfsFileMetadata,
+} from "./components/fileviewer/ApfsXattrInspector";
+import PlistViewer from "./components/fileviewer/PlistViewer";
+import SqliteViewer from "./components/SqliteViewer";
+import { getEvidenceDb, getEvidenceDbPath } from "./dbutils/db";
+import {
+  countParsedArtefactObjects,
+  getEvidence,
+} from "./dbutils/sqlite";
+
+type ViewerTab =
+  | "raw"
+  | "hex"
+  | "artefacts"
+  | "objects"
+  | "plist"
+  | "sqlite"
+  | "pe"
+  | "pml"
+  | "metadata"
+  | "xattrs";
 
 type FileOpenPayload = {
   Identifier: number;
@@ -44,20 +66,19 @@ type FileOpenPayload = {
   evidenceRootPath?: string;
 };
 
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
-import timezone from "dayjs/plugin/timezone";
-import SqliteViewer from "./components/SqliteViewer";
-import { invoke } from "@tauri-apps/api/core";
-import { getEvidenceDb, getEvidenceDbPath } from "./dbutils/db";
-import { getEvidence } from "./dbutils/sqlite";
-
 dayjs.extend(utc);
 dayjs.extend(timezone);
 // optional default:
 dayjs.tz.setDefault("UTC");
 
 type MetadataRow = { id: string; property: string; value: string };
+type IndexedFileRecord = Record<string, unknown> & { metadata?: unknown };
+
+type ArtifactInspection = {
+  pe: unknown | null;
+  pml: boolean;
+  evtx: boolean;
+};
 
 const METADATA_COLUMNS: GridColDef[] = [
   { field: "property", headerName: "Property", flex: 1, minWidth: 150 },
@@ -67,13 +88,32 @@ const METADATA_COLUMNS: GridColDef[] = [
 const toSqliteUrl = (p: string) =>
   p.startsWith("sqlite:") ? p : `sqlite:${p}`;
 
+const metadataDisplayValue = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+};
+
 const FileViewer: React.FC = () => {
   const hexRef = useRef<HexViewerHandle>(null);
+  const openPayloadSequence = useRef(0);
+  const inspectionSequence = useRef(0);
   const [tab, setTab] = useState<ViewerTab>("raw");
   const [file, setFile] = useState<FileOpenPayload | null>(null);
   const [fileMetadata, setFileMetadata] = useState<MetadataRow[]>([]);
+  const [indexedMetadata, setIndexedMetadata] = useState<unknown>(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
 
   const [isSqlite, setIsSqlite] = useState(false);
+  const [isPlist, setIsPlist] = useState(false);
+  const [parsedObjectCount, setParsedObjectCount] = useState(0);
 
   // Hash Dialog State
   const [hashOpen, setHashOpen] = useState(false);
@@ -87,6 +127,12 @@ const FileViewer: React.FC = () => {
   const [peData, setPeData] = useState<any>(null);
   const [pmlData, setPmlData] = useState<boolean>(false);
   const [evtxData, setEvtxData] = useState<boolean>(false);
+
+  const apfsMetadata = useMemo(
+    () => parseApfsFileMetadata(indexedMetadata),
+    [indexedMetadata],
+  );
+  const hasApfsMetadata = apfsMetadata.state === "apfs";
 
   async function hydratePayload(
     payload: FileOpenPayload,
@@ -110,80 +156,83 @@ const FileViewer: React.FC = () => {
     return payload;
   }
 
+  async function openPayload(rawPayload: FileOpenPayload) {
+    // Allocate the sequence before hydration so a slow, older folder-evidence
+    // lookup cannot overwrite a newer open request.
+    const requestId = ++openPayloadSequence.current;
+    const payload = await hydratePayload(rawPayload);
+    if (openPayloadSequence.current !== requestId) return;
+
+    setFile(payload);
+    void inspectFile(payload);
+  }
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
+    let receivedMessage = false;
 
     (async () => {
-      // 1. Read any immediately pending payload from localStorage (solves race condition on new window)
+      // Install the listener before awaiting pending-payload hydration so a
+      // second open request cannot be lost during window startup.
+      const removeListener = await listen<FileOpenPayload>("message", (event) => {
+        receivedMessage = true;
+        void openPayload(event.payload);
+      });
+      if (disposed) {
+        removeListener();
+        return;
+      }
+      unlisten = removeListener;
+
+      // Read any immediately pending payload from localStorage (solves the
+      // message race when a new FileViewer window is first created).
       const pendingPayloadStr = localStorage.getItem("pending_fileviewer_payload");
       if (pendingPayloadStr) {
         try {
-          const payload = await hydratePayload(
-            JSON.parse(pendingPayloadStr) as FileOpenPayload,
-          );
-          setFile(payload);
-          void checkIfSqlite(
-            payload.Identifier,
-            payload.path,
-            payload.fileId,
-            payload.evidenceId,
-            payload.partitionId,
-            payload.evidenceRootPath,
-          );
-          // Clear it so we don't accidentally load it again on refresh
+          const payload = JSON.parse(pendingPayloadStr) as FileOpenPayload;
+          // Clear synchronously so refreshes cannot replay a payload whose
+          // folder-evidence hydration is still in flight.
           localStorage.removeItem("pending_fileviewer_payload");
+          // A live message is newer than the launch-time fallback.
+          if (!receivedMessage) void openPayload(payload);
         } catch (err) {
           console.error("Failed to parse pending fileviewer payload from localStorage", err);
         }
       }
-
-      // 2. Set up listener for subsequent open requests
-      unlisten = await listen<FileOpenPayload>("message", (event) => {
-        void (async () => {
-          const payload = await hydratePayload(event.payload);
-          setFile(payload);
-          void checkIfSqlite(
-            payload.Identifier,
-            payload.path,
-            payload.fileId,
-            payload.evidenceId,
-            payload.partitionId,
-            payload.evidenceRootPath,
-          );
-        })();
-      });
     })();
 
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
-  const checkArtifacts = async (
+  const inspectArtifacts = async (
     evidenceId: number,
     partitionId: number,
     fileDbId: number,
     path: string,
-  ) => {
-    // console.log(`[checkArtifacts] Called with dbId: ${dbId}, path: "${path}"`);
-    // Reset
-    setPeData(null);
-    setPmlData(false);
-    setEvtxData(false);
-
-    // Simple heuristic based on extension or magic bytes (we can do better later)
+  ): Promise<ArtifactInspection> => {
+    const empty: ArtifactInspection = { pe: null, pml: false, evtx: false };
     if (!path) {
-      // console.warn("[checkArtifacts] No path provided, skipping.");
-      return;
+      return empty;
     }
     if (evidenceId <= 0 || partitionId <= 0 || fileDbId <= 0) {
-      return;
+      return empty;
     }
 
     console.log(
       `Checking artifacts for evidence=${evidenceId}, partition=${partitionId}, file=${fileDbId}, path=${path}`,
     );
 
-    const evidenceDbPath = await getEvidenceDbPath(evidenceId);
-    const dbPath = toSqliteUrl(evidenceDbPath);
+    let dbPath: string;
+    try {
+      dbPath = toSqliteUrl(await getEvidenceDbPath(evidenceId));
+    } catch (error) {
+      console.error("Unable to resolve evidence database for FileViewer:", error);
+      return empty;
+    }
 
     const [peResult, pmlResult, evtxResult] = await Promise.allSettled([
       invoke("parse_pe", {
@@ -206,59 +255,83 @@ const FileViewer: React.FC = () => {
       }),
     ]);
 
-    if (peResult.status === "fulfilled" && peResult.value) {
-      setPeData(peResult.value);
+    return {
+      pe:
+        peResult.status === "fulfilled" && peResult.value
+          ? peResult.value
+          : null,
+      pml: pmlResult.status === "fulfilled" && pmlResult.value,
+      evtx: evtxResult.status === "fulfilled" && evtxResult.value,
+    };
+  }
+
+  async function inspectFile(payload: FileOpenPayload) {
+    const requestId = ++inspectionSequence.current;
+
+    setTab("raw");
+    setIsSqlite(false);
+    setIsPlist(false);
+    setParsedObjectCount(0);
+    setPeData(null);
+    setPmlData(false);
+    setEvtxData(false);
+
+    const [prefixResult, objectCountResult, artifactResult] =
+      await Promise.allSettled([
+        invoke<string>("read_file_prefix", {
+          fileId: payload.Identifier,
+          length: 4096,
+          path: payload.path,
+          rootPath: payload.evidenceRootPath,
+        }),
+        countParsedArtefactObjects({
+          evidenceId: payload.evidenceId,
+          partitionId: payload.partitionId,
+          fileId: payload.fileId,
+        }),
+        inspectArtifacts(
+          payload.evidenceId,
+          payload.partitionId,
+          payload.fileId,
+          payload.path,
+        ),
+      ]);
+
+    if (inspectionSequence.current !== requestId) return;
+
+    const prefix =
+      prefixResult.status === "fulfilled" ? prefixResult.value : "";
+    if (prefixResult.status === "rejected") {
+      console.error("Error reading file signature:", prefixResult.reason);
     }
 
-    if (pmlResult.status === "fulfilled" && pmlResult.value) {
-      setPmlData(true);
-    }
+    const sqlite = prefix.startsWith("SQLite format 3");
+    const normalizedPrefix = prefix.replace(/^\uFEFF/, "").trimStart();
+    const plist =
+      prefix.startsWith("bplist00") ||
+      /<plist(?:\s|>)/.test(normalizedPrefix);
+    const objectCount =
+      objectCountResult.status === "fulfilled" ? objectCountResult.value : 0;
+    const artifacts =
+      artifactResult.status === "fulfilled"
+        ? artifactResult.value
+        : { pe: null, pml: false, evtx: false };
 
-    if (evtxResult.status === "fulfilled" && evtxResult.value) {
-      setEvtxData(true);
-    }
+    setIsSqlite(sqlite);
+    setIsPlist(plist);
+    setParsedObjectCount(objectCount);
+    setPeData(artifacts.pe);
+    setPmlData(artifacts.pml);
+    setEvtxData(artifacts.evtx);
 
-    if (evtxResult.status === "fulfilled" && evtxResult.value) {
-      setTab("artefacts");
-    } else if (pmlResult.status === "fulfilled" && pmlResult.value) {
-      setTab("pml");
-    } else if (peResult.status === "fulfilled" && peResult.value) {
-      setTab("pe");
-    }
-  };
-
-  const checkIfSqlite = async (
-    fsId: number,
-    path: string,
-    dbId: number,
-    evidenceId: number,
-    partitionId: number,
-    evidenceRootPath?: string,
-  ) => {
-    try {
-      // Read first 16 bytes for magic "SQLite format 3\0"
-      const prefix = await invoke<string>("read_file_prefix", {
-        fileId: fsId,
-        length: 16,
-        path: path,
-        rootPath: evidenceRootPath,
-      });
-      if (prefix.startsWith("SQLite format 3")) {
-        setIsSqlite(true);
-        setTab("sqlite");
-      } else {
-        setIsSqlite(false);
-        setTab("raw");
-      }
-    } catch (err) {
-      console.error("Error checking SQLite magic:", err);
-      setIsSqlite(false);
-      setTab("raw");
-    } finally {
-      // Always check for artefacts regardless of file read success
-      void checkArtifacts(evidenceId, partitionId, dbId, path);
-    }
-  };
+    if (artifacts.evtx) setTab("artefacts");
+    else if (artifacts.pml) setTab("pml");
+    else if (artifacts.pe) setTab("pe");
+    else if (sqlite) setTab("sqlite");
+    else if (plist) setTab("plist");
+    else if (objectCount > 0) setTab("objects");
+    else setTab("raw");
+  }
 
   const handleDump = async () => {
     if (!file) return;
@@ -311,27 +384,58 @@ const FileViewer: React.FC = () => {
   useEffect(() => {
     if (!file) {
       setFileMetadata([]);
+      setIndexedMetadata(null);
+      setMetadataLoading(false);
+      setMetadataError(null);
       return;
     }
+
+    let cancelled = false;
+    setFileMetadata([]);
+    setIndexedMetadata(null);
+    setMetadataLoading(true);
+    setMetadataError(null);
+
     (async () => {
       try {
         const db = await getEvidenceDb(file.evidenceId);
-        const rows = await db.select<any[]>(
-          "SELECT * FROM system_files WHERE id = $1",
-          [file.fileId],
+        const rows = await db.select<IndexedFileRecord[]>(
+          `SELECT *
+           FROM system_files
+           WHERE id = $1 AND evidence_id = $2 AND partition_id = $3`,
+          [file.fileId, file.evidenceId, file.partitionId],
         );
         const record = rows[0];
+        if (cancelled) return;
         if (record) {
           const metaRows: MetadataRow[] = Object.entries(record)
             .filter(([, v]) => v !== null && v !== undefined && v !== "")
-            .map(([k, v]) => ({ id: k, property: k, value: String(v) }));
+            .map(([k, v]) => ({
+              id: k,
+              property: k,
+              value: metadataDisplayValue(v),
+            }));
           setFileMetadata(metaRows);
+          setIndexedMetadata(record.metadata ?? null);
+        } else {
+          setMetadataError("The indexed file record could not be found.");
         }
-      } catch (err) {
-        console.error("Failed to fetch file metadata:", err);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to fetch file metadata:", error);
         setFileMetadata([]);
+        setIndexedMetadata(null);
+        setMetadataError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        if (!cancelled) setMetadataLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [file]);
 
   return (
@@ -371,7 +475,7 @@ const FileViewer: React.FC = () => {
           display: "flex",
           flex: 1,
           minHeight: 0,
-          minWidth: 0
+          minWidth: 0,
         }}>
         {/* Left: main viewer */}
         <Box
@@ -380,7 +484,7 @@ const FileViewer: React.FC = () => {
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
-            minHeight: 0
+            minHeight: 0,
           }}>
           {/* Tabs */}
           <Paper
@@ -397,11 +501,21 @@ const FileViewer: React.FC = () => {
               <Tab value="raw" label="RawViewer" />
               <Tab value="hex" label="HexViewer" />
               <Tab value="metadata" label="File Metadata" />
+              {hasApfsMetadata && (
+                <Tab value="xattrs" label="Extended Attributes" />
+              )}
+              {isPlist && <Tab value="plist" label="Property List" />}
               {isSqlite && <Tab value="sqlite" label="SQLite Viewer" />}
               {peData && <Tab value="pe" label="PE Analysis" />}
               {pmlData && <Tab value="pml" label="Procmon Events" />}
               {evtxData && (
-                <Tab value="artefacts" label="Parsed Artefacts" />
+                <Tab value="artefacts" label="EVTX Timeline" />
+              )}
+              {parsedObjectCount > 0 && (
+                <Tab
+                  value="objects"
+                  label={`Parsed Objects (${parsedObjectCount.toLocaleString()})`}
+                />
               )}
             </Tabs>
           </Paper>
@@ -412,14 +526,14 @@ const FileViewer: React.FC = () => {
               flex: 1,
               minHeight: 0,
               minWidth: 0,
-              p: 1
+              p: 1,
             }}>
             {tab === "raw" && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
                 <Box
                   sx={{
                     height: "100%",
-                    minHeight: 0
+                    minHeight: 0,
                   }}>
                   {file && (
                     <RawViewer
@@ -441,7 +555,7 @@ const FileViewer: React.FC = () => {
                 <Box
                   sx={{
                     height: "100%",
-                    minHeight: 0
+                    minHeight: 0,
                   }}>
                   {file && (
                     <SqliteViewer
@@ -451,6 +565,21 @@ const FileViewer: React.FC = () => {
                     />
                   )}
                 </Box>
+              </Paper>
+            )}
+
+            {tab === "plist" && isPlist && (
+              <Paper
+                variant="outlined"
+                sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}
+              >
+                {file && (
+                  <PlistViewer
+                    fileId={file.Identifier}
+                    path={file.path}
+                    rootPath={file.evidenceRootPath}
+                  />
+                )}
               </Paper>
             )}
 
@@ -475,7 +604,7 @@ const FileViewer: React.FC = () => {
                 <Box
                   sx={{
                     height: "100%",
-                    minHeight: 0
+                    minHeight: 0,
                   }}>
                   {file ? (
                     <HexViewerWindow
@@ -486,12 +615,11 @@ const FileViewer: React.FC = () => {
                       rootPath={file.evidenceRootPath}
                     />
                   ) : (
-                    <Box sx={{
-                      p: 2
-                    }}>
-                      <Typography variant="body2" sx={{
-                        color: "text.secondary"
-                      }}>
+                    <Box sx={{ p: 2 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ color: "text.secondary" }}
+                      >
                         No file loaded.
                       </Typography>
                     </Box>
@@ -501,7 +629,10 @@ const FileViewer: React.FC = () => {
             )}
 
             {tab === "metadata" && (
-              <Paper variant="outlined" sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+              <Paper
+                variant="outlined"
+                sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}
+              >
                 <DataGridPro
                   rows={fileMetadata}
                   columns={METADATA_COLUMNS}
@@ -514,12 +645,26 @@ const FileViewer: React.FC = () => {
               </Paper>
             )}
 
+            {tab === "xattrs" && hasApfsMetadata && (
+              <Paper
+                variant="outlined"
+                sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}
+              >
+                <ApfsXattrInspector
+                  metadata={indexedMetadata}
+                  loading={metadataLoading}
+                  error={metadataError}
+                  height="100%"
+                />
+              </Paper>
+            )}
+
             {tab === "artefacts" && evtxData && (
               <Paper variant="outlined" sx={{ height: "100%", minHeight: 0 }}>
                 <Box
                   sx={{
                     height: "100%",
-                    minHeight: 0
+                    minHeight: 0,
                   }}>
                   {file ? (
                     <WindowsEventsTimeliner
@@ -527,28 +672,35 @@ const FileViewer: React.FC = () => {
                       partitionId={file.partitionId}
                     />
                   ) : (
-                    // <ArtefactObjectsGrid
-                    //   evidenceId={file.evidenceId}
-                    //   fileId={file.fileId}
-                    //   height="100%"
-                    //   persistKeyPrefix="thanatology:grid:fileviewer:artefacts"
-                    // />
-                    (<Box sx={{
-                      p: 2
-                    }}>
-                      <Typography variant="body2" sx={{
-                        color: "text.secondary"
-                      }}>
+                    <Box sx={{ p: 2 }}>
+                      <Typography
+                        variant="body2"
+                        sx={{ color: "text.secondary" }}
+                      >
                         No file loaded.
                       </Typography>
-                    </Box>)
+                    </Box>
                   )}
                 </Box>
               </Paper>
             )}
+
+            {tab === "objects" && parsedObjectCount > 0 && file && (
+              <Paper
+                variant="outlined"
+                sx={{ height: "100%", minHeight: 0, overflow: "hidden" }}
+              >
+                <ArtefactObjectsGrid
+                  evidenceId={file.evidenceId}
+                  partitionId={file.partitionId}
+                  fileId={file.fileId}
+                  height="100%"
+                  persistKeyPrefix="thanatology:grid:fileviewer:objects"
+                />
+              </Paper>
+            )}
           </Box>
         </Box>
-
       </Box>
       <Dialog
         open={hashOpen}
@@ -563,7 +715,7 @@ const FileViewer: React.FC = () => {
               sx={{
                 display: "flex",
                 justifyContent: "center",
-                p: 3
+                p: 3,
               }}>
               <CircularProgress />
             </Box>
@@ -576,7 +728,7 @@ const FileViewer: React.FC = () => {
                 size="small"
                 variant="outlined"
                 slotProps={{
-                  input: { readOnly: true }
+                  input: { readOnly: true },
                 }}
               />
               <TextField
@@ -586,7 +738,7 @@ const FileViewer: React.FC = () => {
                 size="small"
                 variant="outlined"
                 slotProps={{
-                  input: { readOnly: true }
+                  input: { readOnly: true },
                 }}
               />
             </Stack>

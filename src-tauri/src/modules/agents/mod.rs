@@ -1,17 +1,18 @@
 pub mod manager;
-pub mod tools;
-pub mod supervisor;
+pub mod runtime;
 pub mod specialists;
+pub mod supervisor;
+pub mod tools;
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::str::FromStr;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 fn resolve_sqlite_url(app: &AppHandle, path_or_url: &str) -> String {
     let relative_path = path_or_url.trim_start_matches("sqlite:");
-    
+
     // If the path is already absolute, just use it
     let path = std::path::Path::new(relative_path);
     if path.is_absolute() {
@@ -19,7 +20,10 @@ fn resolve_sqlite_url(app: &AppHandle, path_or_url: &str) -> String {
     }
 
     // Otherwise, resolve via app_local_data_dir
-    let base_dir = app.path().app_local_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let base_dir = app
+        .path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
     let full_path = base_dir.join(relative_path);
     format!("sqlite:{}", full_path.to_string_lossy())
 }
@@ -31,7 +35,7 @@ async fn open_pool(app: &AppHandle, db_path_or_url: &str) -> Result<SqlitePool, 
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
         .busy_timeout(Duration::from_secs(30))
-        .create_if_missing(true);
+        .create_if_missing(false);
 
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -75,7 +79,14 @@ pub async fn investigate_with_agent(
     let evidence_id: i64 = evidence_row.get(0);
 
     let report = manager
-        .execute_investigation(&config, instruction, history, evidence_pool, app, evidence_id)
+        .execute_investigation(
+            &config,
+            instruction,
+            history,
+            evidence_pool,
+            app,
+            evidence_id,
+        )
         .await?;
 
     Ok(report)

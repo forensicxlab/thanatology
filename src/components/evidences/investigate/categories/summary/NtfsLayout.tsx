@@ -1,5 +1,4 @@
 // thanatology/src/components/evidences/investigate/categories/summary/NtfsLayout.tsx
-import React from "react";
 import { Box, Typography } from "@mui/material";
 
 function bytesToHex(n: number) {

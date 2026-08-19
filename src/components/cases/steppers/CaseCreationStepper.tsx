@@ -20,9 +20,7 @@ interface CaseCreationStepperProps {
   database: Database | null;
 }
 
-const CaseCreationStepper: React.FC<CaseCreationStepperProps> = ({
-  database,
-}) => {
+const CaseCreationStepper: React.FC<CaseCreationStepperProps> = (_props) => {
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(0);
   const [skipped, setSkipped] = useState(new Set<number>());

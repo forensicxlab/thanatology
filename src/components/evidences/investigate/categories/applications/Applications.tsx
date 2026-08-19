@@ -1,72 +1,134 @@
-import React, { useEffect, useState } from "react";
-import { Box, CircularProgress, Tab, Tabs, Typography } from "@mui/material";
+import React, { useCallback } from "react";
 import Artifacts from "../../Artifacts";
-import { fetchApplicationTags } from "../../../../../dbutils/sqlite";
+import {
+  ArtifactTagDescriptor,
+  fetchArtifactTagDescriptors,
+  hasParserCapability,
+} from "../../../../../dbutils/artifactCapabilities";
+import CategoryTagWorkspace, {
+  CategoryTagView,
+} from "../common/CategoryTagWorkspace";
+import ChatDiscussions from "./ChatDiscussions";
+import CallsGrid from "../mobile/CallsGrid";
+import BrowserHistoryGrid from "../mobile/BrowserHistoryGrid";
+import CalendarGrid from "../mobile/CalendarGrid";
+import MailGrid from "../mobile/MailGrid";
+import NotesGrid from "../mobile/NotesGrid";
 
 interface ApplicationsProps {
   evidenceId: number;
   partitionId: number;
 }
 
+const CHAT_PARSERS = [
+  "mobile_ios_imessage",
+  "mobile_ios_whatsapp",
+  "mobile_android_sms",
+  "macos_imessage",
+  "macos_whatsapp",
+] as const;
+
+const BROWSER_PARSERS = [
+  "mobile_ios_safari",
+  "macos_safari",
+  "macos_chromium",
+  "macos_firefox",
+] as const;
+
+const loadApplicationGroups = (evidenceId: number, partitionId: number) =>
+  fetchArtifactTagDescriptors(evidenceId, partitionId, "Application");
+
 const Applications: React.FC<ApplicationsProps> = ({
   evidenceId,
   partitionId,
 }) => {
-  const [tags, setTags] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedTab, setSelectedTab] = useState(0);
+  const viewsForItem = useCallback(
+    (item: ArtifactTagDescriptor): CategoryTagView[] => {
+      const views: CategoryTagView[] = [];
 
-  useEffect(() => {
-    setLoading(true);
-    setSelectedTab(0);
-    fetchApplicationTags(evidenceId, partitionId)
-      .then(setTags)
-      .catch(() => setTags([]))
-      .finally(() => setLoading(false));
-  }, [evidenceId, partitionId]);
+      if (hasParserCapability(item, ...CHAT_PARSERS)) {
+        views.push({
+          id: "discussions",
+          label: "Discussions",
+          node: (
+            <ChatDiscussions
+              evidenceId={evidenceId}
+              partitionId={partitionId}
+              tag={item.tag}
+            />
+          ),
+        });
+      }
+      if (hasParserCapability(item, ...BROWSER_PARSERS)) {
+        views.push({
+          id: "browsing",
+          label: "Browsing",
+          node: (
+            <BrowserHistoryGrid
+              evidenceId={evidenceId}
+              partitionId={partitionId}
+              tag={item.tag}
+            />
+          ),
+        });
+      }
+      if (hasParserCapability(item, "mobile_ios_callhistory")) {
+        views.push({
+          id: "calls",
+          label: "Calls",
+          node: <CallsGrid evidenceId={evidenceId} partitionId={partitionId} />,
+        });
+      }
+      if (hasParserCapability(item, "mobile_ios_calendar")) {
+        views.push({
+          id: "events",
+          label: "Events",
+          node: <CalendarGrid evidenceId={evidenceId} partitionId={partitionId} />,
+        });
+      }
+      if (hasParserCapability(item, "mobile_ios_mail")) {
+        views.push({
+          id: "mail",
+          label: "Messages",
+          node: <MailGrid evidenceId={evidenceId} partitionId={partitionId} />,
+        });
+      }
+      if (hasParserCapability(item, "mobile_ios_notes")) {
+        views.push({
+          id: "notes",
+          label: "Notes",
+          node: <NotesGrid evidenceId={evidenceId} partitionId={partitionId} />,
+        });
+      }
 
-  if (loading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", p: 4 }}>
-        <CircularProgress size={32} />
-      </Box>
-    );
-  }
+      return views;
+    },
+    [evidenceId, partitionId],
+  );
 
-  if (tags.length === 0) {
-    return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">No application artifacts found for this partition.</Typography>
-      </Box>
-    );
-  }
-
-  const activeTag = tags[selectedTab] ?? tags[0];
+  const filesForItem = useCallback(
+    (item: ArtifactTagDescriptor) => (
+      <Artifacts
+        key={item.tag}
+        evidence_id={evidenceId}
+        partition_id={partitionId}
+        category="Application"
+        tag={item.tag}
+      />
+    ),
+    [evidenceId, partitionId],
+  );
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <Tabs
-        value={selectedTab}
-        onChange={(_, v: number) => setSelectedTab(v)}
-        variant="scrollable"
-        scrollButtons="auto"
-        sx={{ borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
-      >
-        {tags.map((tag) => (
-          <Tab key={tag} label={tag} />
-        ))}
-      </Tabs>
-
-      <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", pt: 1 }}>
-        <Artifacts
-          key={activeTag}
-          evidence_id={evidenceId}
-          partition_id={partitionId}
-          category="Application"
-          tag={activeTag}
-        />
-      </Box>
-    </Box>
+    <CategoryTagWorkspace<ArtifactTagDescriptor>
+      evidenceId={evidenceId}
+      partitionId={partitionId}
+      workspaceLabel="Application artifacts"
+      loadItems={loadApplicationGroups}
+      viewsForItem={viewsForItem}
+      filesForItem={filesForItem}
+      emptyMessage="No application artifacts found for this partition."
+    />
   );
 };
 

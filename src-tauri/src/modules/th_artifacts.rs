@@ -1,23 +1,41 @@
 use anyhow::Result;
 use exhume_artefacts::parsers::ParserRegistry;
-use exhume_filesystem::filesystem::FileCommon;
 use exhume_filesystem::Filesystem;
+use exhume_filesystem::filesystem::FileCommon;
+use sqlx::Row;
 use sqlx::sqlite::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::Row;
 
+use log::{info, warn};
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 use tokio::sync::mpsc;
-use log::info;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 
 #[derive(Serialize)]
 struct ProgressPayload {
     current: u64,
     total: u64,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParserProgressPayload {
+    current: u64,
+    total: u64,
+    parser: String,
+    file_path: String,
+    artifact_id: i64,
+    file_id: Option<i64>,
+    phase: &'static str,
+    elapsed_ms: Option<u64>,
+    setup_ms: Option<u64>,
+    parse_ms: Option<u64>,
+    persistence_ms: Option<u64>,
+    objects_emitted: Option<u64>,
     message: String,
 }
 
@@ -33,51 +51,90 @@ pub async fn identify_artefacts(
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event.event_type {
-                exhume_indexer::IndexerEventType::Info
-                | exhume_indexer::IndexerEventType::Warning => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Main,
-                    crate::modules::utils::th_progress::ProgressMessageType::Info,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Success => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Main,
-                    crate::modules::utils::th_progress::ProgressMessageType::Success,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Error => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Main,
-                    crate::modules::utils::th_progress::ProgressMessageType::Error,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Progress { current, total } => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Main,
-                    crate::modules::utils::th_progress::ProgressMessageType::Progress,
-                    ProgressPayload {
-                        current,
-                        total,
-                        message: event.message,
-                    },
-                    &app_clone,
-                ),
+                exhume_indexer::IndexerEventType::Info => {
+                    info!(
+                        "Artefact identification: evidence_id={} partition_id={} {}",
+                        event.evidence_id, partition_id, event.message
+                    );
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Info,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Warning => {
+                    warn!(
+                        "Artefact identification warning: evidence_id={} partition_id={} {}",
+                        event.evidence_id, partition_id, event.message
+                    );
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Info,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Success => {
+                    info!(
+                        "Artefact identification completed: evidence_id={} partition_id={} {}",
+                        event.evidence_id, partition_id, event.message
+                    );
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Success,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Error => {
+                    warn!(
+                        "Artefact identification failed: evidence_id={} partition_id={} {}",
+                        event.evidence_id, partition_id, event.message
+                    );
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Error,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Progress { current, total } => {
+                    info!(
+                        "Artefact identification progress: evidence_id={} partition_id={} current={}/{} {}",
+                        event.evidence_id, partition_id, current, total, event.message
+                    );
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Progress,
+                        ProgressPayload {
+                            current,
+                            total,
+                            message: event.message,
+                        },
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::ParserProgress { .. } => {
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Main,
+                        crate::modules::utils::th_progress::ProgressMessageType::Info,
+                        event.message,
+                        &app_clone,
+                    )
+                }
             };
         }
     });
 
-    exhume_indexer::artifacts::identify_artefacts(
-        evidence_id,
-        partition_id,
-        pool,
-        Some(tx),
-        None
-    )
-    .await;
+    exhume_indexer::artifacts::identify_artefacts(evidence_id, partition_id, pool, Some(tx), None)
+        .await;
 }
 
 pub async fn extract_artefacts<F: Filesystem>(
@@ -98,38 +155,125 @@ pub async fn extract_artefacts<F: Filesystem>(
         while let Some(event) = rx.recv().await {
             match event.event_type {
                 exhume_indexer::IndexerEventType::Info
-                | exhume_indexer::IndexerEventType::Warning => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Module,
-                    crate::modules::utils::th_progress::ProgressMessageType::Info,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Success => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Module,
-                    crate::modules::utils::th_progress::ProgressMessageType::Success,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Error => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Module,
-                    crate::modules::utils::th_progress::ProgressMessageType::Error,
-                    event.message,
-                    &app_clone,
-                ),
-                exhume_indexer::IndexerEventType::Progress { current, total } => crate::modules::utils::th_progress::emit_progress_event(
-                    &event.evidence_id,
-                    crate::modules::utils::th_progress::ProgressMessageLevel::Module,
-                    crate::modules::utils::th_progress::ProgressMessageType::Progress,
-                    ProgressPayload {
-                        current,
-                        total,
-                        message: event.message,
-                    },
-                    &app_clone,
-                ),
+                | exhume_indexer::IndexerEventType::Warning => {
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Module,
+                        crate::modules::utils::th_progress::ProgressMessageType::Info,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Success => {
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Module,
+                        crate::modules::utils::th_progress::ProgressMessageType::Success,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Error => {
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Module,
+                        crate::modules::utils::th_progress::ProgressMessageType::Error,
+                        event.message,
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::Progress { current, total } => {
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Module,
+                        crate::modules::utils::th_progress::ProgressMessageType::Progress,
+                        ProgressPayload {
+                            current,
+                            total,
+                            message: event.message,
+                        },
+                        &app_clone,
+                    )
+                }
+                exhume_indexer::IndexerEventType::ParserProgress {
+                    current,
+                    total,
+                    parser,
+                    file_path,
+                    artifact_id,
+                    file_id,
+                    phase,
+                    elapsed_ms,
+                    setup_ms,
+                    parse_ms,
+                    persistence_ms,
+                    objects_emitted,
+                } => {
+                    match phase {
+                        exhume_indexer::ParserProgressPhase::Started => info!(
+                            "Artefact parser started: evidence_id={} parser={} position={}/{} artifact_id={} file_id={:?} path={:?}",
+                            event.evidence_id,
+                            parser,
+                            current,
+                            total,
+                            artifact_id,
+                            file_id,
+                            file_path,
+                        ),
+                        exhume_indexer::ParserProgressPhase::Completed => info!(
+                            "Artefact parser completed: evidence_id={} parser={} position={}/{} artifact_id={} file_id={:?} elapsed_ms={:?} setup_ms={:?} parse_ms={:?} persistence_ms={:?} objects_emitted={:?} path={:?}",
+                            event.evidence_id,
+                            parser,
+                            current,
+                            total,
+                            artifact_id,
+                            file_id,
+                            elapsed_ms,
+                            setup_ms,
+                            parse_ms,
+                            persistence_ms,
+                            objects_emitted,
+                            file_path,
+                        ),
+                        exhume_indexer::ParserProgressPhase::Failed => warn!(
+                            "Artefact parser failed: evidence_id={} parser={} position={}/{} artifact_id={} file_id={:?} elapsed_ms={:?} setup_ms={:?} parse_ms={:?} persistence_ms={:?} path={:?}: {}",
+                            event.evidence_id,
+                            parser,
+                            current,
+                            total,
+                            artifact_id,
+                            file_id,
+                            elapsed_ms,
+                            setup_ms,
+                            parse_ms,
+                            persistence_ms,
+                            file_path,
+                            event.message,
+                        ),
+                    }
+
+                    crate::modules::utils::th_progress::emit_progress_event(
+                        &event.evidence_id,
+                        crate::modules::utils::th_progress::ProgressMessageLevel::Module,
+                        crate::modules::utils::th_progress::ProgressMessageType::Parser,
+                        ParserProgressPayload {
+                            current,
+                            total,
+                            parser,
+                            file_path,
+                            artifact_id,
+                            file_id,
+                            phase: phase.as_str(),
+                            elapsed_ms,
+                            setup_ms,
+                            parse_ms,
+                            persistence_ms,
+                            objects_emitted,
+                            message: event.message,
+                        },
+                        &app_clone,
+                    )
+                }
             };
         }
     });
@@ -141,7 +285,7 @@ pub async fn extract_artefacts<F: Filesystem>(
         fs,
         registry,
         Some(tx),
-        cancel_token
+        cancel_token,
     )
     .await;
 }
@@ -305,7 +449,9 @@ pub async fn get_pml_events(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Value>, String> {
-    info!("Fetching PML slice for evidence={evidence_id} partition={partition_id} file={file_id} offset={offset} limit={limit}");
+    info!(
+        "Fetching PML slice for evidence={evidence_id} partition={partition_id} file={file_id} offset={offset} limit={limit}"
+    );
 
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -343,4 +489,14 @@ pub async fn get_pml_events(
     }
 
     Ok(results)
+}
+
+pub async fn populate_filesystem_timeline(evidence_id: i64, partition_id: i64, pool: &SqlitePool) {
+    if let Err(e) =
+        exhume_indexer::populate_filesystem_timeline(evidence_id, partition_id, pool).await
+    {
+        log::warn!(
+            "populate_filesystem_timeline failed for evidence={evidence_id} partition={partition_id}: {e}"
+        );
+    }
 }

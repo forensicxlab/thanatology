@@ -19,6 +19,8 @@ import { File, FileQueryScope } from "../../../../../dbutils/types";
 import { emitTo } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
+import type { TimestampType } from "../../../../../dbutils/types";
+import { useTimeFilter } from "../../../../../store/timeFilterStore";
 import { Chip, Tooltip, Stack, Typography } from "@mui/material";
 
 interface FileDataGridProps {
@@ -59,6 +61,19 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     onRowsLoadedRef.current = onRowsLoaded;
   });
   const apiRef = useGridApiRef();
+
+  // An explicit timelineFilter (e.g. drilled in from the timeline) wins;
+  // otherwise inherit the global investigation time scope.
+  const { start: gStart, end: gEnd, fileTimeField } = useTimeFilter();
+  const effectiveTimelineFilter = React.useMemo<TimelineFileFilter | null>(() => {
+    if (timelineFilter) return timelineFilter;
+    if (gStart == null && gEnd == null) return null;
+    const types: TimestampType[] =
+      fileTimeField === "any"
+        ? ["created", "modified", "accessed"]
+        : [fileTimeField as TimestampType];
+    return { start: gStart, end: gEnd, types };
+  }, [timelineFilter, gStart, gEnd, fileTimeField]);
 
   const [rows, setRows] = React.useState<File[]>([]);
   const [rowCount, setRowCount] = React.useState(0);
@@ -186,7 +201,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
       offset,
       pageSize,
       filterModel as any,
-      timelineFilter ?? undefined,
+      effectiveTimelineFilter ?? undefined,
       scope,
       listingMode,
     );
@@ -221,7 +236,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     partition_id,
     apiRef,
     filterModel,
-    timelineFilter,
+    effectiveTimelineFilter,
     scope,
     listingMode,
   ]);
@@ -232,7 +247,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
   React.useEffect(() => {
     setPaginationModel((prev) => ({ ...prev, page: 0 }));
-  }, [timelineFilter]);
+  }, [effectiveTimelineFilter]);
 
   const handleRowDoubleClick = React.useCallback(
     (params: GridRowParams) => onRowActivate?.(params.row as File),
@@ -241,12 +256,10 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
   return (
     <div style={{ width: "100%", ...(autoSize ? { height: "100%", display: "flex", flexDirection: "column" } : {}) }}>
-      {timelineFilter?.start != null && timelineFilter?.end != null && (
+      {effectiveTimelineFilter?.start != null && effectiveTimelineFilter?.end != null && (
         <Stack
           direction="row"
-          alignItems="center"
-          gap={1}
-          sx={{ mb: 1, flexWrap: "wrap", flexShrink: 0 }}
+          sx={{ mb: 1, flexWrap: "wrap", flexShrink: 0, alignItems: "center", gap: 1 }}
         >
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Timeline filter:
@@ -257,9 +270,9 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
             variant="outlined"
             label={
               <>
-                <UnixToISO8601UTC timestamp={timelineFilter.start} /> →{" "}
-                <UnixToISO8601UTC timestamp={timelineFilter.end} /> (
-                {timelineFilter.types.join(", ")})
+                <UnixToISO8601UTC timestamp={effectiveTimelineFilter.start} /> →{" "}
+                <UnixToISO8601UTC timestamp={effectiveTimelineFilter.end} /> (
+                {effectiveTimelineFilter.types.join(", ")})
               </>
             }
             onDelete={onClearTimelineFilter}

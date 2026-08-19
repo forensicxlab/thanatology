@@ -1,12 +1,14 @@
-use crate::modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 use crate::AiConfig;
+use crate::modules::utils::th_progress::{
+    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+};
+use exhume_filesystem::Filesystem;
 use log::{error, info, warn};
+use rig::client::CompletionClient;
+use rig::completion::Prompt;
+use rig::providers::openai;
 use sqlx::SqlitePool;
 use tauri::AppHandle;
-use rig::providers::{openai};
-use rig::completion::Prompt;
-use rig::client::CompletionClient;
-use exhume_filesystem::Filesystem;
 
 fn normalize_endpoint(endpoint: &str) -> String {
     let e = endpoint.trim();
@@ -24,7 +26,10 @@ pub async fn run_specialists(
     app: &AppHandle,
     config: AiConfig,
 ) {
-    if !config.enable_text_specialist && !config.enable_image_specialist && !config.enable_audio_specialist {
+    if !config.enable_text_specialist
+        && !config.enable_image_specialist
+        && !config.enable_audio_specialist
+    {
         info!("AI Specialists: All specialist agents are disabled in settings.");
         emit_progress_event(
             &evidence_id,
@@ -35,7 +40,7 @@ pub async fn run_specialists(
         );
         return;
     }
-    
+
     emit_progress_event(
         &evidence_id,
         ProgressMessageLevel::Main,
@@ -43,15 +48,15 @@ pub async fn run_specialists(
         "Running AI Specialist Agents...".to_string(),
         app,
     );
-    
+
     if config.enable_text_specialist {
         run_text_specialist(evidence_id, partition_id, pool.clone(), app, &config).await;
     }
-    
+
     if config.enable_image_specialist {
         run_image_specialist(evidence_id, partition_id, pool.clone(), app, &config).await;
     }
-    
+
     if config.enable_audio_specialist {
         run_audio_specialist(evidence_id, partition_id, pool.clone(), app, &config).await;
     }
@@ -76,12 +81,13 @@ async fn ensure_ai_artifact(
     use sqlx::Row;
 
     // Check if it already exists
-    let existing = sqlx::query("SELECT id FROM artifacts WHERE file_id = ? AND evidence_id = ? AND name = ?")
-        .bind(file_id)
-        .bind(evidence_id)
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
+    let existing =
+        sqlx::query("SELECT id FROM artifacts WHERE file_id = ? AND evidence_id = ? AND name = ?")
+            .bind(file_id)
+            .bind(evidence_id)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some(row) = existing {
         return Ok(row.get(0));
@@ -110,8 +116,11 @@ async fn run_text_specialist(
     app: &AppHandle,
     config: &AiConfig,
 ) {
-    info!("Text Specialist: Starting on evidence {} partition {}", evidence_id, partition_id);
-    
+    info!(
+        "Text Specialist: Starting on evidence {} partition {}",
+        evidence_id, partition_id
+    );
+
     // Use 'id' for DB linking and 'identifier' for filesystem extraction
     let rows = match sqlx::query(
         "SELECT id as file_id, identifier, absolute_path, name FROM system_files WHERE (sig_mime LIKE 'text/%' OR name LIKE '%.txt') AND evidence_id = ? AND partition_id = ?"
@@ -209,7 +218,10 @@ async fn run_text_specialist(
         {
             Ok(c) => c,
             Err(e) => {
-                error!("Text Specialist: Failed to initialize copilot client: {}", e);
+                error!(
+                    "Text Specialist: Failed to initialize copilot client: {}",
+                    e
+                );
                 return;
             }
         };
@@ -235,7 +247,10 @@ async fn run_image_specialist(
     app: &AppHandle,
     config: &AiConfig,
 ) {
-    info!("Image Specialist: Starting on evidence {} partition {}", evidence_id, partition_id);
+    info!(
+        "Image Specialist: Starting on evidence {} partition {}",
+        evidence_id, partition_id
+    );
 
     if config.provider != "openai" && config.provider != "copilot" {
         warn!("Image Specialist: Vision analysis requires OpenAI or copilot provider. Skipping.");
@@ -265,8 +280,12 @@ async fn run_image_specialist(
 
     let endpoint = normalize_endpoint(&config.endpoint);
     let vision_tool = AnalyzeImageTool::new(
-        pool.clone(), app.clone(), evidence_id,
-        config.api_key.clone(), config.provider.clone(), endpoint.clone(),
+        pool.clone(),
+        app.clone(),
+        evidence_id,
+        config.api_key.clone(),
+        config.provider.clone(),
+        endpoint.clone(),
     );
 
     let image_preamble = "You are a Forensic Image-Analyst Specialist. \
@@ -330,14 +349,23 @@ async fn run_image_specialist(
             .build()
         {
             Ok(c) => c,
-            Err(e) => { error!("Image Specialist: Failed to initialize copilot client: {}", e); return; }
+            Err(e) => {
+                error!(
+                    "Image Specialist: Failed to initialize copilot client: {}",
+                    e
+                );
+                return;
+            }
         };
         let agent = client.agent(&config.model).preamble(image_preamble).build();
         run_image_loop!(agent);
     } else {
         let client: openai::Client = match openai::Client::new(&config.api_key) {
             Ok(c) => c,
-            Err(e) => { error!("Image Specialist: OpenAI client error: {}", e); return; }
+            Err(e) => {
+                error!("Image Specialist: OpenAI client error: {}", e);
+                return;
+            }
         };
         let agent = client.agent(&config.model).preamble(image_preamble).build();
         run_image_loop!(agent);
@@ -351,7 +379,10 @@ async fn run_audio_specialist(
     _app: &AppHandle,
     config: &AiConfig,
 ) {
-    info!("Audio Specialist: Starting on evidence {} partition {}", evidence_id, partition_id);
+    info!(
+        "Audio Specialist: Starting on evidence {} partition {}",
+        evidence_id, partition_id
+    );
 
     if config.provider != "openai" && config.provider != "copilot" {
         warn!("Audio Specialist: Transcription requires OpenAI or copilot provider. Skipping.");
@@ -470,7 +501,13 @@ async fn run_audio_specialist(
             .build()
         {
             Ok(c) => c,
-            Err(e) => { error!("Audio Specialist: Failed to initialize copilot client: {}", e); return; }
+            Err(e) => {
+                error!(
+                    "Audio Specialist: Failed to initialize copilot client: {}",
+                    e
+                );
+                return;
+            }
         };
         let agent = client.agent(&config.model).preamble(audio_preamble).build();
         let transcribe = |name: &str, content: Vec<u8>, _id: i64| {
@@ -480,7 +517,8 @@ async fn run_audio_specialist(
                 let http = reqwest::Client::new();
                 let file_part = match reqwest::multipart::Part::bytes(content)
                     .file_name(name.clone())
-                    .mime_str("audio/mpeg") {
+                    .mime_str("audio/mpeg")
+                {
                     Ok(p) => p,
                     Err(_) => return None,
                 };
@@ -488,10 +526,20 @@ async fn run_audio_specialist(
                 match http.post(&url).multipart(form).send().await {
                     Ok(resp) => {
                         if let Ok(json) = resp.json::<serde_json::Value>().await {
-                            json.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                        } else { None }
+                            json.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        } else {
+                            None
+                        }
                     }
-                    Err(e) => { error!("Audio Specialist: copilot transcription failed for {}: {}", name, e); None }
+                    Err(e) => {
+                        error!(
+                            "Audio Specialist: copilot transcription failed for {}: {}",
+                            name, e
+                        );
+                        None
+                    }
                 }
             }
         };
@@ -500,7 +548,10 @@ async fn run_audio_specialist(
         let api_key = config.api_key.clone();
         let client: openai::Client = match openai::Client::new(&api_key) {
             Ok(c) => c,
-            Err(e) => { error!("Audio Specialist: OpenAI client error: {}", e); return; }
+            Err(e) => {
+                error!("Audio Specialist: OpenAI client error: {}", e);
+                return;
+            }
         };
         let agent = client.agent(&config.model).preamble(audio_preamble).build();
         let transcribe = |name: &str, content: Vec<u8>, identifier: i64| {
@@ -508,25 +559,44 @@ async fn run_audio_specialist(
             let name = name.to_string();
             async move {
                 let temp_path = std::env::temp_dir().join(format!("audio_{}.mp3", identifier));
-                if std::fs::write(&temp_path, &content).is_err() { return None; }
+                if std::fs::write(&temp_path, &content).is_err() {
+                    return None;
+                }
                 let http = reqwest::Client::new();
                 let file_part = match reqwest::multipart::Part::bytes(content)
                     .file_name(name.clone())
-                    .mime_str("audio/mpeg") {
+                    .mime_str("audio/mpeg")
+                {
                     Ok(p) => p,
-                    Err(_) => { let _ = std::fs::remove_file(&temp_path); return None; }
+                    Err(_) => {
+                        let _ = std::fs::remove_file(&temp_path);
+                        return None;
+                    }
                 };
-                let form = reqwest::multipart::Form::new().part("file", file_part).text("model", "whisper-1");
-                let result = http.post("https://api.openai.com/v1/audio/transcriptions")
-                    .bearer_auth(&key).multipart(form).send().await;
+                let form = reqwest::multipart::Form::new()
+                    .part("file", file_part)
+                    .text("model", "whisper-1");
+                let result = http
+                    .post("https://api.openai.com/v1/audio/transcriptions")
+                    .bearer_auth(&key)
+                    .multipart(form)
+                    .send()
+                    .await;
                 let _ = std::fs::remove_file(&temp_path);
                 match result {
                     Ok(resp) => {
                         if let Ok(json) = resp.json::<serde_json::Value>().await {
-                            json.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                        } else { None }
+                            json.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.to_string())
+                        } else {
+                            None
+                        }
                     }
-                    Err(e) => { error!("Audio Specialist: Whisper API failed for {}: {}", name, e); None }
+                    Err(e) => {
+                        error!("Audio Specialist: Whisper API failed for {}: {}", name, e);
+                        None
+                    }
                 }
             }
         };

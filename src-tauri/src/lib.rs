@@ -1,29 +1,32 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use env_logger;
 use exhume_body::Body;
-use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_filesystem::Filesystem;
-use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use exhume_filesystem::detected_fs::detect_filesystem;
 use exhume_indexer::ensure_tables as ensure_evidence_tables;
+use exhume_partitions::{Partitions, gpt::GPTPartitionEntry, mbr::MBRPartitionEntry};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub mod modules;
 
 use exhume_artefacts::parsers::build_registry;
-use modules::th_artifacts::{extract_artefacts, identify_artefacts, parse_pe, has_pml_data, has_evtx_data};
+use modules::th_artifacts::{
+    extract_artefacts, has_evtx_data, has_pml_data, identify_artefacts, parse_pe,
+    populate_filesystem_timeline,
+};
 use modules::th_evidences::create_case_with_evidence;
 use modules::th_filesystem::{
-    get_fs_info, read_file_bytes, read_file_prefix, read_file_slice, read_file_slice_bytes,
-    dump_file_to_disk, compute_hash,
+    compute_hash, dump_file_to_disk, get_fs_info, parse_plist_file, read_file_bytes,
+    read_file_prefix, read_file_slice, read_file_slice_bytes, register_media_source,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +46,7 @@ fn default_batch_size() -> u32 {
     10
 }
 
-use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
+use modules::utils::th_progress::{ProgressMessageLevel, ProgressMessageType, emit_progress_event};
 
 use modules::th_identifier::identify_file_types;
 
@@ -55,8 +58,8 @@ use std::{
     path::Path,
     path::PathBuf,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_sql::Migration;
-use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind, DialogExt};
 
 #[derive(Debug, Clone, Deserialize)]
 struct EvidenceImagePayload {
@@ -83,6 +86,7 @@ struct EvidenceImageResponse {
 struct ProcessingStatusPayload {
     message: String,
     status: i64,
+    phase: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,7 +162,14 @@ fn list_physical_devices_macos() -> Result<Vec<PhysicalDevice>, String> {
             name = path.replace("/dev/", "");
         }
 
-        devices.push(PhysicalDevice { path, name, size, size_human, is_internal, protocol });
+        devices.push(PhysicalDevice {
+            path,
+            name,
+            size,
+            size_human,
+            is_internal,
+            protocol,
+        });
     }
 
     Ok(devices)
@@ -307,7 +318,8 @@ async fn cancel_processing(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let entry = if let Ok(mut tokens) = state.tokens.lock() {
-        tokens.remove(&evidence_id)
+        tokens
+            .remove(&evidence_id)
             .ok_or_else(|| "No active processing task found for this evidence.".to_string())?
     } else {
         return Err("Failed to acquire state lock.".to_string());
@@ -357,15 +369,15 @@ async fn reset_evidence(
             error!("Failed to delete evidence DB {}: {}", evidence_db_path, e);
             return Err(format!("Failed to delete evidence DB: {}", e));
         }
-        
+
         // Also cleanup sqlite-wal and sqlite-shm if they exist
         let wal_path = format!("{}-wal", evidence_db_path);
         if std::path::Path::new(&wal_path).exists() {
-             std::fs::remove_file(&wal_path).ok();
+            std::fs::remove_file(&wal_path).ok();
         }
         let shm_path = format!("{}-shm", evidence_db_path);
         if std::path::Path::new(&shm_path).exists() {
-             std::fs::remove_file(&shm_path).ok();
+            std::fs::remove_file(&shm_path).ok();
         }
     }
 
@@ -487,11 +499,7 @@ async fn get_evidence_images(
                 created_at: row
                     .try_get("created_at")
                     .map_err(|e| format!("Failed to decode timestamp: {}", e))?,
-                data_url: format!(
-                    "data:{};base64,{}",
-                    mime_type,
-                    BASE64_STANDARD.encode(data)
-                ),
+                data_url: format!("data:{};base64,{}", mime_type, BASE64_STANDARD.encode(data)),
             })
         })
         .collect()
@@ -563,7 +571,7 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
             return Err(format!(
                 "Error detecting the filesystem: {}",
                 err.to_string()
-            ))
+            ));
         }
     };
     Ok(fs)
@@ -582,7 +590,7 @@ fn detect_logical_filesystem(path: String) -> Result<String, String> {
             return Err(format!(
                 "Error detecting the filesystem: {}",
                 err.to_string()
-            ))
+            ));
         }
     };
     return Ok(fs.filesystem_type());
@@ -624,7 +632,7 @@ fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool
             return Err(format!(
                 "Error detecting the filesystem: {}",
                 err.to_string()
-            ))
+            ));
         }
     };
     Ok(fs)
@@ -642,8 +650,13 @@ async fn setup_evidence_pools(
 ) -> Option<(SqlitePool, SqlitePool)> {
     if let Some(parent) = std::path::Path::new(evidence_db_path).parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-                format!("Failed to create evidence DB directory: {e}"), app);
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed to create evidence DB directory: {e}"),
+                app,
+            );
             error!("Failed to create evidence DB directory: {e}");
             return None;
         }
@@ -652,8 +665,13 @@ async fn setup_evidence_pools(
     let main_pool = match open_pool(main_db_path).await {
         Ok(p) => p,
         Err(err) => {
-            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-                format!("Main DB connection error: {err:?}"), app);
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Main DB connection error: {err:?}"),
+                app,
+            );
             error!("Main DB connection error: {err:?}");
             return None;
         }
@@ -662,8 +680,13 @@ async fn setup_evidence_pools(
     let evidence_pool = match open_pool(evidence_db_path).await {
         Ok(p) => p,
         Err(err) => {
-            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-                format!("Evidence DB connection error: {err:?}"), app);
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Evidence DB connection error: {err:?}"),
+                app,
+            );
             error!("Evidence DB connection error: {err:?}");
             return None;
         }
@@ -672,31 +695,51 @@ async fn setup_evidence_pools(
     match has_user_tables(&evidence_pool).await {
         Ok(false) => {
             if let Err(err) = ensure_evidence_tables(&evidence_pool).await {
-                emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-                    format!("Failed to initialize evidence DB schema: {err:?}"), app);
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    format!("Failed to initialize evidence DB schema: {err:?}"),
+                    app,
+                );
                 error!("Failed to initialize evidence DB schema: {err:?}");
                 return None;
             }
         }
         Ok(true) => {}
         Err(err) => {
-            emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-                format!("Failed checking evidence DB schema: {err:?}"), app);
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                format!("Failed checking evidence DB schema: {err:?}"),
+                app,
+            );
             error!("Failed checking evidence DB schema: {err:?}");
             return None;
         }
     }
 
     if let Err(err) = attach_main_db(&evidence_pool, main_db_path).await {
-        emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-            format!("Failed to attach main DB: {err:?}"), app);
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Error,
+            format!("Failed to attach main DB: {err:?}"),
+            app,
+        );
         error!("Failed to attach main DB: {err:?}");
         return None;
     }
 
     if let Err(err) = copy_evidence_scoped_rows(&evidence_pool, evidence_id).await {
-        emit_progress_event(&evidence_id, ProgressMessageLevel::Main, ProgressMessageType::Error,
-            format!("Failed to copy evidence rows into evidence DB: {err:?}"), app);
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Error,
+            format!("Failed to copy evidence rows into evidence DB: {err:?}"),
+            app,
+        );
         error!("Failed to copy evidence rows into evidence DB: {err:?}");
         return None;
     }
@@ -720,17 +763,16 @@ fn process_partitions(
         let app = app_for_task;
         let cancel_token = cancel_for_task;
 
-        let (main_pool, evidence_pool) = match setup_evidence_pools(
-            evidence_id, &main_db_path, &evidence_db_path, &app,
-        ).await {
-            Some(pools) => pools,
-            None => {
-                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                    tokens.remove(&evidence_id);
+        let (main_pool, evidence_pool) =
+            match setup_evidence_pools(evidence_id, &main_db_path, &evidence_db_path, &app).await {
+                Some(pools) => pools,
+                None => {
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
                 }
-                return;
-            }
-        };
+            };
 
         // Load evidence path from MAIN DB (authoritative)
         let evidence_row = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
@@ -838,7 +880,11 @@ fn process_partitions(
             // declared image size so that compressed formats (AFF4, EWF, …) report the
             // correct uncompressed size rather than the container file size.
             let (effective_size_bytes, effective_size_sectors) = if kind.as_str() == "logical" {
-                let s = if sector_size_u64 > 0 { image_size / sector_size_u64 } else { 0 };
+                let s = if sector_size_u64 > 0 {
+                    image_size / sector_size_u64
+                } else {
+                    0
+                };
                 (image_size, s)
             } else {
                 (size_bytes as u64, size_sectors as u64)
@@ -885,7 +931,9 @@ fn process_partitions(
                         "Partition processing cancelled by user.",
                         &app,
                     );
-                    update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+                    update_evidence_status(&main_pool, evidence_id, -1)
+                        .await
+                        .ok();
                     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                         tokens.remove(&evidence_id);
                     }
@@ -945,7 +993,9 @@ fn process_partitions(
                         "File identification cancelled by user.",
                         &app,
                     );
-                    update_evidence_status(&main_pool, evidence_id, -3).await.ok();
+                    update_evidence_status(&main_pool, evidence_id, -3)
+                        .await
+                        .ok();
                     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                         tokens.remove(&evidence_id);
                     }
@@ -959,9 +1009,20 @@ fn process_partitions(
                     _ => p.size_sectors.saturating_mul(sector_size_u64),
                 };
 
-                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+                let key_material = p
+                    .fvek
+                    .clone()
+                    .and_then(|h| hex::decode(h).ok())
+                    .map(|fvek| exhume_filesystem::detected_fs::KeyMaterial {
+                        bitlocker_fvek: Some(fvek),
+                    });
 
-                let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material) {
+                let mut fs = match detect_filesystem(
+                    &mut body,
+                    p.first_byte_addr,
+                    bytes_len,
+                    key_material,
+                ) {
                     Ok(fs) => fs,
                     Err(err) => {
                         emit_progress_event(
@@ -984,11 +1045,28 @@ fn process_partitions(
             update_evidence_status(&evidence_pool, evidence_id, 4)
                 .await
                 .ok();
+            // The card reads the main DB, so mirror it there or this stage is invisible.
+            update_evidence_status(&main_pool, evidence_id, 4)
+                .await
+                .ok();
+
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                ProcessingStatusPayload {
+                    message: "File type identification complete. Identifying known artefacts…"
+                        .to_string(),
+                    status: 4,
+                    phase: "artefact_identification",
+                },
+                &app,
+            );
         }
 
         // Post-index artefact discovery and parsing (also writes to evidence DB)
         if actual_status < 5 {
-            for p in &work {
+            for (partition_index, p) in work.iter().enumerate() {
                 if cancel_token.load(Ordering::Relaxed) {
                     emit_progress_event(
                         &evidence_id,
@@ -997,7 +1075,9 @@ fn process_partitions(
                         "Artefact identification cancelled by user.",
                         &app,
                     );
-                    update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+                    update_evidence_status(&main_pool, evidence_id, -4)
+                        .await
+                        .ok();
                     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                         tokens.remove(&evidence_id);
                     }
@@ -1011,11 +1091,35 @@ fn process_partitions(
                     _ => p.size_sectors.saturating_mul(sector_size_u64),
                 };
 
-                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+                let key_material = p
+                    .fvek
+                    .clone()
+                    .and_then(|h| hex::decode(h).ok())
+                    .map(|fvek| exhume_filesystem::detected_fs::KeyMaterial {
+                        bitlocker_fvek: Some(fvek),
+                    });
 
-                if detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material).is_err() {
+                if detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material).is_err()
+                {
                     continue;
                 }
+
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Info,
+                    ProcessingStatusPayload {
+                        message: format!(
+                            "Identifying known artefacts in {} partition {}/{}…",
+                            p.kind,
+                            partition_index + 1,
+                            total
+                        ),
+                        status: 4,
+                        phase: "artefact_identification",
+                    },
+                    &app,
+                );
 
                 identify_artefacts(evidence_id, p.id, &app, &evidence_pool).await;
             }
@@ -1025,15 +1129,17 @@ fn process_partitions(
                 ProgressMessageLevel::Main,
                 ProgressMessageType::Success,
                 ProcessingStatusPayload {
-                    message: "Artefact identification complete.".to_string(),
+                    message: "Artefact identification complete. Parsing discovered artefacts…"
+                        .to_string(),
                     status: 4,
+                    phase: "artefact_parsing",
                 },
                 &app,
             );
 
             let registry = build_registry();
 
-            for p in &work {
+            for (partition_index, p) in work.iter().enumerate() {
                 if cancel_token.load(Ordering::Relaxed) {
                     emit_progress_event(
                         &evidence_id,
@@ -1042,7 +1148,9 @@ fn process_partitions(
                         "Artefact extraction cancelled by user.",
                         &app,
                     );
-                    update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+                    update_evidence_status(&main_pool, evidence_id, -4)
+                        .await
+                        .ok();
                     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                         tokens.remove(&evidence_id);
                     }
@@ -1056,38 +1164,141 @@ fn process_partitions(
                     _ => p.size_sectors.saturating_mul(sector_size_u64),
                 };
 
-                let key_material = p.fvek.clone().and_then(|h| hex::decode(h).ok()).map(|fvek| exhume_filesystem::detected_fs::KeyMaterial { bitlocker_fvek: Some(fvek) });
+                let key_material = p
+                    .fvek
+                    .clone()
+                    .and_then(|h| hex::decode(h).ok())
+                    .map(|fvek| exhume_filesystem::detected_fs::KeyMaterial {
+                        bitlocker_fvek: Some(fvek),
+                    });
 
-                let mut fs = match detect_filesystem(&mut body, p.first_byte_addr, bytes_len, key_material) {
+                let mut fs = match detect_filesystem(
+                    &mut body,
+                    p.first_byte_addr,
+                    bytes_len,
+                    key_material,
+                ) {
                     Ok(fs) => fs,
                     Err(_) => continue,
                 };
 
-                extract_artefacts(evidence_id, p.id, &app, &evidence_pool, &mut fs, &registry, Some(cancel_token.clone())).await;
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Info,
+                    ProcessingStatusPayload {
+                        message: format!(
+                            "Parsing artefacts in {} partition {}/{}…",
+                            p.kind,
+                            partition_index + 1,
+                            total
+                        ),
+                        status: 4,
+                        phase: "artefact_parsing",
+                    },
+                    &app,
+                );
 
+                extract_artefacts(
+                    evidence_id,
+                    p.id,
+                    &app,
+                    &evidence_pool,
+                    &mut fs,
+                    &registry,
+                    Some(cancel_token.clone()),
+                )
+                .await;
+
+                populate_filesystem_timeline(evidence_id, p.id, &evidence_pool).await;
+            }
+
+            // Every partition's artefacts are parsed: the investigation is
+            // reviewable from here. AI enrichment below only adds to it, so it
+            // must not gate an investigator's access to the evidence.
+            update_evidence_status(&evidence_pool, evidence_id, 5)
+                .await
+                .ok();
+            update_evidence_status(&main_pool, evidence_id, 5)
+                .await
+                .ok();
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Success,
+                ProcessingStatusPayload {
+                    message: "Artefact parsing complete. Evidence is ready for review.".to_string(),
+                    status: 5,
+                    phase: "ai_analysis",
+                },
+                &app,
+            );
+            app.emit(&format!("artefacts_complete_{}", evidence_id), evidence_id)
+                .ok();
+        }
+
+        // Guarded separately so an evidence interrupted during AI enrichment
+        // (already at 5) resumes the AI pass instead of skipping it.
+        if actual_status < 6 {
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Info,
+                ProcessingStatusPayload {
+                    message: "Running AI specialist analysis…".to_string(),
+                    status: 5,
+                    phase: "ai_analysis",
+                },
+                &app,
+            );
+            for p in &work {
+                if cancel_token.load(Ordering::Relaxed) {
+                    break;
+                }
                 modules::agents::specialists::run_specialists(
                     evidence_id,
                     p.id,
                     evidence_pool.clone(),
                     &app,
                     ai_config.clone(),
-                ).await;
+                )
+                .await;
             }
 
-            update_evidence_status(&evidence_pool, evidence_id, 5)
+            update_evidence_status(&evidence_pool, evidence_id, 6)
                 .await
                 .ok();
         }
 
-        update_evidence_status(&main_pool, evidence_id, 5).await.ok();
-        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id).ok();
+        update_evidence_status(&main_pool, evidence_id, 6)
+            .await
+            .ok();
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            ProcessingStatusPayload {
+                message: "Processing pipeline complete.".to_string(),
+                status: 6,
+                phase: "complete",
+            },
+            &app,
+        );
+        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id)
+            .ok();
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
             tokens.remove(&evidence_id);
         };
     });
 
     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-        tokens.insert(evidence_id, ProcessingEntry { cancel: cancel_token, handle });
+        tokens.insert(
+            evidence_id,
+            ProcessingEntry {
+                cancel: cancel_token,
+                handle,
+            },
+        );
     }
 }
 
@@ -1108,29 +1319,28 @@ fn process_folder(
         let app = app_for_task;
         let cancel_token = cancel_for_task;
 
-        let (main_pool, evidence_pool) = match setup_evidence_pools(
-            evidence_id, &main_db_path, &evidence_db_path, &app,
-        ).await {
-            Some(pools) => pools,
-            None => {
-                if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                    tokens.remove(&evidence_id);
+        let (main_pool, evidence_pool) =
+            match setup_evidence_pools(evidence_id, &main_db_path, &evidence_db_path, &app).await {
+                Some(pools) => pools,
+                None => {
+                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
+                        tokens.remove(&evidence_id);
+                    }
+                    return;
                 }
-                return;
-            }
-        };
+            };
 
         // Create logical partition entry (in evidence DB) if none exist
-         // For folders, we treat it as one logical partition
+        // For folders, we treat it as one logical partition
         let mut partition_rows =
             sqlx::query("SELECT id FROM partitions WHERE evidence_id = ? AND kind IN ('logical', 'folder') ORDER BY id")
                 .bind(evidence_id)
                 .fetch_all(&evidence_pool)
                 .await
                 .unwrap_or_default();
-        
+
         if partition_rows.is_empty() {
-             if let Err(err) = sqlx::query(
+            if let Err(err) = sqlx::query(
                 "INSERT INTO partitions (evidence_id, kind, first_byte_addr, size_sectors, sector_size, size_bytes) VALUES (?, 'folder', 0, 0, 0, 0)",
             )
             .bind(evidence_id)
@@ -1148,14 +1358,14 @@ fn process_folder(
                 error!("{msg}");
                 return;
             }
-             partition_rows =
+            partition_rows =
                 sqlx::query("SELECT id FROM partitions WHERE evidence_id = ? AND kind IN ('logical', 'folder') ORDER BY id")
                     .bind(evidence_id)
                     .fetch_all(&evidence_pool)
                     .await
                     .unwrap_or_default();
         }
-        
+
         let partition_id = partition_rows[0].get::<i64, _>("id");
 
         if cancel_token.load(Ordering::Relaxed) {
@@ -1166,7 +1376,9 @@ fn process_folder(
                 "Folder processing cancelled by user.",
                 &app,
             );
-            update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+            update_evidence_status(&main_pool, evidence_id, -1)
+                .await
+                .ok();
             if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                 tokens.remove(&evidence_id);
             }
@@ -1181,8 +1393,16 @@ fn process_folder(
             &app,
         );
 
-        index_folder(evidence_id, partition_id, folder_path.clone(), &evidence_pool, &app, Some(cancel_token.clone())).await;
-        
+        index_folder(
+            evidence_id,
+            partition_id,
+            folder_path.clone(),
+            &evidence_pool,
+            &app,
+            Some(cancel_token.clone()),
+        )
+        .await;
+
         // Update main DB status for UI completion screen
         if let Err(err) = update_evidence_status(&main_pool, evidence_id, 3).await {
             emit_progress_event(
@@ -1202,7 +1422,7 @@ fn process_folder(
             "Successfully indexed folder.",
             &app,
         );
-        
+
         // Post index modules?
         // Identify artefacts etc.
         // Similar to process_partitions but using FolderFS
@@ -1215,20 +1435,60 @@ fn process_folder(
                 "Folder post-index processing cancelled by user.",
                 &app,
             );
-            update_evidence_status(&main_pool, evidence_id, -1).await.ok();
+            update_evidence_status(&main_pool, evidence_id, -1)
+                .await
+                .ok();
             if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                 tokens.remove(&evidence_id);
             }
             return;
         }
-        
-        let fs = exhume_filesystem::folder_impl::FolderFS::new(std::path::PathBuf::from(&folder_path));
-        let mut detected_fs: exhume_filesystem::detected_fs::DetectedFs<exhume_filesystem::detected_fs::ImageStream> = exhume_filesystem::detected_fs::DetectedFs::Folder(fs);
-        
-        identify_file_types(&mut detected_fs, evidence_id, partition_id, &app, evidence_pool.clone()).await;
+
+        let fs =
+            exhume_filesystem::folder_impl::FolderFS::new(std::path::PathBuf::from(&folder_path));
+        let mut detected_fs: exhume_filesystem::detected_fs::DetectedFs<
+            exhume_filesystem::detected_fs::ImageStream,
+        > = exhume_filesystem::detected_fs::DetectedFs::Folder(fs);
+
+        identify_file_types(
+            &mut detected_fs,
+            evidence_id,
+            partition_id,
+            &app,
+            evidence_pool.clone(),
+        )
+        .await;
         update_evidence_status(&evidence_pool, evidence_id, 4)
             .await
             .ok();
+        update_evidence_status(&main_pool, evidence_id, 4)
+            .await
+            .ok();
+
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            ProcessingStatusPayload {
+                message: "File type identification complete. Identifying known artefacts…"
+                    .to_string(),
+                status: 4,
+                phase: "artefact_identification",
+            },
+            &app,
+        );
+
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Info,
+            ProcessingStatusPayload {
+                message: "Identifying known artefacts in the folder…".to_string(),
+                status: 4,
+                phase: "artefact_identification",
+            },
+            &app,
+        );
 
         identify_artefacts(evidence_id, partition_id, &app, &evidence_pool).await;
         emit_progress_event(
@@ -1236,8 +1496,10 @@ fn process_folder(
             ProgressMessageLevel::Main,
             ProgressMessageType::Success,
             ProcessingStatusPayload {
-                message: "Artefact identification complete.".to_string(),
+                message: "Artefact identification complete. Parsing discovered artefacts…"
+                    .to_string(),
                 status: 4,
+                phase: "artefact_parsing",
             },
             &app,
         );
@@ -1250,7 +1512,9 @@ fn process_folder(
                 "Artefact extraction cancelled by user.",
                 &app,
             );
-            update_evidence_status(&main_pool, evidence_id, -4).await.ok();
+            update_evidence_status(&main_pool, evidence_id, -4)
+                .await
+                .ok();
             if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
                 tokens.remove(&evidence_id);
             }
@@ -1258,26 +1522,103 @@ fn process_folder(
         }
 
         let registry = build_registry();
-        extract_artefacts(evidence_id, partition_id, &app, &evidence_pool, &mut detected_fs, &registry, Some(cancel_token.clone())).await;
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Info,
+            ProcessingStatusPayload {
+                message: "Parsing discovered folder artefacts…".to_string(),
+                status: 4,
+                phase: "artefact_parsing",
+            },
+            &app,
+        );
+        extract_artefacts(
+            evidence_id,
+            partition_id,
+            &app,
+            &evidence_pool,
+            &mut detected_fs,
+            &registry,
+            Some(cancel_token.clone()),
+        )
+        .await;
 
+        populate_filesystem_timeline(evidence_id, partition_id, &evidence_pool).await;
+
+        // Artefacts are parsed: reviewable now, AI enrichment follows.
+        update_evidence_status(&evidence_pool, evidence_id, 5)
+            .await
+            .ok();
+        update_evidence_status(&main_pool, evidence_id, 5)
+            .await
+            .ok();
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            ProcessingStatusPayload {
+                message: "Artefact parsing complete. Evidence is ready for review.".to_string(),
+                status: 5,
+                phase: "ai_analysis",
+            },
+            &app,
+        );
+        app.emit(&format!("artefacts_complete_{}", evidence_id), evidence_id)
+            .ok();
+
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Info,
+            ProcessingStatusPayload {
+                message: "Running AI specialist analysis…".to_string(),
+                status: 5,
+                phase: "ai_analysis",
+            },
+            &app,
+        );
         modules::agents::specialists::run_specialists(
             evidence_id,
             partition_id,
             evidence_pool.clone(),
             &app,
             ai_config,
-        ).await;
+        )
+        .await;
 
-        update_evidence_status(&evidence_pool, evidence_id, 5).await.ok();
-        update_evidence_status(&main_pool, evidence_id, 5).await.ok();
-        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id).ok();
+        update_evidence_status(&evidence_pool, evidence_id, 6)
+            .await
+            .ok();
+        update_evidence_status(&main_pool, evidence_id, 6)
+            .await
+            .ok();
+        emit_progress_event(
+            &evidence_id,
+            ProgressMessageLevel::Main,
+            ProgressMessageType::Success,
+            ProcessingStatusPayload {
+                message: "Processing pipeline complete.".to_string(),
+                status: 6,
+                phase: "complete",
+            },
+            &app,
+        );
+        app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id)
+            .ok();
         if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
             tokens.remove(&evidence_id);
         };
     });
 
     if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-        tokens.insert(evidence_id, ProcessingEntry { cancel: cancel_token, handle });
+        tokens.insert(
+            evidence_id,
+            ProcessingEntry {
+                cancel: cancel_token,
+                handle,
+            },
+        );
     }
 }
 
@@ -1437,8 +1778,7 @@ async fn load_ai_config(app: AppHandle) -> Result<AiConfig, String> {
     }
     let json = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read AI config file: {}", e))?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("Failed to parse AI config: {}", e))
+    serde_json::from_str(&json).map_err(|e| format!("Failed to parse AI config: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1448,10 +1788,34 @@ pub fn run(init_migrations: Vec<Migration>) {
         .init();
     let mut builder = tauri::Builder::default()
         .manage(modules::th_filesystem::SharedState::default())
+        .manage(modules::th_filesystem::MediaServeState::default())
         .manage(ProcessingState {
             tokens: Mutex::new(HashMap::new()),
         })
         .manage(modules::th_memory::MemoryExecutionState::default())
+        .manage(modules::agents::runtime::AgentRuntimeState::default())
+        .manage(modules::th_maps::MapDownloadState::default())
+        .register_asynchronous_uri_scheme_protocol("thanatology-media", |ctx, request, responder| {
+            let fs_state = ctx
+                .app_handle()
+                .state::<modules::th_filesystem::SharedState>()
+                .inner()
+                .clone();
+            let media_state = ctx
+                .app_handle()
+                .state::<modules::th_filesystem::MediaServeState>()
+                .inner()
+                .clone();
+
+            std::thread::spawn(move || {
+                let response = modules::th_filesystem::serve_media_source_request(
+                    fs_state,
+                    media_state,
+                    request,
+                );
+                responder.respond(response);
+            });
+        })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 if window.label() != "main" {
@@ -1551,6 +1915,7 @@ pub fn run(init_migrations: Vec<Migration>) {
         })
         .invoke_handler(tauri::generate_handler![
             create_case_with_evidence,
+            modules::th_evidences::delete_evidences,
             check_evidence_exists,
             check_disk_image_format,
             discover_partitions,
@@ -1568,6 +1933,8 @@ pub fn run(init_migrations: Vec<Migration>) {
             read_file_prefix,
             read_file_slice_bytes,
             read_file_bytes,
+            parse_plist_file,
+            register_media_source,
             modules::th_memory::discover_memory_dma,
             modules::th_memory::run_memory_module,
             process_folder,
@@ -1584,8 +1951,30 @@ pub fn run(init_migrations: Vec<Migration>) {
             save_ai_config,
             load_ai_config,
             list_physical_devices,
+            modules::th_maps::get_map_storage_status,
+            modules::th_maps::set_map_storage_root,
+            modules::th_maps::activate_map_pack,
+            modules::th_maps::remove_map_pack,
+            modules::th_maps::download_map_pack,
+            modules::th_maps::import_map_pack,
+            modules::th_maps::cancel_map_download,
+            modules::th_maps::read_map_range,
+            modules::th_maps::read_map_asset,
+            modules::th_external_apps::open_external_application,
+            modules::th_external_apps::test_external_application,
             modules::agents::investigate_with_agent,
             modules::agents::search_files_for_mention,
+            modules::agents::runtime::open_agent_window,
+            modules::agents::runtime::open_agent_session,
+            modules::agents::runtime::get_agent_session,
+            modules::agents::runtime::submit_agent_turn,
+            modules::agents::runtime::cancel_agent_turn,
+            modules::agents::runtime::respond_agent_approval,
+            modules::agents::runtime::clear_agent_session,
+            modules::agents::runtime::close_agent_session,
+            modules::agents::runtime::list_agent_sessions,
+            modules::agents::runtime::list_agent_events,
+            modules::agents::runtime::search_agent_files,
         ]);
 
     #[cfg(debug_assertions)]

@@ -12,6 +12,7 @@ import {
   type MediaStats,
 } from "../../../../../dbutils/sqlite";
 import type { File } from "../../../../../dbutils/types";
+import { useTimeFilter } from "../../../../../store/timeFilterStore";
 
 /* ─── helpers ─────────────────────────────────────────────────────── */
 
@@ -39,6 +40,7 @@ interface MediaProps {
 /* ─── component ───────────────────────────────────────────────────── */
 
 const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
+  const { start: tfStart, end: tfEnd, fileTimeField } = useTimeFilter();
   // Filter state
   const [searchText, setSearchText] = useState("");
   const [typeFilter, setTypeFilter] = useState<MediaTypeFilter>({
@@ -83,7 +85,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
     getMediaStats(evidenceId, partitionId)
       .then(setStats)
       .catch(console.error);
-  }, [evidenceId, partitionId]);
+  }, [evidenceId, partitionId, tfStart, tfEnd, fileTimeField]);
 
   // Fetch filtered data
   useEffect(() => {
@@ -110,7 +112,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
     return () => {
       cancelled = true;
     };
-  }, [evidenceId, partitionId, page, debouncedSearch, typeFilter]);
+  }, [evidenceId, partitionId, page, debouncedSearch, typeFilter, tfStart, tfEnd, fileTimeField]);
 
   // Convert files → gallery entries
   const media: MediaEntry[] = useMemo(

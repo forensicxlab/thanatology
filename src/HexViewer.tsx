@@ -1,5 +1,5 @@
 // thanatology/src/HexViewer.tsx
-import React, {
+import {
   CSSProperties,
   ForwardedRef,
   KeyboardEvent as ReactKeyboardEvent,

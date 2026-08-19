@@ -31,29 +31,22 @@ import { Evidence } from "../../../dbutils/types";
 import { invoke } from "@tauri-apps/api/core";
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import { useSnackbar } from "../../SnackbarProvider";
-
-const getStatusColorToken = (status: number): string => {
-  if (status === -2 || status === 1) return "warning.main";
-  if (status === -1) return "error.main";
-  if (status === 0) return "text.disabled";
-  if (status === 2) return "info.main";
-  return "success.main";
-};
-
-const getStatusLabel = (status: number): string => {
-  switch (status) {
-    case -2: return "Stopping...";
-    case -1: return "Stopped / Error";
-    case 0: return "Not processed";
-    case 1: return "Pending start";
-    case 2: return "Processing";
-    default: return "Ready";
-  }
-};
+import LinearProgress from "@mui/material/LinearProgress";
+import CheckCircle from "@mui/icons-material/CheckCircle";
+import Autorenew from "@mui/icons-material/Autorenew";
+import { listen } from "@tauri-apps/api/event";
+import {
+  EVIDENCE_STATUS,
+  PROCESSING_STAGES,
+  getEvidenceStatusInfo,
+} from "../../../dbutils/evidenceStatus";
 
 const getStatusIcon = (status: number) => {
-  if (status === -2) return <HourglassEmpty sx={{ fontSize: 14 }} />;
-  if (status === -1) return <ErrorOutlined sx={{ fontSize: 14 }} />;
+  const info = getEvidenceStatusInfo(status);
+  if (info.isFailed) return <ErrorOutlined sx={{ fontSize: 14 }} />;
+  if (status === EVIDENCE_STATUS.COMPLETE) return <CheckCircle sx={{ fontSize: 14 }} />;
+  if (info.isRunning) return <Autorenew sx={{ fontSize: 14 }} />;
+  if (status === EVIDENCE_STATUS.STOPPING) return <HourglassEmpty sx={{ fontSize: 14 }} />;
   return <Info sx={{ fontSize: 14 }} />;
 };
 
@@ -64,6 +57,16 @@ const getTypeIcon = (type: Evidence["type"]) => {
     case "Memory Image": return <Memory fontSize="small" />;
     case "Procmon dump": return <Terminal fontSize="small" />;
     case "Folder": return <FolderIcon fontSize="small" />;
+  }
+};
+
+const processingStageForPhase = (phase?: string): number | null => {
+  switch (phase) {
+    case "artefact_identification": return 2;
+    case "artefact_parsing": return 3;
+    case "ai_analysis": return 4;
+    case "complete": return PROCESSING_STAGES.length;
+    default: return null;
   }
 };
 
@@ -124,8 +127,9 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
 
   const renderActions = () => {
     const { status } = evidence;
+    const info = getEvidenceStatusInfo(status);
 
-    if (status === 0) {
+    if (status === EVIDENCE_STATUS.NOT_PROCESSED) {
       return (
         <Tooltip title="Review for processing">
           <IconButton size="small" onClick={() => navigate(`/evidences/preprocess/${evidence.id}`)}>
@@ -135,60 +139,119 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
       );
     }
 
-    if (status === 1 || status === -1 || status === -2) {
-      return (
-        <>
-          <Tooltip title={status === -1 || status === -2 ? "Resume Extraction" : "Start Extraction"}>
+    // The review action is always rendered, but disabled with the reason when
+    // the evidence is not yet reviewable — hiding it makes the app look broken.
+    const reviewAction = info.isReviewable ? (
+      <Tooltip
+        title={info.isPartial ? "Review investigation (incomplete results)" : "Review investigation"}
+      >
+        <IconButton size="small" onClick={handleInvestigate}>
+          <Visibility fontSize="small" color={info.isPartial ? "warning" : "inherit"} />
+        </IconButton>
+      </Tooltip>
+    ) : (
+      <Tooltip title={info.blockedReason ?? "Not available yet"}>
+        <span>
+          <IconButton size="small" disabled>
+            <Visibility fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    );
+
+    const canResume =
+      status === EVIDENCE_STATUS.PENDING ||
+      status === EVIDENCE_STATUS.STOPPED ||
+      status === EVIDENCE_STATUS.STOPPING ||
+      status === EVIDENCE_STATUS.INDEXING_FAILED ||
+      status === EVIDENCE_STATUS.ARTEFACTS_FAILED;
+
+    return (
+      <>
+        {canResume && (
+          <Tooltip
+            title={
+              status === EVIDENCE_STATUS.PENDING
+                ? "Start extraction"
+                : `Resume from ${PROCESSING_STAGES[info.stagesDone]?.label ?? "the last stage"}`
+            }
+          >
             <IconButton size="small" onClick={() => navigate(`/evidences/process/${evidence.id}`)}>
               <PlayArrow fontSize="small" />
             </IconButton>
           </Tooltip>
-          {(status === -1 || status === -2) && (
-            <Tooltip title="Restart processing">
-              <IconButton size="small" onClick={handleRestart}>
-                <RestartAlt fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
-        </>
-      );
-    }
+        )}
 
-    if (status === 2) {
-      return (
-        <>
+        {info.isRunning && status !== EVIDENCE_STATUS.STOPPING && (
           <Tooltip title="Stop processing">
             <IconButton size="small" onClick={handleStop}>
               <Stop fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Review investigation">
-            <IconButton size="small" onClick={handleInvestigate}>
-              <Visibility fontSize="small" />
+        )}
+
+        {reviewAction}
+
+        {status !== EVIDENCE_STATUS.PENDING && (
+          <Tooltip title="Restart processing">
+            <IconButton size="small" onClick={handleRestart}>
+              <RestartAlt fontSize="small" />
             </IconButton>
           </Tooltip>
-        </>
-      );
-    }
-
-    // status >= 3: Ready
-    return (
-      <>
-        <Tooltip title="Review investigation">
-          <IconButton size="small" onClick={handleInvestigate}>
-            <Visibility fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Restart processing">
-          <IconButton size="small" onClick={handleRestart}>
-            <RestartAlt fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        )}
       </>
     );
   };
 
-  const statusColor = getStatusColorToken(evidence.status);
+  const statusInfo = getEvidenceStatusInfo(evidence.status);
+  const [liveDetail, setLiveDetail] = useState<string | null>(null);
+  const [liveStagesDone, setLiveStagesDone] = useState<number | null>(null);
+
+  // The pipeline already emits per-evidence progress; surfacing it costs nothing
+  // and turns "Parsing artefacts" into something an investigator can act on.
+  React.useEffect(() => {
+    // Subscribe whenever the evidence could still be worked on, including the
+    // reviewable-but-AI-running state, since events are the only proof of it.
+    if (!statusInfo.isRunning && evidence.status !== EVIDENCE_STATUS.ARTEFACTS_PARSED) {
+      setLiveDetail(null);
+      setLiveStagesDone(null);
+      return;
+    }
+
+    const updateLiveDetail = (payload: any, stage?: number) => {
+      const message = typeof payload === "string" ? payload : payload?.message ?? null;
+      if (message) setLiveDetail(String(message));
+      const phaseStage = processingStageForPhase(
+        typeof payload === "string" ? undefined : payload?.phase,
+      );
+      if (phaseStage !== null) setLiveStagesDone(phaseStage);
+      else if (stage !== undefined) setLiveStagesDone(stage);
+    };
+
+    const unlistens = [
+      listen<any>(`main_progress_info_${evidence.id}`, ({ payload }) => {
+        updateLiveDetail(payload);
+      }),
+      listen<any>(`main_progress_progress_${evidence.id}`, ({ payload }) => {
+        updateLiveDetail(payload);
+      }),
+      listen<any>(`module_progress_info_${evidence.id}`, ({ payload }) => {
+        updateLiveDetail(payload);
+      }),
+      listen<any>(`module_progress_parser_${evidence.id}`, ({ payload }) => {
+        updateLiveDetail(payload, 3);
+      }),
+    ];
+    return () => {
+      unlistens.forEach((unlisten) => void unlisten.then((fn) => fn()));
+    };
+  }, [evidence.id, statusInfo.isRunning, evidence.status]);
+
+  const statusColor = statusInfo.color;
+  const displayedStagesDone = Math.max(
+    statusInfo.stagesDone,
+    liveStagesDone ?? 0,
+  );
 
   return (
     <Card
@@ -222,7 +285,7 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
       <CardContent sx={{ pb: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5, pr: hovered || isSelected ? 4 : 0 }}>
           <Box sx={{ color: statusColor, display: "flex" }}>{getTypeIcon(evidence.type)}</Box>
-          <Typography variant="subtitle2" fontWeight={600} noWrap sx={{ flex: 1 }}>
+          <Typography variant="subtitle2" noWrap sx={{ flex: 1, fontWeight: 600 }}>
             {evidence.name}
           </Typography>
           <Chip
@@ -247,7 +310,7 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
 
         <Chip
           icon={getStatusIcon(evidence.status)}
-          label={getStatusLabel(evidence.status)}
+          label={statusInfo.label}
           size="small"
           variant="outlined"
           sx={{
@@ -258,6 +321,60 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
             height: 20,
           }}
         />
+
+        {(statusInfo.isRunning || statusInfo.isPartial || liveDetail !== null) && (
+          <Box sx={{ mt: 1 }}>
+            <LinearProgress
+              variant="determinate"
+              value={(displayedStagesDone / PROCESSING_STAGES.length) * 100}
+              color={statusInfo.isPartial ? "error" : "primary"}
+              sx={{ height: 4, borderRadius: 2 }}
+            />
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                mt: 0.5,
+                gap: 0.5,
+              }}
+            >
+              {PROCESSING_STAGES.map((stage, index) => (
+                <Typography
+                  key={stage.key}
+                  variant="caption"
+                  sx={{
+                    fontSize: "0.6rem",
+                    color:
+                      index < displayedStagesDone
+                        ? "success.main"
+                        : index === displayedStagesDone && statusInfo.isRunning
+                          ? "info.main"
+                          : "text.disabled",
+                    fontWeight: index === displayedStagesDone ? 600 : 400,
+                  }}
+                >
+                  {stage.label}
+                </Typography>
+              ))}
+            </Box>
+            {liveDetail && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  mt: 0.25,
+                  fontSize: "0.6rem",
+                  color: "text.secondary",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {liveDetail}
+              </Typography>
+            )}
+          </Box>
+        )}
       </CardContent>
 
       {hovered && (

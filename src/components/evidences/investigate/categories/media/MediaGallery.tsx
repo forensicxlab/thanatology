@@ -4,7 +4,6 @@ import Video from "yet-another-react-lightbox/plugins/video";
 import "yet-another-react-lightbox/styles.css";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
@@ -15,6 +14,8 @@ import Stack from "@mui/material/Stack";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutlined";
 import AudioFileIcon from "@mui/icons-material/AudioFile";
 import GraphicEqIcon from "@mui/icons-material/GraphicEq";
+
+import { getMediaSourceUrl } from "../../../common/mediaSource";
 
 
 
@@ -33,6 +34,13 @@ export interface MediaEntry {
   size?: number;
   absolutePath?: string;
   hostPath?: string | null;
+  /**
+   * Optional already-small stand-in used for the tile only (the lightbox still
+   * opens `id`). Avoids pulling a multi-megabyte original to paint a thumbnail.
+   */
+  thumbId?: number;
+  thumbHostPath?: string | null;
+  thumbMime?: string;
 }
 
 interface MediaGalleryProps {
@@ -41,20 +49,26 @@ interface MediaGalleryProps {
   selectedId?: number | null;
   /** Called when user clicks a thumbnail */
   onSelect?: (entry: MediaEntry) => void;
+  /** Optional per-tile overlay, e.g. forensic state flags. */
+  renderBadges?: (entry: MediaEntry) => React.ReactNode;
 }
 
 /* ═══════════════════════════════════════════════════════════════════ *
  *  Helpers                                                           *
  * ═══════════════════════════════════════════════════════════════════ */
 
-const loadFile = async (id: number, mime = "application/octet-stream", hostPath?: string | null) => {
-  const bytes = (await invoke<number[]>("read_file_bytes", {
+const loadFile = async (
+  id: number,
+  mime = "application/octet-stream",
+  hostPath?: string | null,
+  preview = false,
+) => {
+  return getMediaSourceUrl({
     fileId: id,
     path: hostPath ?? undefined,
-  })) as number[];
-  const uint8 = Uint8Array.from(bytes);
-  const blob = new Blob([uint8], { type: mime });
-  return URL.createObjectURL(blob);
+    mime,
+    preview,
+  });
 };
 
 const THUMB_HEIGHT = 180;
@@ -69,11 +83,13 @@ const ThumbnailCard = React.memo(function ThumbnailCard({
   isSelected,
   onSelect,
   onLightbox,
+  badges,
 }: {
   entry: MediaEntry;
   isSelected: boolean;
   onSelect: (e: MediaEntry) => void;
   onLightbox: (e: MediaEntry) => void;
+  badges?: React.ReactNode;
 }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,15 +101,21 @@ const ThumbnailCard = React.memo(function ThumbnailCard({
     setLoading(true);
     setError(false);
 
-    if (entry.kind === "audio") {
+    if (entry.kind !== "image") {
       setLoading(false);
       return;
     }
 
-    let url: string | null = null;
-    loadFile(entry.id, entry.mime, entry.hostPath)
+    // Prefer a supplied thumbnail: it is already small, so it also skips the
+    // server-side downscale (which cannot decode HEIC anyway).
+    const useThumb = entry.thumbId != null;
+    loadFile(
+      useThumb ? (entry.thumbId as number) : entry.id,
+      useThumb ? (entry.thumbMime ?? "image/jpeg") : entry.mime,
+      useThumb ? entry.thumbHostPath : entry.hostPath,
+      !useThumb,
+    )
       .then((u) => {
-        url = u;
         if (mountedRef.current) {
           setBlobUrl(u);
           setLoading(false);
@@ -108,9 +130,8 @@ const ThumbnailCard = React.memo(function ThumbnailCard({
 
     return () => {
       mountedRef.current = false;
-      if (url) URL.revokeObjectURL(url);
     };
-  }, [entry.id, entry.kind, entry.mime]);
+  }, [entry.hostPath, entry.id, entry.kind, entry.mime, entry.thumbId, entry.thumbHostPath, entry.thumbMime]);
 
   const handleClick = useCallback(() => {
     onSelect(entry);
@@ -146,6 +167,21 @@ const ThumbnailCard = React.memo(function ThumbnailCard({
         ...selectedGlow,
       }}
     >
+      {badges && (
+        <Box
+          sx={{
+            position: "absolute",
+            top: 6,
+            left: 6,
+            zIndex: 2,
+            display: "flex",
+            gap: 0.5,
+            pointerEvents: "none",
+          }}
+        >
+          {badges}
+        </Box>
+      )}
       <CardActionArea
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
@@ -314,6 +350,7 @@ export default function MediaGallery({
   media,
   selectedId,
   onSelect,
+  renderBadges,
 }: MediaGalleryProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -434,6 +471,7 @@ export default function MediaGallery({
                 isSelected={entry.id === selectedId}
                 onSelect={handleSelect}
                 onLightbox={openLightbox}
+                badges={renderBadges?.(entry)}
               />
             </Box>
           ))}

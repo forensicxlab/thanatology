@@ -1,5 +1,4 @@
 // thanatology/src/components/evidences/investigate/categories/summary/ExfatLayout.tsx
-import React from "react";
 import { Box, Typography } from "@mui/material";
 
 type AnyObj = Record<string, any>;

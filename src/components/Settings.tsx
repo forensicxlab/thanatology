@@ -17,6 +17,8 @@ import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useSnackbar } from "./SnackbarProvider";
 import { useThemeMode } from "../ThemeContext";
 import { useAiConfigStore } from "../store/aiConfigStore";
+import MapSettingsPanel from "./settings/MapSettingsPanel";
+import ExternalApplicationsSettingsPanel from "./settings/ExternalApplicationsSettingsPanel";
 
 const Item = styled(Paper)(({ theme }) => ({
   ...theme.typography.body2,
@@ -214,6 +216,10 @@ export default function Settings() {
               </Button>
             </Box>
           </Item>
+
+          <Item sx={{ mt: 3 }}>
+            <ExternalApplicationsSettingsPanel />
+          </Item>
         </Grid>
 
         <Grid size={{ xs: 12, md: 4 }}>
@@ -240,6 +246,10 @@ export default function Settings() {
                 Dark
               </ToggleButton>
             </ToggleButtonGroup>
+          </Item>
+
+          <Item sx={{ mt: 3 }}>
+            <MapSettingsPanel />
           </Item>
 
           <Item sx={{ mt: 3 }}>

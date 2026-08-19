@@ -1,11 +1,10 @@
 // thanatology/src/HexViewerWindow.tsx
-import React, {
+import {
   useRef,
   useState,
   forwardRef,
   useImperativeHandle,
   useEffect,
-  useCallback,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {

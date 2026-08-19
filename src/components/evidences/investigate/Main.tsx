@@ -4,9 +4,11 @@ import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
 import Paper from "@mui/material/Paper";
+import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { getEvidence } from "../../../dbutils/sqlite";
+import { listen } from "@tauri-apps/api/event";
 import { useParams } from "react-router";
 
 import {
@@ -17,6 +19,7 @@ import {
   Hub,
   List,
   PermMedia,
+  Place,
   Settings,
   Timeline,
   Psychology,
@@ -31,9 +34,16 @@ import Network from "./categories/network/Network";
 import { PartitionSelection } from "./PartitionSelection";
 import Users from "./categories/users/Users";
 import Applications from "./categories/applications/Applications";
-import Media from "./categories/media/Media";
+import MediaTab from "./categories/media/MediaTab";
 import FilesExplorer from "./categories/files/FilesExplorer";
 import AiArtifacts from "./categories/ai_analysis/AiArtifacts";
+import LocationMap from "./categories/mobile/LocationMap";
+import TimeScopeControl from "./TimeScopeControl";
+import Alert from "@mui/material/Alert";
+import {
+  EVIDENCE_STATUS,
+  getEvidenceStatusInfo,
+} from "../../../dbutils/evidenceStatus";
 import { useEvidenceStore } from "../../../store/evidenceStore";
 
 interface TabPanelProps {
@@ -99,6 +109,7 @@ const InvestigateLinux: React.FC = () => {
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [aiLive, setAiLive] = useState(false);
 
   const { setActiveEvidence, setProcessingStatus, clearActiveEvidence } = useEvidenceStore();
 
@@ -143,12 +154,16 @@ const InvestigateLinux: React.FC = () => {
           setEvidence(fetchedEvidence);
           setProcessingStatus(fetchedEvidence.status);
 
-          if (fetchedEvidence.status === 2) {
+          // Keep polling for as long as the pipeline is still working, so the
+          // state banners follow it through identification, artefacts and AI
+          // rather than only while indexing.
+          if (getEvidenceStatusInfo(fetchedEvidence.status).isRunning) {
             pollTimer = setInterval(async () => {
               const refreshed = await getEvidence(null, evidence_id);
               if (refreshed) {
+                setEvidence(refreshed);
                 setProcessingStatus(refreshed.status);
-                if (refreshed.status !== 2 && pollTimer) {
+                if (!getEvidenceStatusInfo(refreshed.status).isRunning && pollTimer) {
                   clearInterval(pollTimer);
                   pollTimer = null;
                 }
@@ -178,6 +193,21 @@ const InvestigateLinux: React.FC = () => {
     }
   }, [evidence, setActiveEvidence]);
 
+  // Only claim AI is still running when the pipeline actually says so; evidence
+  // processed before this stage existed also rests at ARTEFACTS_PARSED.
+  useEffect(() => {
+    if (!evidence || evidence.status !== EVIDENCE_STATUS.ARTEFACTS_PARSED) {
+      setAiLive(false);
+      return;
+    }
+    const progress = listen(`main_progress_info_${evidence.id}`, () => setAiLive(true));
+    const done = listen(`pipeline_complete_${evidence.id}`, () => setAiLive(false));
+    return () => {
+      void progress.then((fn) => fn());
+      void done.then((fn) => fn());
+    };
+  }, [evidence?.id, evidence?.status]);
+
   if (loading) {
     return <div>Loading evidence details...</div>;
   }
@@ -186,6 +216,26 @@ const InvestigateLinux: React.FC = () => {
   }
   if (!evidence) {
     return <div>No evidence found.</div>;
+  }
+
+  const evidenceStatusInfo = getEvidenceStatusInfo(evidence.status);
+  if (!evidenceStatusInfo.isReviewable) {
+    return (
+      <Box sx={{ p: 2 }}>
+        <Alert severity={evidenceStatusInfo.severity}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+            Evidence review is not available yet
+          </Typography>
+          <Typography variant="body2">
+            {evidenceStatusInfo.blockedReason ??
+              "Artefact parsing must complete before this evidence can be reviewed."}
+          </Typography>
+          <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>
+            Current status: {evidenceStatusInfo.label}
+          </Typography>
+        </Alert>
+      </Box>
+    );
   }
 
   return (
@@ -206,6 +256,21 @@ const InvestigateLinux: React.FC = () => {
           overflow: "hidden",
         }}
       >
+        {/* An investigator must never mistake partial or still-growing results
+            for a finished analysis. */}
+        {evidence.status === EVIDENCE_STATUS.ARTEFACTS_FAILED && (
+          <Alert severity="error" sx={{ mb: 1 }}>
+            Artefact parsing failed for this evidence. Indexed files and the
+            filesystem timeline are complete, but parsed application artefacts
+            are missing or partial — re-process before relying on this analysis.
+          </Alert>
+        )}
+        {evidence.status === EVIDENCE_STATUS.ARTEFACTS_PARSED && aiLive && (
+          <Alert severity="info" sx={{ mb: 1 }}>
+            Artefacts are parsed and reviewable. AI analysis is still running, so
+            AI-derived results will continue to appear.
+          </Alert>
+        )}
         {selectedPartition !== null ? (
           <>
             <Tabs
@@ -298,6 +363,13 @@ const InvestigateLinux: React.FC = () => {
                 {...a11yProps(9)}
                 sx={compactTabSx}
               />
+              <Tab
+                icon={<Place />}
+                iconPosition="start"
+                label="Location"
+                {...a11yProps(10)}
+                sx={compactTabSx}
+              />
             </Tabs>
             <Box
               sx={{
@@ -342,7 +414,7 @@ const InvestigateLinux: React.FC = () => {
                 />
               </TabPanel>
               <TabPanel value={value} index={5}>
-                <Media
+                <MediaTab
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
@@ -364,6 +436,12 @@ const InvestigateLinux: React.FC = () => {
               </TabPanel>
               <TabPanel value={value} index={9}>
                 <AiArtifacts
+                  evidenceId={evidence.id}
+                  partitionId={selectedPartition}
+                />
+              </TabPanel>
+              <TabPanel value={value} index={10}>
+                <LocationMap
                   evidenceId={evidence.id}
                   partitionId={selectedPartition}
                 />
@@ -404,10 +482,10 @@ const InvestigateLinux: React.FC = () => {
             justifyContent: "space-between"
           }}>
           <Box>
-            <Typography variant="subtitle2">Partition Scope</Typography>
+            <Typography variant="subtitle2">Investigation Scope</Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              The active investigation view is constrained to the selected
-              partition.
+              Every view is constrained to the selected partition and time
+              window.
             </Typography>
           </Box>
           <PartitionSelection
@@ -415,6 +493,13 @@ const InvestigateLinux: React.FC = () => {
             onPartitionChange={handlePartitionChanged}
           />
         </Stack>
+
+        <Divider sx={{ my: 1 }} />
+
+        <TimeScopeControl
+          evidenceId={evidence.id}
+          partitionId={selectedPartition}
+        />
       </Paper>
     </Box>
   );

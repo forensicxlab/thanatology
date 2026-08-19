@@ -1,7 +1,7 @@
 use rig::{
     agent::Agent,
+    client::{CompletionClient, Nothing},
     providers::{ollama, openai},
-    client::{Nothing, CompletionClient},
 };
 
 fn normalize_endpoint(endpoint: &str) -> String {
@@ -28,8 +28,7 @@ impl AgentManager {
         Self
     }
 
-    const SUPERVISOR_PREAMBLE: &'static str =
-        "You are the Supervisor of a digital forensics multi-agent system. \
+    const SUPERVISOR_PREAMBLE: &'static str = "You are the Supervisor of a digital forensics multi-agent system. \
         Your job is to receive user requests, decompose them into actionable investigative steps, \
         delegate tasks to specialist agents using provided tools, and synthesize a final report. \
         Always link your findings back to the exact evidence_id and absolute_path. \
@@ -40,7 +39,13 @@ impl AgentManager {
         Use the `analyze_image_content` tool exclusively when you need to visually analyze photographic evidence or image files (.jpg, .png, etc.), passing the file's `identifier` and `partition_id`. DO NOT use extract_file_content for images. \
         CRITICAL WARNING: Before attempting to extract complex binary OS artifacts (like Windows Registry files, EVTX logs, Prefetch, etc.), execute the `query_parsed_artifacts` tool with the file's `identifier` and `partition_id`. If the tool reports that the artifact is unparsed, strictly forward that warning to the user and refuse to process it.";
 
-    fn build_tools(&self, config: &AgentConfig, evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> (
+    fn build_tools(
+        &self,
+        config: &AgentConfig,
+        evidence_pool: sqlx::SqlitePool,
+        app: tauri::AppHandle,
+        evidence_id: i64,
+    ) -> (
         super::tools::QuerySystemFilesTool,
         super::tools::ExhumeExtractionTool,
         super::tools::AnalyzeImageTool,
@@ -49,19 +54,50 @@ impl AgentManager {
     ) {
         let endpoint = normalize_endpoint(&config.endpoint);
         (
-            super::tools::QuerySystemFilesTool::new(evidence_pool.clone(), app.clone(), evidence_id),
-            super::tools::ExhumeExtractionTool::new(evidence_pool.clone(), app.clone(), evidence_id),
-            super::tools::AnalyzeImageTool::new(evidence_pool.clone(), app.clone(), evidence_id, config.api_key.clone(), config.provider.clone(), endpoint),
-            super::tools::QueryParsedArtifactsTool::new(evidence_pool.clone(), app.clone(), evidence_id),
+            super::tools::QuerySystemFilesTool::new(
+                evidence_pool.clone(),
+                app.clone(),
+                evidence_id,
+            ),
+            super::tools::ExhumeExtractionTool::new(
+                evidence_pool.clone(),
+                app.clone(),
+                evidence_id,
+            ),
+            super::tools::AnalyzeImageTool::new(
+                evidence_pool.clone(),
+                app.clone(),
+                evidence_id,
+                config.api_key.clone(),
+                config.provider.clone(),
+                endpoint,
+            ),
+            super::tools::QueryParsedArtifactsTool::new(
+                evidence_pool.clone(),
+                app.clone(),
+                evidence_id,
+            ),
             super::tools::QuerySqliteFileTool::new(evidence_pool.clone(), app.clone(), evidence_id),
         )
     }
 
     /// Helper to build an OpenAI-backed Supervisor
-    fn build_openai_supervisor(&self, config: &AgentConfig, evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Agent<impl rig::completion::CompletionModel> {
-        let client: openai::Client = openai::Client::new(&config.api_key).expect("Failed to initialize OpenAI client");
-        let (query_tool, extract_tool, analyze_image_tool, query_parsed_artifacts_tool, query_sqlite_file_tool) =
-            self.build_tools(config, evidence_pool, app, evidence_id);
+    fn build_openai_supervisor(
+        &self,
+        config: &AgentConfig,
+        evidence_pool: sqlx::SqlitePool,
+        app: tauri::AppHandle,
+        evidence_id: i64,
+    ) -> Agent<impl rig::completion::CompletionModel> {
+        let client: openai::Client =
+            openai::Client::new(&config.api_key).expect("Failed to initialize OpenAI client");
+        let (
+            query_tool,
+            extract_tool,
+            analyze_image_tool,
+            query_parsed_artifacts_tool,
+            query_sqlite_file_tool,
+        ) = self.build_tools(config, evidence_pool, app, evidence_id);
         client
             .agent(&config.model)
             .preamble(Self::SUPERVISOR_PREAMBLE)
@@ -74,14 +110,25 @@ impl AgentManager {
     }
 
     /// Helper to build an Ollama-backed Supervisor
-    fn build_ollama_supervisor(&self, config: &AgentConfig, evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Agent<impl rig::completion::CompletionModel> {
+    fn build_ollama_supervisor(
+        &self,
+        config: &AgentConfig,
+        evidence_pool: sqlx::SqlitePool,
+        app: tauri::AppHandle,
+        evidence_id: i64,
+    ) -> Agent<impl rig::completion::CompletionModel> {
         let client: ollama::Client = ollama::Client::builder()
             .base_url(&config.endpoint)
             .api_key(Nothing)
             .build()
             .expect("Failed to initialize Ollama client");
-        let (query_tool, extract_tool, analyze_image_tool, query_parsed_artifacts_tool, query_sqlite_file_tool) =
-            self.build_tools(config, evidence_pool, app, evidence_id);
+        let (
+            query_tool,
+            extract_tool,
+            analyze_image_tool,
+            query_parsed_artifacts_tool,
+            query_sqlite_file_tool,
+        ) = self.build_tools(config, evidence_pool, app, evidence_id);
         client
             .agent(&config.model)
             .preamble(Self::SUPERVISOR_PREAMBLE)
@@ -94,7 +141,13 @@ impl AgentManager {
     }
 
     /// Helper to build a copilot (vLLM / dfi-copilot) Supervisor using Chat Completions API
-    fn build_copilot_supervisor(&self, config: &AgentConfig, evidence_pool: sqlx::SqlitePool, app: tauri::AppHandle, evidence_id: i64) -> Agent<impl rig::completion::CompletionModel> {
+    fn build_copilot_supervisor(
+        &self,
+        config: &AgentConfig,
+        evidence_pool: sqlx::SqlitePool,
+        app: tauri::AppHandle,
+        evidence_id: i64,
+    ) -> Agent<impl rig::completion::CompletionModel> {
         let base = normalize_endpoint(&config.endpoint);
         let llm_url = format!("{}:8000/v1", base.trim_end_matches('/'));
         let client: openai::CompletionsClient = openai::CompletionsClient::builder()
@@ -102,8 +155,13 @@ impl AgentManager {
             .base_url(&llm_url)
             .build()
             .expect("Failed to initialize copilot CompletionsClient");
-        let (query_tool, extract_tool, analyze_image_tool, query_parsed_artifacts_tool, query_sqlite_file_tool) =
-            self.build_tools(config, evidence_pool, app, evidence_id);
+        let (
+            query_tool,
+            extract_tool,
+            analyze_image_tool,
+            query_parsed_artifacts_tool,
+            query_sqlite_file_tool,
+        ) = self.build_tools(config, evidence_pool, app, evidence_id);
         client
             .agent(&config.model)
             .preamble(Self::SUPERVISOR_PREAMBLE)
@@ -115,33 +173,38 @@ impl AgentManager {
             .build()
     }
 
-    /// Instantiates the Rig Supervisor and executes the analysis dynamically, 
+    /// Instantiates the Rig Supervisor and executes the analysis dynamically,
     /// avoiding complex `Box<dyn CompletionModel>` bounds that conflict with rig::agent::Agent implementation limitations.
     pub async fn execute_investigation(
-        &self, 
-        config: &AgentConfig, 
-        instruction: String, 
+        &self,
+        config: &AgentConfig,
+        instruction: String,
         history: Vec<super::supervisor::ChatMessage>,
         evidence_pool: sqlx::SqlitePool,
         app: tauri::AppHandle,
         evidence_id: i64,
     ) -> Result<super::supervisor::Report, String> {
-        
-        let task = super::supervisor::InvestigationTask { instruction, history };
+        let task = super::supervisor::InvestigationTask {
+            instruction,
+            history,
+        };
 
         match config.provider.as_str() {
             "openai" => {
-                let agent = self.build_openai_supervisor(config, evidence_pool, app.clone(), evidence_id);
+                let agent =
+                    self.build_openai_supervisor(config, evidence_pool, app.clone(), evidence_id);
                 let supervisor = super::supervisor::Supervisor::new(agent, evidence_id, app);
                 supervisor.investigate(task).await
             }
             "copilot" => {
-                let agent = self.build_copilot_supervisor(config, evidence_pool, app.clone(), evidence_id);
+                let agent =
+                    self.build_copilot_supervisor(config, evidence_pool, app.clone(), evidence_id);
                 let supervisor = super::supervisor::Supervisor::new(agent, evidence_id, app);
                 supervisor.investigate(task).await
             }
             _ => {
-                let agent = self.build_ollama_supervisor(config, evidence_pool, app.clone(), evidence_id);
+                let agent =
+                    self.build_ollama_supervisor(config, evidence_pool, app.clone(), evidence_id);
                 let supervisor = super::supervisor::Supervisor::new(agent, evidence_id, app);
                 supervisor.investigate(task).await
             }

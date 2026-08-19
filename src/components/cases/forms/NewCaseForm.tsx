@@ -1,7 +1,7 @@
 // NewCaseForm.tsx
 
 import React from "react";
-import { TextField, Autocomplete, Box, Typography } from "@mui/material";
+import { TextField, Box, Typography } from "@mui/material";
 
 interface NewCaseFormProps {
   availableCollaborators: string[];
@@ -14,13 +14,10 @@ interface NewCaseFormProps {
 }
 
 const NewCaseForm: React.FC<NewCaseFormProps> = ({
-  availableCollaborators,
   name,
   setName,
   description,
   setDescription,
-  selectedCollaborators,
-  setSelectedCollaborators,
 }) => {
   return (
     <Box

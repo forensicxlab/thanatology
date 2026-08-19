@@ -6,6 +6,9 @@ import Drawer from "@mui/material/Drawer";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
 import Box from "@mui/material/Box";
+import Alert from "@mui/material/Alert";
+import Snackbar from "@mui/material/Snackbar";
+import Tooltip from "@mui/material/Tooltip";
 import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
 import TerminalIcon from "@mui/icons-material/Terminal";
@@ -13,9 +16,10 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import RemoveOutlinedIcon from "@mui/icons-material/RemoveOutlined";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
+import { invoke } from "@tauri-apps/api/core";
 
 import Terminal from "../Terminal";
-import AgentChatDrawer from "../evidences/investigate/AgentChatDrawer";
+import { useEvidenceStore } from "../../store/evidenceStore";
 
 interface TermDescriptor {
   id: number;
@@ -24,9 +28,11 @@ interface TermDescriptor {
 
 export default function BottomActionBar() {
   const [open, setOpen] = useState(false);
-  const [agentOpen, setAgentOpen] = useState(false);
+  const [openingAgent, setOpeningAgent] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
   const [height, setHeight] = useState<number>(window.innerHeight * 0.5);
   const [full, setFull] = useState(false);
+  const activeEvidenceId = useEvidenceStore((state) => state.activeEvidenceId);
 
   const [tabs, setTabs] = useState<TermDescriptor[]>([]);
   const [activeTab, setActiveTab] = useState(0);
@@ -111,6 +117,19 @@ export default function BottomActionBar() {
     });
   };
 
+  const openAgentWorkspace = async () => {
+    if (!activeEvidenceId || openingAgent) return;
+    setOpeningAgent(true);
+    setAgentError(null);
+    try {
+      await invoke("open_agent_window", { evidenceId: activeEvidenceId });
+    } catch (error) {
+      setAgentError(String(error));
+    } finally {
+      setOpeningAgent(false);
+    }
+  };
+
   return (
     <>
       <AppBar
@@ -128,12 +147,27 @@ export default function BottomActionBar() {
           variant="dense"
           sx={{ minHeight: 28, justifyContent: "flex-end", px: 1, gap: 1 }}
         >
-          <IconButton size="small" onClick={() => setAgentOpen(!agentOpen)}>
-            <SmartToyIcon
-              fontSize="small"
-              color={agentOpen ? "primary" : "inherit"}
-            />
-          </IconButton>
+          <Tooltip
+            title={
+              activeEvidenceId
+                ? "Open Exhume Agent workspace"
+                : "Open an evidence investigation to use Exhume Agent"
+            }
+          >
+            <span>
+              <IconButton
+                aria-label="Open Exhume Agent workspace"
+                size="small"
+                disabled={!activeEvidenceId || openingAgent}
+                onClick={() => void openAgentWorkspace()}
+              >
+                <SmartToyIcon
+                  fontSize="small"
+                  color={activeEvidenceId ? "primary" : "inherit"}
+                />
+              </IconButton>
+            </span>
+          </Tooltip>
           <IconButton size="small" onClick={handleToolbarToggle}>
             <TerminalIcon
               fontSize="small"
@@ -240,8 +274,20 @@ export default function BottomActionBar() {
         </Box>
       </Drawer>
 
-      {/* Persistent global Agent Chat Drawer */}
-      <AgentChatDrawer open={agentOpen} onClose={() => setAgentOpen(false)} />
+      <Snackbar
+        open={agentError !== null}
+        autoHideDuration={6000}
+        onClose={() => setAgentError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      >
+        <Alert
+          severity="error"
+          variant="outlined"
+          onClose={() => setAgentError(null)}
+        >
+          Failed to open Exhume Agent: {agentError}
+        </Alert>
+      </Snackbar>
     </>
   );
 }

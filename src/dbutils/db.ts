@@ -32,3 +32,12 @@ export async function getEvidenceDb(evidenceId: number): Promise<Database> {
   evidenceDbPromises.set(evidenceId, p);
   return p;
 }
+
+export async function closeEvidenceDb(evidenceId: number): Promise<void> {
+  const pending = evidenceDbPromises.get(evidenceId);
+  evidenceDbPromises.delete(evidenceId);
+  if (!pending) return;
+
+  const database = await pending;
+  await database.close(database.path);
+}

@@ -1,147 +1,115 @@
 import * as React from "react";
+
+declare module "@mui/x-data-grid-pro" {
+  interface ToolbarPropsOverrides {
+    title?: string;
+    subtitle?: string;
+    searchValue?: string;
+    onSearchChange?: (value: string) => void;
+    onCopyPageJson?: () => void;
+  }
+}
+
 import {
   DataGridPro,
   GridColDef,
-  GridToolbarContainer,
-  GridToolbarColumnsButton,
-  GridToolbarFilterButton,
-  GridToolbarDensitySelector,
-  GridToolbarExport,
-  GridToolbarQuickFilter,
-  useGridApiRef,
-  GridRowId,
   GridColumnGroupingModel,
+  GridPaginationModel,
+  GridRenderCellParams,
+  GridRowId,
+  GridSortModel,
+  GridToolbarColumnsButton,
+  GridToolbarContainer,
+  GridToolbarDensitySelector,
+  useGridApiRef,
 } from "@mui/x-data-grid-pro";
 import {
+  Alert,
   Box,
+  Button,
+  Chip,
+  Divider,
+  IconButton,
   Paper,
   Stack,
-  Typography,
-  Chip,
-  Alert,
-  CircularProgress,
+  TextField,
   Tooltip,
-  IconButton,
-  Divider,
+  Typography,
 } from "@mui/material";
+import ClearIcon from "@mui/icons-material/Clear";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import SearchIcon from "@mui/icons-material/Search";
 
-import { fetchParsedArtefactObjects } from "../../../../../dbutils/sqlite";
-import { ArtifactObjectRow } from "../../../../../dbutils/types";
-// -------- helpers: safe JSON + flattening (unknown schema) --------
+import { fetchParsedArtefactObjectsPage } from "../../../../../dbutils/sqlite";
+import type {
+  ParsedArtefactObjectRow,
+  ParsedArtefactObjectSortField,
+} from "../../../../../dbutils/types";
+
+type DisplayRow = ParsedArtefactObjectRow & {
+  jsonParsed: unknown | null;
+  sourceParsed: unknown | null;
+};
 
 function safeJsonParse(raw: string | null): unknown | null {
-  if (!raw) return null;
-  const t = raw.trim();
-  if (!t) return null;
+  if (!raw?.trim()) return null;
   try {
-    return JSON.parse(t);
+    return JSON.parse(raw);
   } catch {
     return null;
   }
 }
 
-function stringifySafe(v: unknown): string {
-  try {
-    if (typeof v === "string") return v;
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
+function getSource(parsed: unknown): unknown | null {
+  if (parsed == null || Array.isArray(parsed) || typeof parsed !== "object") {
+    return null;
   }
+  return (parsed as Record<string, unknown>).source ?? null;
 }
 
-/**
- * Flatten an object into dot-notation keys.
- * - Objects: recurse
- * - Arrays: stringify (keeps grid manageable); full JSON available in detail panel
- */
-function flattenJson(
-  input: unknown,
-  opts?: { maxDepth?: number; maxStringLen?: number },
-): Record<string, unknown> {
-  const maxDepth = opts?.maxDepth ?? 6;
-  const maxStringLen = opts?.maxStringLen ?? 5000;
-
-  const out: Record<string, unknown> = {};
-
-  const walk = (val: unknown, prefix: string, depth: number) => {
-    if (depth > maxDepth) {
-      out[prefix] = "[Max depth reached]";
-      return;
+function prettyJson(parsed: unknown | null, raw: string | null): string {
+  if (parsed != null) {
+    try {
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      // Fall through to the original parser output.
     }
-
-    if (val === null || val === undefined) {
-      if (prefix) out[prefix] = null;
-      return;
-    }
-
-    if (Array.isArray(val)) {
-      const s = stringifySafe(val);
-      out[prefix || ""] =
-        s.length > maxStringLen ? s.slice(0, maxStringLen) + "…" : s;
-      return;
-    }
-
-    if (typeof val === "object") {
-      const obj = val as Record<string, unknown>;
-      const keys = Object.keys(obj);
-      if (keys.length === 0 && prefix) out[prefix] = "{}";
-      for (const k of keys) {
-        const next = prefix ? `${prefix}.${k}` : k;
-        walk(obj[k], next, depth + 1);
-      }
-      return;
-    }
-
-    // primitives
-    if (!prefix) return;
-    if (typeof val === "string" && val.length > maxStringLen) {
-      out[prefix] = val.slice(0, maxStringLen) + "…";
-    } else {
-      out[prefix] = val;
-    }
-  };
-
-  walk(input, "", 0);
-  // remove empty key if any
-  delete out[""];
-  return out;
+  }
+  return raw?.trim() ?? "";
 }
 
-function inferColType(values: unknown[]): GridColDef["type"] {
-  const nonNull = values.filter((v) => v !== null && v !== undefined);
-  if (nonNull.length === 0) return "string";
-
-  const allNumber = nonNull.every(
-    (v) => typeof v === "number" && Number.isFinite(v),
-  );
-  if (allNumber) return "number";
-
-  const allBool = nonNull.every((v) => typeof v === "boolean");
-  if (allBool) return "boolean";
-
-  return "string";
+function formatUtc(value: unknown): string {
+  if (value == null || value === "") return "—";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "—";
+  const milliseconds = numeric < 100_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? "—" : date.toISOString();
 }
 
-// -------- UI: toolbar + detail panel --------
-
-function ArtefactToolbar(props: {
+function ParsedObjectsToolbar(props: {
   title?: string;
   subtitle?: string;
-  onCopyAllJson?: () => void;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  onCopyPageJson?: () => void;
 }) {
   return (
-    <GridToolbarContainer>
+    <GridToolbarContainer sx={{ borderBottom: 1, borderColor: "divider" }}>
       <Stack
         direction="row"
-        spacing={1}
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{ width: "100%", p: 1 }}
+        sx={{
+          width: "100%",
+          p: 1,
+          gap: 1,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
       >
-        <Stack spacing={0.25}>
-          <Typography variant="subtitle1" fontWeight={700}>
-            {props.title ?? "Parsed artefacts"}
+        <Stack spacing={0.1} sx={{ minWidth: 210 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            {props.title ?? "Parsed artefact objects"}
           </Typography>
           {props.subtitle ? (
             <Typography variant="caption" color="text.secondary">
@@ -150,18 +118,42 @@ function ArtefactToolbar(props: {
           ) : null}
         </Stack>
 
-        <Stack direction="row" spacing={1} alignItems="center">
-          <GridToolbarQuickFilter debounceMs={250} />
-          <GridToolbarFilterButton />
+        <Stack
+          direction="row"
+          sx={{ gap: 0.5, alignItems: "center", flexWrap: "wrap" }}
+        >
+          <SearchIcon fontSize="small" color="action" />
+          <TextField
+            value={props.searchValue ?? ""}
+            onChange={(event) => props.onSearchChange?.(event.target.value)}
+            size="small"
+            label="Search this file's objects"
+            placeholder="Parser, kind, text or source path"
+            sx={{ width: 310 }}
+          />
+          {props.searchValue ? (
+            <Tooltip title="Clear search">
+              <IconButton
+                size="small"
+                aria-label="Clear parsed-object search"
+                onClick={() => props.onSearchChange?.("")}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : null}
           <GridToolbarColumnsButton />
           <GridToolbarDensitySelector />
-          <GridToolbarExport />
-
-          {props.onCopyAllJson ? (
-            <Tooltip title="Copy ALL rows JSON to clipboard">
-              <IconButton size="small" onClick={props.onCopyAllJson}>
-                <ContentCopyIcon fontSize="small" />
-              </IconButton>
+          {props.onCopyPageJson ? (
+            <Tooltip title="Copies only the rows currently loaded from the server">
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<ContentCopyIcon fontSize="small" />}
+                onClick={props.onCopyPageJson}
+              >
+                Copy page JSON
+              </Button>
             </Tooltip>
           ) : null}
         </Stack>
@@ -170,49 +162,52 @@ function ArtefactToolbar(props: {
   );
 }
 
-function JsonDetailPanel(props: { row: any }) {
-  const jsonRaw = props.row.json_raw as string | null;
-  const parsed = props.row.json_parsed as unknown | null;
-
-  const pretty =
-    parsed != null
-      ? JSON.stringify(parsed, null, 2)
-      : jsonRaw?.trim()
-        ? jsonRaw
-        : "";
+function JsonDetailPanel({ row }: { row: DisplayRow }) {
+  const fullJson = prettyJson(row.jsonParsed, row.json);
+  const sourceJson =
+    row.sourceParsed == null
+      ? ""
+      : prettyJson(row.sourceParsed, null);
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(pretty || "");
+      await navigator.clipboard.writeText(fullJson);
     } catch {
-      // ignore
+      // Clipboard denial is non-fatal; the inspector remains usable.
     }
   };
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box sx={{ p: 1.5 }}>
       <Stack
         direction="row"
-        spacing={1}
-        alignItems="center"
-        justifyContent="space-between"
+        sx={{
+          gap: 0.75,
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+        }}
       >
-        <Stack direction="row" spacing={1} alignItems="center">
-          {props.row.kind ? (
-            <Chip size="small" label={`kind: ${props.row.kind}`} />
+        <Stack direction="row" sx={{ gap: 0.75, flexWrap: "wrap" }}>
+          <Chip size="small" label={`object ${row.id}`} />
+          {row.kind ? <Chip size="small" label={row.kind} /> : null}
+          {row.parser ? (
+            <Chip size="small" variant="outlined" label={row.parser} />
           ) : null}
-          {props.row.parser ? (
-            <Chip size="small" label={`parser: ${props.row.parser}`} />
-          ) : null}
-          {props.row.artifact_id != null ? (
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`artifact ${row.artifact_id}`}
+          />
+          {row.file_id != null ? (
             <Chip
               size="small"
-              label={`artifact_id: ${props.row.artifact_id}`}
+              variant="outlined"
+              label={`file ${row.file_id}`}
             />
           ) : null}
         </Stack>
-
-        <Tooltip title="Copy JSON">
+        <Tooltip title="Copy full object JSON">
           <IconButton size="small" onClick={copy}>
             <ContentCopyIcon fontSize="small" />
           </IconButton>
@@ -221,326 +216,449 @@ function JsonDetailPanel(props: { row: any }) {
 
       <Divider sx={{ my: 1 }} />
 
-      {props.row.text ? (
+      {sourceJson ? (
         <>
           <Typography variant="overline" color="text.secondary">
-            Text
+            Parser source and provenance
           </Typography>
           <Box
             component="pre"
             sx={{
               m: 0,
               p: 1,
+              maxHeight: 190,
+              overflow: "auto",
               borderRadius: 1,
               bgcolor: "background.default",
-              overflow: "auto",
-              maxHeight: 180,
               fontSize: 12,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
             }}
           >
-            {props.row.text}
+            {sourceJson}
+          </Box>
+          <Divider sx={{ my: 1 }} />
+        </>
+      ) : null}
+
+      {row.text ? (
+        <>
+          <Typography variant="overline" color="text.secondary">
+            Display text
+          </Typography>
+          <Box
+            component="pre"
+            sx={{
+              m: 0,
+              p: 1,
+              maxHeight: 150,
+              overflow: "auto",
+              borderRadius: 1,
+              bgcolor: "background.default",
+              fontSize: 12,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {row.text}
           </Box>
           <Divider sx={{ my: 1 }} />
         </>
       ) : null}
 
       <Typography variant="overline" color="text.secondary">
-        JSON
+        Full parser JSON
       </Typography>
       <Box
         component="pre"
         sx={{
           m: 0,
           p: 1,
+          maxHeight: 360,
+          overflow: "auto",
           borderRadius: 1,
           bgcolor: "background.default",
-          overflow: "auto",
-          maxHeight: 320,
           fontSize: 12,
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
         }}
       >
-        {pretty || "(empty)"}
+        {fullJson || "(empty parser output)"}
       </Box>
     </Box>
   );
 }
 
-// -------- main component --------
-
 export type ArtefactObjectsGridProps = {
   evidenceId: number;
   partitionId: number;
+  /** `system_files.id`, not the filesystem-native identifier. */
   fileId: number;
-
-  /** Optional: persist investigator grid tweaks per file */
   persistKeyPrefix?: string;
-
-  /** Optional: UI */
   height?: number | string;
 };
 
-export default function ArtefactObjectsGrid(props: ArtefactObjectsGridProps) {
+const SORTABLE_FIELDS = new Set<ParsedArtefactObjectSortField>([
+  "id",
+  "parser",
+  "kind",
+  "artifact_id",
+  "text",
+  "source_path",
+  "created_at",
+]);
+
+export default function ArtefactObjectsGrid({
+  evidenceId,
+  partitionId,
+  fileId,
+  persistKeyPrefix,
+  height = 720,
+}: ArtefactObjectsGridProps) {
   const apiRef = useGridApiRef();
+  const requestSequence = React.useRef(0);
+  const rowCountCache = React.useRef<{
+    scope: string;
+    count: number;
+  } | null>(null);
+  const [rows, setRows] = React.useState<DisplayRow[]>([]);
+  const [rowCount, setRowCount] = React.useState(0);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [searchInput, setSearchInput] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const [paginationModel, setPaginationModel] =
+    React.useState<GridPaginationModel>({ page: 0, pageSize: 50 });
+  const [sortModel, setSortModel] = React.useState<GridSortModel>([
+    { field: "id", sort: "asc" },
+  ]);
 
   const persistKey = React.useMemo(() => {
-    const prefix = props.persistKeyPrefix ?? "thanatology:grid:artefacts";
-    return `${prefix}:e${props.evidenceId}:f${props.fileId}`;
-  }, [props.persistKeyPrefix, props.evidenceId, props.fileId]);
-
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [rawRows, setRawRows] = React.useState<ArtifactObjectRow[]>([]);
+    const prefix = persistKeyPrefix ?? "thanatology:grid:artefacts";
+    return `${prefix}:e${evidenceId}:p${partitionId}:f${fileId}`;
+  }, [evidenceId, fileId, partitionId, persistKeyPrefix]);
 
   React.useEffect(() => {
-    let alive = true;
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPaginationModel((previous) =>
+        previous.page === 0 ? previous : { ...previous, page: 0 },
+      );
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  React.useEffect(() => {
+    setPaginationModel((previous) => ({ ...previous, page: 0 }));
+    setRows([]);
+    setRowCount(0);
+  }, [evidenceId, fileId, partitionId]);
+
+  React.useEffect(() => {
+    const requestId = ++requestSequence.current;
+    const activeSort = sortModel[0];
+    const sortField = SORTABLE_FIELDS.has(
+      activeSort?.field as ParsedArtefactObjectSortField,
+    )
+      ? (activeSort.field as ParsedArtefactObjectSortField)
+      : "id";
+    const countScope = `${evidenceId}:${partitionId}:${fileId}:${search}`;
+    const knownRowCount =
+      rowCountCache.current?.scope === countScope
+        ? rowCountCache.current.count
+        : undefined;
+
     setLoading(true);
     setError(null);
 
-    (async () => {
-      try {
-        console.log(props.evidenceId);
-        const rows = await fetchParsedArtefactObjects({
-          evidenceId: props.evidenceId,
-          partitionId: props.partitionId,
-          fileId: props.fileId,
-        });
-        if (!alive) return;
-        setRawRows(rows);
-      } catch (e: any) {
-        if (!alive) return;
-        setError(e?.message ?? String(e));
-      } finally {
-        if (!alive) return;
-        setLoading(false);
-      }
-    })();
+    void fetchParsedArtefactObjectsPage({
+      evidenceId,
+      partitionId,
+      fileId,
+      offset: paginationModel.page * paginationModel.pageSize,
+      limit: paginationModel.pageSize,
+      search,
+      sortField,
+      sortDirection: activeSort?.sort === "desc" ? "desc" : "asc",
+      knownRowCount,
+    })
+      .then((page) => {
+        if (requestSequence.current !== requestId) return;
+        setRows(
+          page.rows.map((row) => {
+            const parsed = safeJsonParse(row.json);
+            return {
+              ...row,
+              jsonParsed: parsed,
+              sourceParsed: getSource(parsed),
+            };
+          }),
+        );
+        setRowCount(page.rowCount);
+        rowCountCache.current = { scope: countScope, count: page.rowCount };
+      })
+      .catch((reason: unknown) => {
+        if (requestSequence.current !== requestId) return;
+        setRows([]);
+        setRowCount(0);
+        setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (requestSequence.current === requestId) setLoading(false);
+      });
+  }, [
+    evidenceId,
+    fileId,
+    paginationModel.page,
+    paginationModel.pageSize,
+    partitionId,
+    search,
+    sortModel,
+  ]);
 
-    return () => {
-      alive = false;
-    };
-  }, [props.evidenceId, props.fileId]);
-
-  // Build display rows with parsed+flattened JSON
-  const rows = React.useMemo(() => {
-    return rawRows.map((r) => {
-      const parsed = safeJsonParse(r.json);
-      const flat = parsed ? flattenJson(parsed) : {};
-      return {
-        id: r.id,
-        evidence_id: r.evidence_id,
-        partition_id: r.partition_id,
-        artifact_id: r.artifact_id,
-        file_id: r.file_id,
-        parser: r.parser ?? "",
-        kind: r.kind ?? "",
-        text: r.text ?? "",
-        json_raw: r.json ?? "",
-        json_parsed: parsed,
-        __flat: flat as Record<string, unknown>,
-      };
-    });
-  }, [rawRows]);
-
-  // Collect union of json keys across all rows
-  const jsonKeys = React.useMemo(() => {
-    const s = new Set<string>();
-    for (const r of rows) {
-      const flat = (r.__flat ?? {}) as Record<string, unknown>;
-      for (const k of Object.keys(flat)) s.add(k);
-    }
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
-
-  // Build dynamic JSON columns
-  const jsonColumns: GridColDef[] = React.useMemo(() => {
-    if (jsonKeys.length === 0) return [];
-
-    // infer type by sampling values for each key
-    const cols: GridColDef[] = jsonKeys.map((k) => {
-      const field = `j:${k}`; // avoid collisions
-      const values = rows.map((r) => (r.__flat as any)?.[k]);
-      const type = inferColType(values);
-
-      return {
-        field,
-        headerName: k,
-        type,
-        flex: 1,
-        minWidth: 160,
-        sortable: true,
-        filterable: true,
-        valueGetter: (_value, row) => {
-          const v = (row.__flat as any)?.[k];
-          return v === undefined ? null : v;
-        },
-      };
-    });
-
-    return cols;
-  }, [jsonKeys, rows]);
-
-  const baseColumns: GridColDef[] = React.useMemo(
+  const columns = React.useMemo<GridColDef<DisplayRow>[]>(
     () => [
-      { field: "id", headerName: "Object ID", width: 110 },
-      { field: "kind", headerName: "Kind", width: 160 },
-      { field: "parser", headerName: "Parser", width: 170 },
+      { field: "id", headerName: "Object ID", width: 112, type: "number" },
+      { field: "parser", headerName: "Parser", width: 185 },
+      { field: "kind", headerName: "Kind", width: 220 },
       {
         field: "artifact_id",
         headerName: "Artifact ID",
-        width: 110,
+        width: 112,
         type: "number",
       },
       {
-        field: "text",
-        headerName: "Text",
+        field: "source_path",
+        headerName: "Source path",
+        minWidth: 260,
         flex: 1,
-        minWidth: 220,
-        sortable: true,
-        renderCell: (params) => {
-          const v = String(params.value ?? "");
-          const short = v.length > 200 ? v.slice(0, 200) + "…" : v;
+        renderCell: (params: GridRenderCellParams<DisplayRow>) => (
+          <Tooltip title={String(params.value ?? "")} placement="bottom-start">
+            <span>{String(params.value ?? "—")}</span>
+          </Tooltip>
+        ),
+      },
+      {
+        field: "source_table",
+        headerName: "Table",
+        width: 150,
+        sortable: false,
+      },
+      {
+        field: "source_record",
+        headerName: "Record type",
+        width: 145,
+        sortable: false,
+      },
+      {
+        field: "source_rowid",
+        headerName: "Source row",
+        width: 115,
+        sortable: false,
+      },
+      {
+        field: "source_role",
+        headerName: "Source role",
+        width: 125,
+        sortable: false,
+      },
+      {
+        field: "source_schema",
+        headerName: "Schema variant",
+        width: 210,
+        sortable: false,
+      },
+      {
+        field: "text",
+        headerName: "Parser text",
+        minWidth: 260,
+        flex: 1,
+        renderCell: (params: GridRenderCellParams<DisplayRow>) => {
+          const value = String(params.value ?? "");
+          const preview = value.length > 220 ? `${value.slice(0, 220)}…` : value;
           return (
-            <Tooltip title={v || ""} placement="bottom-start">
-              <span>{short}</span>
+            <Tooltip title={value} placement="bottom-start">
+              <span>{preview || "—"}</span>
             </Tooltip>
           );
         },
+      },
+      {
+        field: "created_at",
+        headerName: "Indexed (UTC)",
+        width: 205,
+        renderCell: (params: GridRenderCellParams<DisplayRow>) => (
+          <Typography variant="body2" component="span">
+            {formatUtc(params.value)}
+          </Typography>
+        ),
       },
     ],
     [],
   );
 
-  const columns = React.useMemo(
-    () => [...baseColumns, ...jsonColumns],
-    [baseColumns, jsonColumns],
-  );
-
-  const columnGroupingModel = React.useMemo<GridColumnGroupingModel>(() => {
-    const jsonFields = jsonColumns.map((c) => c.field);
-    return [
+  const columnGroupingModel = React.useMemo<GridColumnGroupingModel>(
+    () => [
       {
-        groupId: "core",
-        headerName: "Core",
+        groupId: "object",
+        headerName: "Parsed object",
         children: [
           { field: "id" },
-          { field: "kind" },
           { field: "parser" },
+          { field: "kind" },
           { field: "artifact_id" },
-          { field: "text" },
         ],
       },
-      ...(jsonFields.length
-        ? [
-            {
-              groupId: "json",
-              headerName: "Parsed fields (JSON)",
-              children: jsonFields.map((f) => ({ field: f })),
-            },
-          ]
-        : []),
-    ];
-  }, [jsonColumns]);
-
-  // Detail panel (full JSON + text)
-  const getDetailPanelContent = React.useCallback(
-    (params: any) => <JsonDetailPanel row={params.row} />,
+      {
+        groupId: "provenance",
+        headerName: "Parser provenance",
+        children: [
+          { field: "source_path" },
+          { field: "source_table" },
+          { field: "source_record" },
+          { field: "source_rowid" },
+          { field: "source_role" },
+          { field: "source_schema" },
+        ],
+      },
+      {
+        groupId: "content",
+        headerName: "Content",
+        children: [{ field: "text" }, { field: "created_at" }],
+      },
+    ],
     [],
   );
-  const getDetailPanelHeight = React.useCallback(() => 520, []);
 
-  // Persist/restore investigator layout (columns, filters, grouping, etc.)
   React.useEffect(() => {
     const saved = localStorage.getItem(persistKey);
     if (!saved) return;
     try {
-      const state = JSON.parse(saved);
-      apiRef.current.restoreState(state);
+      apiRef.current?.restoreState(JSON.parse(saved));
     } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistKey]);
-
-  const persistNow = React.useCallback(() => {
-    try {
-      const state = apiRef.current.exportState();
-      localStorage.setItem(persistKey, JSON.stringify(state));
-    } catch {
-      // ignore
+      // Ignore stale preferences from an earlier grid schema.
     }
   }, [apiRef, persistKey]);
 
-  const copyAllJson = React.useCallback(async () => {
+  const persistNow = React.useCallback(() => {
     try {
-      const payload = rows.map((r) => ({
-        id: r.id,
-        kind: r.kind,
-        parser: r.parser,
-        artifact_id: r.artifact_id,
-        json: r.json_parsed ?? safeJsonParse(r.json_raw),
-      }));
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      if (!apiRef.current) return;
+      localStorage.setItem(
+        persistKey,
+        JSON.stringify(apiRef.current.exportState()),
+      );
     } catch {
-      // ignore
+      // Private browsing / storage denial must not block evidence inspection.
+    }
+  }, [apiRef, persistKey]);
+
+  const copyPageJson = React.useCallback(async () => {
+    const page = rows.map((row) => ({
+      id: row.id,
+      evidence_id: row.evidence_id,
+      partition_id: row.partition_id,
+      artifact_id: row.artifact_id,
+      file_id: row.file_id,
+      parser: row.parser,
+      kind: row.kind,
+      text: row.text,
+      json: row.jsonParsed ?? row.json,
+    }));
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(page, null, 2));
+    } catch {
+      // Clipboard denial is non-fatal.
     }
   }, [rows]);
 
-  const height = props.height ?? 720;
-
-  if (error) {
-    return (
-      <Alert severity="error">Failed to load parsed artefacts: {error}</Alert>
-    );
-  }
+  const firstVisible = rowCount
+    ? paginationModel.page * paginationModel.pageSize + 1
+    : 0;
+  const lastVisible = Math.min(
+    rowCount,
+    (paginationModel.page + 1) * paginationModel.pageSize,
+  );
+  const subtitle = `${rowCount.toLocaleString()} matching object${
+    rowCount === 1 ? "" : "s"
+  } • showing ${firstVisible.toLocaleString()}–${lastVisible.toLocaleString()}`;
 
   return (
-    <Paper sx={{ height, width: "100%", overflow: "hidden" }}>
-      {loading ? (
-        <Box sx={{ p: 3, display: "flex", alignItems: "center", gap: 2 }}>
-          <CircularProgress size={20} />
-          <Typography variant="body2">Loading parsed artefacts…</Typography>
-        </Box>
-      ) : (
-        <DataGridPro
-          apiRef={apiRef}
-          rows={rows}
-          columns={columns}
-          getRowId={(r) => r.id as GridRowId}
-          columnGroupingModel={columnGroupingModel}
-          density="compact"
-          disableRowSelectionOnClick
-          pagination
-          pageSizeOptions={[25, 50, 100, 250]}
-          initialState={{
-            pagination: { paginationModel: { pageSize: 50, page: 0 } },
-            pinnedColumns: { left: ["id", "kind", "parser"], right: [] },
-            rowGrouping: { model: ["kind"] }, // ergonomic default; investigator can change & it persists
-            sorting: { sortModel: [{ field: "id", sort: "asc" }] },
-          }}
-          slots={{
-            toolbar: ArtefactToolbar,
-          }}
-          slotProps={{
-            toolbar: {
-              title: "Parsed artefact objects",
-              subtitle: `evidence=${props.evidenceId} • file=${props.fileId} • rows=${rows.length} • jsonFields=${jsonKeys.length}`,
-              onCopyAllJson: copyAllJson,
+    <Paper
+      variant="outlined"
+      sx={{
+        height,
+        width: "100%",
+        minHeight: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {error ? (
+        <Alert severity="error" sx={{ flexShrink: 0 }}>
+          Failed to load parsed artefacts: {error}
+        </Alert>
+      ) : null}
+      <DataGridPro
+        apiRef={apiRef}
+        rows={rows}
+        columns={columns}
+        getRowId={(row) => row.id as GridRowId}
+        columnGroupingModel={columnGroupingModel}
+        loading={loading}
+        rowCount={rowCount}
+        pagination
+        paginationMode="server"
+        paginationModel={paginationModel}
+        onPaginationModelChange={setPaginationModel}
+        pageSizeOptions={[25, 50, 100, 250]}
+        sortingMode="server"
+        sortModel={sortModel}
+        onSortModelChange={(model) => {
+          setSortModel(model.slice(0, 1));
+          setPaginationModel((previous) => ({ ...previous, page: 0 }));
+        }}
+        disableColumnFilter
+        disableRowSelectionOnClick
+        density="compact"
+        rowHeight={48}
+        showToolbar
+        slots={{ toolbar: ParsedObjectsToolbar }}
+        slotProps={{
+          toolbar: {
+            title: "Parsed artefact objects",
+            subtitle,
+            searchValue: searchInput,
+            onSearchChange: setSearchInput,
+            onCopyPageJson: copyPageJson,
+          },
+        }}
+        initialState={{
+          columns: {
+            columnVisibilityModel: {
+              source_record: false,
+              source_role: false,
+              source_schema: false,
             },
-          }}
-          rowHeight={50}
-          showToolbar
-          getDetailPanelContent={getDetailPanelContent}
-          getDetailPanelHeight={getDetailPanelHeight}
-          onStateChange={persistNow}
-          sx={{
-            "& .MuiDataGrid-cell": { outline: "none" },
-            "& .MuiDataGrid-columnHeaders": {
-              borderBottom: 1,
-              borderColor: "divider",
-            },
-          }}
-        />
-      )}
+          },
+          pinnedColumns: { left: ["id", "parser", "kind"], right: [] },
+        }}
+        getDetailPanelContent={(params) => (
+          <JsonDetailPanel row={params.row as DisplayRow} />
+        )}
+        getDetailPanelHeight={() => "auto"}
+        onStateChange={persistNow}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          border: 0,
+          "& .MuiDataGrid-cell": { outline: "none" },
+          "& .MuiDataGrid-columnHeaders": {
+            borderBottom: 1,
+            borderColor: "divider",
+          },
+        }}
+      />
     </Paper>
   );
 }

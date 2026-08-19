@@ -35,6 +35,7 @@ import type {
   ArtifactCategoryCount,
   TopSignature,
 } from "../../../../../dbutils/types";
+import { useTimeFilter } from "../../../../../store/timeFilterStore";
 
 /* ------------------------------------------------------------------ */
 
@@ -202,6 +203,7 @@ const HorizBar: React.FC<{
 /* ── Main component ───────────────────────────────────────────────── */
 
 const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize }) => {
+  const { start: tfStart, end: tfEnd, fileTimeField } = useTimeFilter();
   const [stats, setStats]           = useState<FileStats | null>(null);
   const [mimeData, setMimeData]     = useState<MimeTypeCount[]>([]);
   const [artifactData, setArtifactData] = useState<ArtifactCategoryCount[]>([]);
@@ -232,7 +234,7 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize })
     return () => {
       cancelled = true;
     };
-  }, [evidenceId, partitionId]);
+  }, [evidenceId, partitionId, tfStart, tfEnd, fileTimeField]);
 
   /* ── Loading skeleton ─────────────────────────────────────────── */
   if (loading) {
