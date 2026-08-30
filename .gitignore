@@ -3,3 +3,4 @@ node_modules/
 src-tauri/binaries/bin-macos/LeechCore/*
 !src-tauri/binaries/bin-macos/LeechCore/runtime/
 !src-tauri/binaries/bin-macos/LeechCore/runtime/**
+dist/
