@@ -1,5 +1,5 @@
 use crate::modules::utils::th_progress::{
-    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
 use rig::{
     agent::Agent,

@@ -416,7 +416,7 @@ const LeechCore: React.FC = () => {
   return (
     <Box
       sx={{
-        height: "100vh",
+        height: "100%",
         display: "grid",
         gridTemplateRows: "auto auto minmax(0, 1fr)",
         gap: 1.25,

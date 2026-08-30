@@ -22,20 +22,21 @@ import {
   Tab,
   Tabs,
   TextField,
-  Toolbar,
   Tooltip,
   Typography,
 } from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
-import CropSquareIcon from "@mui/icons-material/CropSquare";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import MinimizeIcon from "@mui/icons-material/Minimize";
 import SendIcon from "@mui/icons-material/Send";
 import StopCircleOutlinedIcon from "@mui/icons-material/StopCircleOutlined";
 import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  WINDOW_TITLEBAR_HEIGHT,
+  WindowDragRegion,
+  WindowFrame,
+  WindowTitlebar,
+} from "../shared/WindowTitlebar";
 import { useAgentSession } from "./useAgentSession";
 import {
   AgentEvent,
@@ -46,7 +47,6 @@ import {
 
 type ActivityTab = "all" | SpecialistKind;
 
-const TITLEBAR_HEIGHT = 36;
 const STATUSBAR_HEIGHT = 28;
 const SPECIALIST_KINDS: SpecialistKind[] = ["image", "audio", "sqlite"];
 
@@ -206,113 +206,44 @@ function AgentTitlebar({
   evidenceName: string;
   evidencePath: string;
 }) {
-  const appWindow = useMemo(() => getCurrentWindow(), []);
-  const buttonSx = { width: 26, height: 26, p: 0 } as const;
-
   return (
-    <Paper
-      square
-      elevation={0}
-      sx={{
-        height: TITLEBAR_HEIGHT,
-        borderWidth: 0,
-        borderBottom: 1,
-        borderColor: "divider",
-        borderRadius: 0,
-      }}
-    >
-      <Toolbar
-        disableGutters
+    <WindowTitlebar windowName="AI Agent">
+      <WindowDragRegion
         sx={{
-          height: TITLEBAR_HEIGHT,
-          minHeight: `${TITLEBAR_HEIGHT}px !important`,
-          px: 0.75,
-          gap: 0.25,
+          gap: 1,
+          px: 1,
         }}
       >
-        <IconButton
-          aria-label="Close agent window"
-          size="small"
-          sx={{
-            ...buttonSx,
-            color: "#ef4444",
-            "&:hover": { bgcolor: "rgba(239, 68, 68, 0.12)" },
-          }}
-          onClick={() => void appWindow.close()}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
-        <IconButton
-          aria-label="Minimize agent window"
-          size="small"
-          sx={{
-            ...buttonSx,
-            color: "#f59e0b",
-            "&:hover": { bgcolor: "rgba(245, 158, 11, 0.12)" },
-          }}
-          onClick={() => void appWindow.minimize()}
-        >
-          <MinimizeIcon
-            fontSize="small"
-            sx={{ transform: "translateY(-4px)" }}
-          />
-        </IconButton>
-        <IconButton
-          aria-label="Toggle maximize agent window"
-          size="small"
-          sx={{
-            ...buttonSx,
-            color: "#22c55e",
-            "&:hover": { bgcolor: "rgba(34, 197, 94, 0.12)" },
-          }}
-          onClick={() => void appWindow.toggleMaximize()}
-        >
-          <CropSquareIcon fontSize="small" />
-        </IconButton>
-
-        <Box
+        <Chip
           data-tauri-drag-region
+          icon={<SmartToyOutlinedIcon />}
+          label="EXHUME AGENT"
+          color="primary"
+          size="small"
+          sx={{ height: 22, fontWeight: 700, borderRadius: 1 }}
+        />
+        <Typography
+          data-tauri-drag-region
+          variant="caption"
+          sx={{ fontWeight: 600, whiteSpace: "nowrap" }}
+        >
+          {evidenceName}
+        </Typography>
+        <Typography
+          data-tauri-drag-region
+          variant="caption"
+          color="text.secondary"
+          title={evidencePath}
           sx={{
-            flex: 1,
-            minWidth: 0,
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            px: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          <Chip
-            data-tauri-drag-region
-            icon={<SmartToyOutlinedIcon />}
-            label="EXHUME AGENT"
-            color="primary"
-            size="small"
-            sx={{ height: 24, fontWeight: 700, borderRadius: 1 }}
-          />
-          <Typography
-            data-tauri-drag-region
-            variant="caption"
-            sx={{ fontWeight: 600, whiteSpace: "nowrap" }}
-          >
-            {evidenceName}
-          </Typography>
-          <Typography
-            data-tauri-drag-region
-            variant="caption"
-            color="text.secondary"
-            title={evidencePath}
-            sx={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {evidencePath}
-          </Typography>
-        </Box>
-      </Toolbar>
-    </Paper>
+          {evidencePath}
+        </Typography>
+      </WindowDragRegion>
+    </WindowTitlebar>
   );
 }
 
@@ -855,36 +786,34 @@ export default function AgentWorkspace({
 
   if (initializing) {
     return (
-      <Box
-        sx={{
-          height: "100vh",
-          display: "grid",
-          placeItems: "center",
-        }}
-      >
-        <Stack spacing={1.5} sx={{ alignItems: "center" }}>
-          <CircularProgress size={28} />
-          <Typography variant="body2">Opening evidence agent session…</Typography>
-        </Stack>
-      </Box>
+      <WindowFrame windowName="AI Agent" title="Exhume Agent">
+        <Box sx={{ height: "100%", display: "grid", placeItems: "center" }}>
+          <Stack spacing={1.5} sx={{ alignItems: "center" }}>
+            <CircularProgress size={28} />
+            <Typography variant="body2">Opening evidence agent session…</Typography>
+          </Stack>
+        </Box>
+      </WindowFrame>
     );
   }
 
   if (!workspace) {
     return (
-      <Box sx={{ height: "100vh", display: "grid", placeItems: "center", p: 3 }}>
-        <Alert
-          severity="error"
-          action={
-            <Button color="inherit" onClick={() => window.location.reload()}>
-              Retry
-            </Button>
-          }
-          sx={{ maxWidth: 720 }}
-        >
-          The agent workspace could not be opened: {error ?? "Unknown error"}
-        </Alert>
-      </Box>
+      <WindowFrame windowName="AI Agent" title="Exhume Agent">
+        <Box sx={{ height: "100%", display: "grid", placeItems: "center", p: 3 }}>
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" onClick={() => window.location.reload()}>
+                Retry
+              </Button>
+            }
+            sx={{ maxWidth: 720 }}
+          >
+            The agent workspace could not be opened: {error ?? "Unknown error"}
+          </Alert>
+        </Box>
+      </WindowFrame>
     );
   }
 
@@ -909,7 +838,7 @@ export default function AgentWorkspace({
         minWidth: 0,
         overflow: "hidden",
         display: "grid",
-        gridTemplateRows: `${TITLEBAR_HEIGHT}px minmax(0, 1fr) auto ${STATUSBAR_HEIGHT}px`,
+        gridTemplateRows: `${WINDOW_TITLEBAR_HEIGHT}px minmax(0, 1fr) auto ${STATUSBAR_HEIGHT}px`,
       }}
     >
       <AgentTitlebar

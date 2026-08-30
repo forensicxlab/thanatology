@@ -12,6 +12,7 @@ import CallMissedIcon from "@mui/icons-material/CallMissed";
 import { getIosCalls } from "../../../../../dbutils/sqlite";
 import { IosCallRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import {
   IosJsonDetailPanel,
   formatDuration,
@@ -148,16 +149,20 @@ export default function CallsGrid({ evidenceId, partitionId }: CallsGridProps) {
 
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed call records found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner noun="call records" timestampLabel="call time" />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed call records found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner noun="call records" timestampLabel="call time" />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "spatiotemporal-workspaces",
+  "description": "Least-privilege capability for evidence-scoped Timeline and Location windows",
+  "windows": ["timeline-*", "location-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:deny-emit",
+    "core:event:deny-emit-to",
+    "core:path:allow-resolve-directory",
+    "core:path:allow-join",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-close",
+    "sql:allow-load",
+    "sql:allow-select"
+  ]
+}

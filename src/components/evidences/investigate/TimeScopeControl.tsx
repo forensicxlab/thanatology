@@ -5,15 +5,22 @@ import {
   Chip,
   CircularProgress,
   FormControl,
+  FormControlLabel,
   InputLabel,
   MenuItem,
   Select,
   Slider,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from "@mui/material";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
+import SyncIcon from "@mui/icons-material/Sync";
+import SyncDisabledIcon from "@mui/icons-material/SyncDisabled";
+import TimelineIcon from "@mui/icons-material/Timeline";
+import PlaceIcon from "@mui/icons-material/Place";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import dayjs, { Dayjs } from "dayjs";
 import utc from "dayjs/plugin/utc";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
@@ -27,6 +34,7 @@ import {
   useTimeFilterStore,
 } from "../../../store/timeFilterStore";
 import type { FileTimeField } from "../../../store/timeFilterStore";
+import type { SpatiotemporalSnapshot } from "../../../spatiotemporal/types";
 import { unixToISO8601UTCString } from "../common/UnixToUTC";
 
 dayjs.extend(utc);
@@ -34,6 +42,14 @@ dayjs.extend(utc);
 interface TimeScopeControlProps {
   evidenceId: number;
   partitionId: number | null;
+  timeSync: {
+    snapshot: SpatiotemporalSnapshot | null;
+    loading: boolean;
+    error: string | null;
+    setEnabled: (
+      enabled: boolean,
+    ) => Promise<SpatiotemporalSnapshot | null>;
+  };
 }
 
 const DENSITY_BARS_TARGET = 160;
@@ -46,8 +62,9 @@ function shortStamp(ms: number): string {
 export default function TimeScopeControl({
   evidenceId,
   partitionId,
+  timeSync,
 }: TimeScopeControlProps) {
-  const initForEvidence = useTimeFilterStore((s) => s.initForEvidence);
+  const initForScope = useTimeFilterStore((s) => s.initForScope);
   const setRange = useTimeFilterStore((s) => s.setRange);
   const clear = useTimeFilterStore((s) => s.clear);
   const start = useTimeFilterStore((s) => s.start);
@@ -63,13 +80,27 @@ export default function TimeScopeControl({
   } | null>(null);
   const [density, setDensity] = React.useState<{ ts: number; count: number }[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [syncChanging, setSyncChanging] = React.useState(false);
+  const [syncActionError, setSyncActionError] = React.useState<string | null>(
+    null,
+  );
   // Local slider position while dragging; committed to the store on release so
   // every dependent view refetches once, not on every pixel.
   const [dragging, setDragging] = React.useState<[number, number] | null>(null);
 
   React.useEffect(() => {
-    initForEvidence(evidenceId);
-  }, [evidenceId, initForEvidence]);
+    initForScope(evidenceId, partitionId);
+  }, [evidenceId, partitionId, initForScope]);
+
+  React.useEffect(() => {
+    setSyncActionError(null);
+  }, [evidenceId, partitionId]);
+
+  React.useEffect(() => {
+    // A newer accepted snapshot proves that a prior command/listener warning
+    // no longer describes the current revision.
+    setSyncActionError(null);
+  }, [timeSync.snapshot?.sessionId, timeSync.snapshot?.revision]);
 
   React.useEffect(() => {
     if (partitionId == null) {
@@ -152,6 +183,45 @@ export default function TimeScopeControl({
   );
 
   const isActive = start != null || end != null;
+  const hasConnectedWorkspace =
+    timeSync.snapshot?.timelineConnected === true ||
+    timeSync.snapshot?.locationConnected === true;
+  const hasSyncSession = partitionId != null && hasConnectedWorkspace;
+  const syncEnabled = hasSyncSession && timeSync.snapshot?.syncEnabled === true;
+  const syncBusy = timeSync.loading || syncChanging;
+  const syncError = syncActionError ?? timeSync.error;
+
+  const syncStatus = React.useMemo(() => {
+    if (partitionId == null) return "Select a partition to link workspaces.";
+    if (timeSync.loading && timeSync.snapshot == null) {
+      return "Checking detached workspaces…";
+    }
+    if (!timeSync.snapshot) {
+      return "Open Timeline or Location to enable synchronization.";
+    }
+    if (!hasConnectedWorkspace) {
+      return "No detached workspace connected.";
+    }
+    if (timeSync.snapshot.syncEnabled) {
+      return "Main investigation range is linked.";
+    }
+    return "Detached workspaces available · synchronization off.";
+  }, [hasConnectedWorkspace, partitionId, timeSync.loading, timeSync.snapshot]);
+
+  const handleSyncChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const enabled = event.target.checked;
+    setSyncChanging(true);
+    setSyncActionError(null);
+    try {
+      await timeSync.setEnabled(enabled);
+    } catch (caught) {
+      setSyncActionError(String(caught));
+    } finally {
+      setSyncChanging(false);
+    }
+  };
 
   const handlePickerChange = (value: [Dayjs | null, Dayjs | null]) => {
     setRange(
@@ -271,6 +341,102 @@ export default function TimeScopeControl({
         )}
       </Box>
 
+      {/* The same switch controls range synchronization in Main, Timeline and
+          Location. Cursor/playback and Timeline event-type filters stay local
+          to the detached workspaces. */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          minWidth: 245,
+          px: { xs: 0, lg: 1.25 },
+          borderLeft: { xs: "none", lg: "1px solid" },
+          borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+          <Tooltip
+            title={
+              hasSyncSession
+                ? "Link the UTC investigation range across Main, Timeline and Location."
+                : "Open the Timeline or Location workspace first."
+            }
+          >
+            <span>
+              <FormControlLabel
+                sx={{
+                  m: 0,
+                  mr: 0.5,
+                  "& .MuiFormControlLabel-label": { lineHeight: 1.1 },
+                }}
+                control={
+                  <Switch
+                    size="small"
+                    checked={syncEnabled}
+                    disabled={!hasSyncSession || syncBusy}
+                    onChange={(event) => void handleSyncChange(event)}
+                    slotProps={{
+                      input: {
+                        "aria-label": "Sync investigation time across windows",
+                      },
+                    }}
+                  />
+                }
+                label={
+                  <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                    {syncEnabled ? (
+                      <SyncIcon color="primary" sx={{ fontSize: 15 }} />
+                    ) : (
+                      <SyncDisabledIcon color="disabled" sx={{ fontSize: 15 }} />
+                    )}
+                    <Typography variant="caption" sx={{ fontWeight: 650 }}>
+                      Sync investigation time
+                    </Typography>
+                  </Stack>
+                }
+              />
+            </span>
+          </Tooltip>
+          {syncBusy && <CircularProgress size={12} />}
+          {syncError && (
+            <Tooltip title={`Synchronization warning: ${syncError}`}>
+              <WarningAmberIcon color="warning" sx={{ fontSize: 16 }} />
+            </Tooltip>
+          )}
+        </Stack>
+
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{ alignItems: "center", mt: 0.25, flexWrap: "wrap", gap: 0.25 }}
+        >
+          <Chip
+            size="small"
+            variant="outlined"
+            color={timeSync.snapshot?.timelineConnected ? "success" : "default"}
+            icon={<TimelineIcon />}
+            label={timeSync.snapshot?.timelineConnected ? "Timeline" : "Timeline offline"}
+            sx={{ height: 19, "& .MuiChip-icon": { fontSize: 13 } }}
+          />
+          <Chip
+            size="small"
+            variant="outlined"
+            color={timeSync.snapshot?.locationConnected ? "success" : "default"}
+            icon={<PlaceIcon />}
+            label={timeSync.snapshot?.locationConnected ? "Location" : "Location offline"}
+            sx={{ height: 19, "& .MuiChip-icon": { fontSize: 13 } }}
+          />
+        </Stack>
+        <Typography
+          variant="caption"
+          color={syncError ? "warning.main" : "text.secondary"}
+          noWrap
+          title={syncError ? `Sync warning · ${syncError}` : syncStatus}
+          sx={{ display: "block", mt: 0.35, maxWidth: 275 }}
+        >
+          {syncError ? `Sync warning · ${syncError}` : syncStatus}
+        </Typography>
+      </Box>
+
       {/* Precise range entry */}
       <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexShrink: 0 }}>
         <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -287,7 +453,7 @@ export default function TimeScopeControl({
           />
         </LocalizationProvider>
 
-        <Tooltip title="Which filesystem timestamp decides whether a file is in range. Applies to the Files, System, Network, Users, Applications and AI views.">
+        <Tooltip title="Selects the filesystem timestamp used by Files, raw artifact source files, Multimedia Files, Summary file statistics and AI source files. Parsed records with an intrinsic event time use that event time instead.">
           <FormControl size="small" sx={{ width: 160 }}>
             <InputLabel id="file-time-field-label">File match on</InputLabel>
             <Select

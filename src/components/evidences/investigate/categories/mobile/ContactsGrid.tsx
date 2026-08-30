@@ -9,6 +9,7 @@ import { Alert, Box, CircularProgress, Tooltip, Typography } from "@mui/material
 import { getIosContacts } from "../../../../../dbutils/sqlite";
 import { IosContactRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import {
   IosJsonDetailPanel,
   joinLabeledValues,
@@ -118,16 +119,20 @@ export default function ContactsGrid({ evidenceId, partitionId }: ContactsGridPr
 
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed contacts found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner noun="contacts" timestampLabel="created or modified time" />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed contacts found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner noun="contacts" timestampLabel="created or modified time" />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

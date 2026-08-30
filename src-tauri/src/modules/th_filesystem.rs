@@ -1,6 +1,6 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use exhume_body::Body;
-use exhume_filesystem::detected_fs::{DetectedFs, ImageStream, detect_filesystem};
+use exhume_filesystem::detected_fs::{detect_filesystem, DetectedFs, ImageStream};
 use exhume_filesystem::filesystem::{FileCommon, Filesystem};
 use exhume_filesystem::folder_impl::FolderFS;
 use log::info;
@@ -13,8 +13,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use tauri::http::{header, Method, Request as HttpRequest, Response as HttpResponse, StatusCode};
 use tauri::State;
-use tauri::http::{Method, Request as HttpRequest, Response as HttpResponse, StatusCode, header};
 
 pub type SharedState = Arc<Mutex<Option<DetectedFs<ImageStream>>>>;
 pub type MediaServeState = Arc<Mutex<HashMap<String, MediaSource>>>;

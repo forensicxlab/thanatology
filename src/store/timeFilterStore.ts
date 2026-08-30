@@ -5,17 +5,17 @@ import { create } from "zustand";
  *
  * The selected window constrains every time-bearing view (timeline, mobile
  * record grids, location, file-backed grids). It is scoped per evidence and
- * mirrored to localStorage so it survives tab switches, route changes and
- * application restarts.
+ * partition and mirrored to localStorage so it survives tab switches, route
+ * changes and application restarts without bleeding into another partition.
  *
  * Bounds are epoch milliseconds, UTC. `null` on either side means "unbounded"
  * on that side; both null means the filter is inactive.
  */
 
-const STORAGE_PREFIX = "thanatology:timefilter:";
+const STORAGE_PREFIX = "thanatology:timefilter:v2:";
 
-function storageKey(evidenceId: number): string {
-  return `${STORAGE_PREFIX}${evidenceId}`;
+function storageKey(evidenceId: number, partitionId: number): string {
+  return `${STORAGE_PREFIX}${evidenceId}:${partitionId}`;
 }
 
 /**
@@ -37,9 +37,12 @@ type PersistedRange = {
   fileTimeField?: FileTimeField;
 };
 
-function loadPersisted(evidenceId: number): Required<PersistedRange> {
+function loadPersisted(
+  evidenceId: number,
+  partitionId: number,
+): Required<PersistedRange> {
   try {
-    const raw = localStorage.getItem(storageKey(evidenceId));
+    const raw = localStorage.getItem(storageKey(evidenceId, partitionId));
     if (!raw) return { start: null, end: null, fileTimeField: "any" };
     const parsed = JSON.parse(raw) as PersistedRange;
     const start = typeof parsed.start === "number" ? parsed.start : null;
@@ -55,12 +58,16 @@ function loadPersisted(evidenceId: number): Required<PersistedRange> {
   }
 }
 
-function persist(evidenceId: number, range: Required<PersistedRange>) {
+function persist(
+  evidenceId: number,
+  partitionId: number,
+  range: Required<PersistedRange>,
+) {
   try {
     if (range.start == null && range.end == null && range.fileTimeField === "any") {
-      localStorage.removeItem(storageKey(evidenceId));
+      localStorage.removeItem(storageKey(evidenceId, partitionId));
     } else {
-      localStorage.setItem(storageKey(evidenceId), JSON.stringify(range));
+      localStorage.setItem(storageKey(evidenceId, partitionId), JSON.stringify(range));
     }
   } catch {
     /* storage unavailable — filter still works for this session */
@@ -68,14 +75,15 @@ function persist(evidenceId: number, range: Required<PersistedRange>) {
 }
 
 interface TimeFilterState {
-  /** Evidence the current range belongs to; guards against cross-evidence bleed. */
+  /** Scope the current range belongs to; guards against cross-partition bleed. */
   evidenceId: number | null;
+  partitionId: number | null;
   start: number | null;
   end: number | null;
   fileTimeField: FileTimeField;
 
-  /** Point the store at an evidence, restoring its persisted range. */
-  initForEvidence: (evidenceId: number) => void;
+  /** Point the store at an immutable forensic scope, restoring its range. */
+  initForScope: (evidenceId: number, partitionId: number | null) => void;
   setRange: (start: number | null, end: number | null) => void;
   setFileTimeField: (field: FileTimeField) => void;
   clear: () => void;
@@ -83,15 +91,25 @@ interface TimeFilterState {
 
 export const useTimeFilterStore = create<TimeFilterState>((set, get) => ({
   evidenceId: null,
+  partitionId: null,
   start: null,
   end: null,
   fileTimeField: "any",
 
-  initForEvidence: (evidenceId) => {
-    if (get().evidenceId === evidenceId) return;
-    const restored = loadPersisted(evidenceId);
+  initForScope: (evidenceId, partitionId) => {
+    if (
+      get().evidenceId === evidenceId &&
+      get().partitionId === partitionId
+    ) {
+      return;
+    }
+    const restored =
+      partitionId == null
+        ? { start: null, end: null, fileTimeField: "any" as FileTimeField }
+        : loadPersisted(evidenceId, partitionId);
     set({
       evidenceId,
+      partitionId,
       start: restored.start,
       end: restored.end,
       fileTimeField: restored.fileTimeField,
@@ -103,21 +121,30 @@ export const useTimeFilterStore = create<TimeFilterState>((set, get) => ({
     const [lo, hi] =
       start != null && end != null && start > end ? [end, start] : [start, end];
     set({ start: lo, end: hi });
-    const { evidenceId, fileTimeField } = get();
-    if (evidenceId != null) persist(evidenceId, { start: lo, end: hi, fileTimeField });
+    const { evidenceId, partitionId, fileTimeField } = get();
+    if (evidenceId != null && partitionId != null) {
+      persist(evidenceId, partitionId, { start: lo, end: hi, fileTimeField });
+    }
   },
 
   setFileTimeField: (fileTimeField) => {
     set({ fileTimeField });
-    const { evidenceId, start, end } = get();
-    if (evidenceId != null) persist(evidenceId, { start, end, fileTimeField });
+    const { evidenceId, partitionId, start, end } = get();
+    if (evidenceId != null && partitionId != null) {
+      persist(evidenceId, partitionId, { start, end, fileTimeField });
+    }
   },
 
   clear: () => {
     set({ start: null, end: null });
-    const { evidenceId, fileTimeField } = get();
-    if (evidenceId != null)
-      persist(evidenceId, { start: null, end: null, fileTimeField });
+    const { evidenceId, partitionId, fileTimeField } = get();
+    if (evidenceId != null && partitionId != null) {
+      persist(evidenceId, partitionId, {
+        start: null,
+        end: null,
+        fileTimeField,
+      });
+    }
   },
 }));
 

@@ -7,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -19,6 +19,8 @@ const PROTOMAPS_BUILD_BASE: &str = "https://build.protomaps.com";
 const MAPTERHORN_PLANET_URL: &str = "https://download.mapterhorn.com/planet.pmtiles";
 const BASEMAP_ASSETS_URL: &str =
     "https://github.com/protomaps/basemaps-assets/archive/refs/heads/main.zip";
+const DOWNLOAD_INTENT_FILE: &str = "download.json";
+const DOWNLOAD_RETRY_ATTEMPTS: usize = 5;
 
 #[derive(Default)]
 pub struct MapDownloadState {
@@ -77,15 +79,41 @@ pub struct MapStorageStatus {
     pub packs: Vec<MapPackSummary>,
     pub assets_installed: bool,
     pub download_active: bool,
+    pub resumable_downloads: Vec<MapDownloadSummary>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadMapPackRequest {
     pub name: String,
     pub include_terrain: bool,
     pub basemap_url: Option<String>,
     pub terrain_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MapDownloadIntent {
+    version: u32,
+    id: String,
+    request: DownloadMapPackRequest,
+    resolved_basemap_url: String,
+    resolved_terrain_url: Option<String>,
+    created_at_unix: u64,
+    #[serde(default)]
+    basemap: Option<MapPackFile>,
+    #[serde(default)]
+    terrain: Option<MapPackFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MapDownloadSummary {
+    pub id: String,
+    pub name: String,
+    pub downloaded_bytes: u64,
+    pub include_terrain: bool,
+    pub basemap_source_url: String,
+    pub terrain_source_url: Option<String>,
+    pub request: DownloadMapPackRequest,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,7 +203,7 @@ fn safe_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-fn make_pack_id(name: &str) -> String {
+fn map_pack_slug(name: &str) -> String {
     let mut normalized = name
         .to_ascii_lowercase()
         .chars()
@@ -196,11 +224,80 @@ fn make_pack_id(name: &str) -> String {
     } else {
         normalized
     };
+    prefix.chars().take(60).collect::<String>()
+}
+
+fn make_pack_id(name: &str) -> String {
+    format!("{}-{}", map_pack_slug(name), unix_now())
+}
+
+fn normalized_download_request(mut request: DownloadMapPackRequest) -> DownloadMapPackRequest {
+    request.name = request.name.trim().to_string();
+    request.basemap_url = request
+        .basemap_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    request.terrain_url = request
+        .terrain_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if !request.include_terrain {
+        request.terrain_url = None;
+    }
+    request
+}
+
+fn make_download_id(request: &DownloadMapPackRequest) -> String {
+    let name_slug = map_pack_slug(&request.name);
+    let identity = serde_json::to_vec(request).unwrap_or_default();
+    let digest = hex::encode(Sha256::digest(identity));
     format!(
         "{}-{}",
-        prefix.chars().take(60).collect::<String>(),
-        unix_now()
+        name_slug.chars().take(48).collect::<String>(),
+        &digest[..16]
     )
+}
+
+fn write_download_intent(path: &Path, intent: &MapDownloadIntent) -> Result<(), String> {
+    let temporary = path.with_extension("json.partial");
+    let bytes = serde_json::to_vec_pretty(intent)
+        .map_err(|error| format!("Cannot serialize map download state: {error}"))?;
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("Cannot write map download state: {error}"))?;
+    fs::rename(&temporary, path)
+        .map_err(|error| format!("Cannot commit map download state: {error}"))
+}
+
+fn read_download_intent(path: &Path) -> Result<MapDownloadIntent, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("Cannot read map download state {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Invalid map download state {}: {error}", path.display()))
+}
+
+fn list_resumable_downloads(root: &Path) -> Vec<MapDownloadSummary> {
+    let Ok(entries) = fs::read_dir(root.join("downloads")) else {
+        return Vec::new();
+    };
+    let mut downloads = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let directory = entry.path();
+            let intent = read_download_intent(&directory.join(DOWNLOAD_INTENT_FILE)).ok()?;
+            Some(MapDownloadSummary {
+                id: intent.id,
+                name: intent.request.name.clone(),
+                downloaded_bytes: directory_size(&directory),
+                include_terrain: intent.request.include_terrain,
+                basemap_source_url: intent.resolved_basemap_url,
+                terrain_source_url: intent.resolved_terrain_url,
+                request: intent.request,
+            })
+        })
+        .collect::<Vec<_>>();
+    downloads.sort_by(|left, right| left.name.cmp(&right.name));
+    downloads
 }
 
 fn ensure_storage_root(root: &Path) -> Result<(), String> {
@@ -309,6 +406,11 @@ pub fn get_map_storage_status(
         Vec::new()
     };
     let active_pack = packs.iter().find(|pack| pack.is_active).cloned();
+    let resumable_downloads = if available {
+        list_resumable_downloads(&root)
+    } else {
+        Vec::new()
+    };
     Ok(MapStorageStatus {
         root: root.display().to_string(),
         is_default,
@@ -324,6 +426,7 @@ pub fn get_map_storage_status(
         packs,
         assets_installed: root.join("assets").join(".complete").is_file(),
         download_active: download_state.active.load(Ordering::SeqCst),
+        resumable_downloads,
     })
 }
 
@@ -476,6 +579,34 @@ pub fn remove_map_pack(app: AppHandle, pack_id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn discard_map_download(
+    app: AppHandle,
+    state: State<'_, MapDownloadState>,
+    download_id: String,
+) -> Result<(), String> {
+    if state.active.load(Ordering::SeqCst) {
+        return Err("Cancel the active map download before discarding it.".to_string());
+    }
+    if !safe_id(&download_id) {
+        return Err("Invalid map download identifier.".to_string());
+    }
+    let settings = load_settings(&app)?;
+    let root = configured_root(&app, &settings)?;
+    let directory = root.join("downloads").join(&download_id);
+    let intent_path = directory.join(DOWNLOAD_INTENT_FILE);
+    let intent = read_download_intent(&intent_path)?;
+    if intent.id != download_id {
+        return Err("The saved map download identifier does not match its folder.".to_string());
+    }
+    fs::remove_dir_all(&directory).map_err(|error| {
+        format!(
+            "Cannot discard retained map download {}: {error}",
+            directory.display()
+        )
+    })
+}
+
 async fn latest_protomaps_url(client: &reqwest::Client) -> Result<String, String> {
     let mut builds: Vec<ProtomapsBuild> = client
         .get(PROTOMAPS_BUILDS_URL)
@@ -506,8 +637,22 @@ fn validate_download_url(url: &str) -> Result<(), String> {
     }
 }
 
-fn content_range_total(value: &str) -> Option<u64> {
-    value.rsplit('/').next()?.parse().ok()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParsedContentRange {
+    start: Option<u64>,
+    total: Option<u64>,
+}
+
+fn parse_content_range(value: &str) -> Option<ParsedContentRange> {
+    let value = value.strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let total = (total != "*").then(|| total.parse().ok()).flatten();
+    let start = if range == "*" {
+        None
+    } else {
+        Some(range.split_once('-')?.0.parse().ok()?)
+    };
+    Some(ParsedContentRange { start, total })
 }
 
 async fn hash_existing_file(path: &Path, hasher: &mut Sha256) -> Result<u64, String> {
@@ -553,92 +698,183 @@ async fn download_file(
             .unwrap_or("download")
     ));
 
-    let mut existing = tokio::fs::metadata(&partial)
-        .await
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
-    let mut response = {
-        let mut request = client.get(url);
-        if existing > 0 {
-            request = request.header(RANGE, format!("bytes={existing}-"));
-        }
-        request
-            .send()
-            .await
-            .map_err(|error| format!("Cannot download {url}: {error}"))?
-    };
-
-    if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-        tokio::fs::remove_file(&partial).await.ok();
-        existing = 0;
-        response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| format!("Cannot restart {url}: {error}"))?;
+    if destination.is_file() {
+        let mut hasher = Sha256::new();
+        let size_bytes = hash_existing_file(destination, &mut hasher).await?;
+        return Ok(MapPackFile {
+            file_name,
+            size_bytes,
+            sha256: hex::encode(hasher.finalize()),
+            source_url: Some(url.to_string()),
+        });
     }
-    response = response
-        .error_for_status()
-        .map_err(|error| format!("Download failed for {url}: {error}"))?;
 
-    let resumed = existing > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
-    if existing > 0 && !resumed {
-        existing = 0;
-    }
-    let total_bytes = response
-        .headers()
-        .get(CONTENT_RANGE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(content_range_total)
-        .or_else(|| response.content_length().map(|length| length + existing));
-
-    let mut hasher = Sha256::new();
-    if resumed {
-        hash_existing_file(&partial, &mut hasher).await?;
-    }
-    let mut output = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(resumed)
-        .truncate(!resumed)
-        .open(&partial)
-        .await
-        .map_err(|error| format!("Cannot create {}: {error}", partial.display()))?;
-
-    let mut downloaded = existing;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    let mut completed_size = None;
+    let mut last_error = "download did not start".to_string();
+    for attempt in 1..=DOWNLOAD_RETRY_ATTEMPTS {
         if state.cancel.load(Ordering::SeqCst) {
-            output.flush().await.ok();
             return Err(
                 "Map download cancelled. The partial file was retained for resume.".to_string(),
             );
         }
-        let chunk = chunk.map_err(|error| format!("Map download interrupted: {error}"))?;
-        output
-            .write_all(&chunk)
+
+        let existing = tokio::fs::metadata(&partial)
             .await
-            .map_err(|error| format!("Cannot write {}: {error}", partial.display()))?;
-        hasher.update(&chunk);
-        downloaded += chunk.len() as u64;
-        app.emit(
-            "map-download-progress",
-            MapDownloadProgress {
-                pack_id: pack_id.to_string(),
-                phase: phase.to_string(),
-                file_name: file_name.clone(),
-                downloaded_bytes: downloaded,
-                total_bytes,
-                message: format!("Downloading {file_name}"),
-            },
-        )
-        .ok();
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let mut request = client.get(url);
+        if existing > 0 {
+            request = request.header(RANGE, format!("bytes={existing}-"));
+        }
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = format!("Cannot download {url}: {error}");
+                if attempt < DOWNLOAD_RETRY_ATTEMPTS {
+                    emit_download_retry(app, pack_id, phase, &file_name, existing, attempt);
+                    tokio::time::sleep(retry_delay(attempt)).await;
+                    continue;
+                }
+                break;
+            }
+        };
+
+        let status = response.status();
+        let content_range = response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_content_range);
+
+        if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+            if existing > 0 && content_range.and_then(|range| range.total) == Some(existing) {
+                completed_size = Some(existing);
+                break;
+            }
+            truncate_partial(&partial).await?;
+            last_error = format!("The server rejected the saved byte range for {file_name}");
+            if attempt < DOWNLOAD_RETRY_ATTEMPTS {
+                emit_download_retry(app, pack_id, phase, &file_name, 0, attempt);
+                tokio::time::sleep(retry_delay(attempt)).await;
+                continue;
+            }
+            break;
+        }
+
+        if !status.is_success() {
+            last_error = format!("Download failed for {url}: HTTP {status}");
+            let retryable = status.is_server_error()
+                || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+            if retryable && attempt < DOWNLOAD_RETRY_ATTEMPTS {
+                emit_download_retry(app, pack_id, phase, &file_name, existing, attempt);
+                tokio::time::sleep(retry_delay(attempt)).await;
+                continue;
+            }
+            break;
+        }
+
+        let resumed = existing > 0
+            && status == reqwest::StatusCode::PARTIAL_CONTENT
+            && content_range.and_then(|range| range.start) == Some(existing);
+        if existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT && !resumed {
+            truncate_partial(&partial).await?;
+            last_error = format!("The server returned an unexpected byte range for {file_name}");
+            if attempt < DOWNLOAD_RETRY_ATTEMPTS {
+                emit_download_retry(app, pack_id, phase, &file_name, 0, attempt);
+                tokio::time::sleep(retry_delay(attempt)).await;
+                continue;
+            }
+            break;
+        }
+        let starting_size = if resumed { existing } else { 0 };
+        let total_bytes = content_range.and_then(|range| range.total).or_else(|| {
+            response
+                .content_length()
+                .map(|length| length + starting_size)
+        });
+        let mut output = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(resumed)
+            .truncate(!resumed)
+            .open(&partial)
+            .await
+            .map_err(|error| format!("Cannot create {}: {error}", partial.display()))?;
+
+        let mut downloaded = starting_size;
+        let mut stream = response.bytes_stream();
+        let mut stream_error = None;
+        while let Some(chunk) = stream.next().await {
+            if state.cancel.load(Ordering::SeqCst) {
+                output.flush().await.ok();
+                return Err(
+                    "Map download cancelled. The partial file was retained for resume.".to_string(),
+                );
+            }
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    stream_error = Some(format!("Map download interrupted: {error}"));
+                    break;
+                }
+            };
+            output
+                .write_all(&chunk)
+                .await
+                .map_err(|error| format!("Cannot write {}: {error}", partial.display()))?;
+            downloaded += chunk.len() as u64;
+            app.emit(
+                "map-download-progress",
+                MapDownloadProgress {
+                    pack_id: pack_id.to_string(),
+                    phase: phase.to_string(),
+                    file_name: file_name.clone(),
+                    downloaded_bytes: downloaded,
+                    total_bytes,
+                    message: if resumed {
+                        format!("Resuming {file_name}")
+                    } else {
+                        format!("Downloading {file_name}")
+                    },
+                },
+            )
+            .ok();
+        }
+        output.flush().await.ok();
+        output.sync_all().await.ok();
+        drop(output);
+
+        if let Some(error) = stream_error {
+            last_error = error;
+        } else if let Some(expected) = total_bytes {
+            if downloaded == expected {
+                completed_size = Some(downloaded);
+                break;
+            }
+            last_error =
+                format!("Incomplete {file_name}: received {downloaded} of {expected} bytes");
+        } else {
+            completed_size = Some(downloaded);
+            break;
+        }
+
+        if attempt < DOWNLOAD_RETRY_ATTEMPTS {
+            emit_download_retry(app, pack_id, phase, &file_name, downloaded, attempt);
+            tokio::time::sleep(retry_delay(attempt)).await;
+        }
     }
-    output
-        .flush()
-        .await
-        .map_err(|error| format!("Cannot flush {}: {error}", partial.display()))?;
-    drop(output);
+
+    let downloaded = completed_size.ok_or_else(|| {
+        format!("{last_error}. The partial file was retained and the next attempt will resume it.")
+    })?;
+    let mut hasher = Sha256::new();
+    let hashed_size = hash_existing_file(&partial, &mut hasher).await?;
+    if hashed_size != downloaded {
+        return Err(format!(
+            "Downloaded size changed while hashing {file_name}. The partial file was retained."
+        ));
+    }
     tokio::fs::rename(&partial, destination)
         .await
         .map_err(|error| format!("Cannot commit {}: {error}", destination.display()))?;
@@ -649,6 +885,48 @@ async fn download_file(
         sha256: hex::encode(hasher.finalize()),
         source_url: Some(url.to_string()),
     })
+}
+
+fn retry_delay(attempt: usize) -> Duration {
+    Duration::from_secs(1_u64 << attempt.saturating_sub(1).min(4))
+}
+
+fn emit_download_retry(
+    app: &AppHandle,
+    pack_id: &str,
+    phase: &str,
+    file_name: &str,
+    downloaded_bytes: u64,
+    attempt: usize,
+) {
+    app.emit(
+        "map-download-progress",
+        MapDownloadProgress {
+            pack_id: pack_id.to_string(),
+            phase: phase.to_string(),
+            file_name: file_name.to_string(),
+            downloaded_bytes,
+            total_bytes: None,
+            message: format!(
+                "Connection interrupted; retrying {file_name} ({}/{DOWNLOAD_RETRY_ATTEMPTS})…",
+                attempt + 1
+            ),
+        },
+    )
+    .ok();
+}
+
+async fn truncate_partial(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("Cannot reset partial download {}: {error}", path.display()))
 }
 
 fn validate_pmtiles(path: &Path) -> Result<(), String> {
@@ -750,9 +1028,17 @@ async fn ensure_assets(
     .await?;
     let archive_for_task = archive.clone();
     let assets_for_task = assets_dir.clone();
-    tokio::task::spawn_blocking(move || unpack_assets_archive(&archive_for_task, &assets_for_task))
-        .await
-        .map_err(|error| format!("Basemap asset extraction task failed: {error}"))??;
+    let unpack_result = tokio::task::spawn_blocking(move || {
+        unpack_assets_archive(&archive_for_task, &assets_for_task)
+    })
+    .await
+    .map_err(|error| format!("Basemap asset extraction task failed: {error}"))?;
+    if let Err(error) = unpack_result {
+        tokio::fs::remove_file(&archive).await.ok();
+        return Err(format!(
+            "{error}. The invalid asset archive was discarded and will be downloaded again."
+        ));
+    }
     tokio::fs::remove_file(archive).await.ok();
     Ok(())
 }
@@ -762,95 +1048,162 @@ async fn perform_download(
     state: &MapDownloadState,
     request: DownloadMapPackRequest,
 ) -> Result<MapPackManifest, String> {
-    let name = request.name.trim();
-    if name.is_empty() {
+    let request = normalized_download_request(request);
+    if request.name.is_empty() {
         return Err("Map pack name is required.".to_string());
     }
     let settings = load_settings(app)?;
     let root = configured_root(app, &settings)?;
     ensure_storage_root(&root)?;
-    let pack_id = make_pack_id(name);
-    let pack_dir = root.join("packs").join(&pack_id);
-    fs::create_dir_all(&pack_dir)
-        .map_err(|error| format!("Cannot create map pack directory: {error}"))?;
+    let download_id = make_download_id(&request);
+    let download_dir = root.join("downloads").join(&download_id);
+    fs::create_dir_all(&download_dir)
+        .map_err(|error| format!("Cannot create map download directory: {error}"))?;
     let client = reqwest::Client::builder()
         .user_agent("Thanatology/0.1 map-pack-downloader")
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(90))
         .build()
         .map_err(|error| format!("Cannot create map download client: {error}"))?;
 
-    let basemap_url = match request.basemap_url.as_deref().map(str::trim) {
-        Some(url) if !url.is_empty() => url.to_string(),
-        _ => latest_protomaps_url(&client).await?,
-    };
-    let terrain_url = if request.include_terrain {
-        Some(
+    let intent_path = download_dir.join(DOWNLOAD_INTENT_FILE);
+    let mut intent = if intent_path.is_file() {
+        let intent = read_download_intent(&intent_path)?;
+        if intent.version != 1 || intent.id != download_id || intent.request != request {
+            return Err(format!(
+                "The saved map download state at {} does not match this request.",
+                intent_path.display()
+            ));
+        }
+        intent
+    } else {
+        let resolved_basemap_url = match request.basemap_url.as_deref() {
+            Some(url) => url.to_string(),
+            None => latest_protomaps_url(&client).await?,
+        };
+        let resolved_terrain_url = request.include_terrain.then(|| {
             request
                 .terrain_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|url| !url.is_empty())
-                .unwrap_or(MAPTERHORN_PLANET_URL)
-                .to_string(),
-        )
-    } else {
-        None
+                .clone()
+                .unwrap_or_else(|| MAPTERHORN_PLANET_URL.to_string())
+        });
+        validate_download_url(&resolved_basemap_url)?;
+        if let Some(url) = resolved_terrain_url.as_deref() {
+            validate_download_url(url)?;
+        }
+        let intent = MapDownloadIntent {
+            version: 1,
+            id: download_id.clone(),
+            request: request.clone(),
+            resolved_basemap_url,
+            resolved_terrain_url,
+            created_at_unix: unix_now(),
+            basemap: None,
+            terrain: None,
+        };
+        write_download_intent(&intent_path, &intent)?;
+        intent
     };
 
-    let basemap = download_file(
-        app,
-        &client,
-        state,
-        &pack_id,
-        "basemap",
-        &basemap_url,
-        &pack_dir.join("basemap.pmtiles"),
-    )
-    .await?;
-    validate_pmtiles(&pack_dir.join("basemap.pmtiles"))?;
-
-    let terrain = if let Some(url) = terrain_url {
-        let terrain = download_file(
+    let basemap_path = download_dir.join("basemap.pmtiles");
+    let basemap = if reusable_pmtiles(&basemap_path, intent.basemap.as_ref()) {
+        intent.basemap.clone().expect("checked above")
+    } else {
+        if basemap_path.exists() && validate_pmtiles(&basemap_path).is_err() {
+            tokio::fs::remove_file(&basemap_path).await.ok();
+        }
+        let basemap = download_file(
             app,
             &client,
             state,
-            &pack_id,
-            "terrain",
-            &url,
-            &pack_dir.join("terrain.pmtiles"),
+            &download_id,
+            "basemap",
+            &intent.resolved_basemap_url,
+            &basemap_path,
         )
         .await?;
-        validate_pmtiles(&pack_dir.join("terrain.pmtiles"))?;
+        if let Err(error) = validate_pmtiles(&basemap_path) {
+            tokio::fs::remove_file(&basemap_path).await.ok();
+            return Err(format!(
+                "{error} The invalid completed download was discarded."
+            ));
+        }
+        intent.basemap = Some(basemap.clone());
+        write_download_intent(&intent_path, &intent)?;
+        basemap
+    };
+
+    let terrain = if let Some(url) = intent.resolved_terrain_url.clone() {
+        let terrain_path = download_dir.join("terrain.pmtiles");
+        let terrain = if reusable_pmtiles(&terrain_path, intent.terrain.as_ref()) {
+            intent.terrain.clone().expect("checked above")
+        } else {
+            if terrain_path.exists() && validate_pmtiles(&terrain_path).is_err() {
+                tokio::fs::remove_file(&terrain_path).await.ok();
+            }
+            let terrain = download_file(
+                app,
+                &client,
+                state,
+                &download_id,
+                "terrain",
+                &url,
+                &terrain_path,
+            )
+            .await?;
+            if let Err(error) = validate_pmtiles(&terrain_path) {
+                tokio::fs::remove_file(&terrain_path).await.ok();
+                return Err(format!(
+                    "{error} The invalid completed download was discarded."
+                ));
+            }
+            intent.terrain = Some(terrain.clone());
+            write_download_intent(&intent_path, &intent)?;
+            terrain
+        };
         Some(terrain)
     } else {
         None
     };
-    ensure_assets(app, &client, state, &root, &pack_id).await?;
+    ensure_assets(app, &client, state, &root, &download_id).await?;
 
+    let pack_id = unused_pack_id(&root, &request.name);
+    let pack_dir = root.join("packs").join(&pack_id);
+
+    let mut attribution = vec![
+        "© OpenStreetMap contributors".to_string(),
+        format!("Vector map source: {}", intent.resolved_basemap_url),
+    ];
+    if request.basemap_url.is_none() {
+        attribution.push(format!("Protomaps build catalog: {PROTOMAPS_BUILDS_URL}"));
+    }
+    if let Some(url) = intent.resolved_terrain_url.as_deref() {
+        attribution.push(format!("Terrain source: {url}"));
+        attribution.push("Mapterhorn attribution: https://mapterhorn.com/attribution".to_string());
+    }
+    let provider = match (request.basemap_url.is_some(), terrain.is_some()) {
+        (true, _) => "Custom PMTiles",
+        (false, true) => "Protomaps v4 + Mapterhorn",
+        (false, false) => "Protomaps v4",
+    };
     let manifest = MapPackManifest {
         id: pack_id.clone(),
-        name: name.to_string(),
+        name: request.name.clone(),
         created_at_unix: unix_now(),
-        provider: if request
-            .basemap_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .is_some()
-        {
-            "Custom PMTiles".to_string()
-        } else {
-            "Protomaps v4 + Mapterhorn".to_string()
-        },
+        provider: provider.to_string(),
         basemap,
         terrain,
-        attribution: vec![
-            "© OpenStreetMap contributors".to_string(),
-            "Protomaps".to_string(),
-            "Mapterhorn terrain data sources".to_string(),
-        ],
+        attribution,
         assets_version: 4,
     };
-    write_manifest(&pack_dir.join("manifest.json"), &manifest)?;
+    write_manifest(&download_dir.join("manifest.json"), &manifest)?;
+    fs::rename(&download_dir, &pack_dir).map_err(|error| {
+        format!(
+            "Cannot install completed map pack at {}: {error}. The verified download was retained for retry.",
+            pack_dir.display()
+        )
+    })?;
+    fs::remove_file(pack_dir.join(DOWNLOAD_INTENT_FILE)).ok();
     let mut updated_settings = settings;
     updated_settings.active_pack_id = Some(pack_id.clone());
     save_settings(app, &updated_settings)?;
@@ -872,6 +1225,27 @@ async fn perform_download(
     )
     .ok();
     Ok(manifest)
+}
+
+fn reusable_pmtiles(path: &Path, file: Option<&MapPackFile>) -> bool {
+    let Some(file) = file else {
+        return false;
+    };
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() == file.size_bytes)
+        .unwrap_or(false)
+        && validate_pmtiles(path).is_ok()
+}
+
+fn unused_pack_id(root: &Path, name: &str) -> String {
+    let base = make_pack_id(name);
+    if !root.join("packs").join(&base).exists() {
+        return base;
+    }
+    (2..)
+        .map(|suffix| format!("{base}-{suffix}"))
+        .find(|candidate| !root.join("packs").join(candidate).exists())
+        .expect("an unused map pack id")
 }
 
 #[tauri::command]
@@ -1159,4 +1533,94 @@ pub fn read_map_asset(app: AppHandle, relative_path: String) -> Result<Vec<u8>, 
     let relative = safe_relative_path(&relative_path)?;
     let path = root.join("assets").join(relative);
     fs::read(&path).map_err(|error| format!("Cannot read map asset {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_request() -> DownloadMapPackRequest {
+        DownloadMapPackRequest {
+            name: "Protomaps World".to_string(),
+            include_terrain: true,
+            basemap_url: None,
+            terrain_url: None,
+        }
+    }
+
+    #[test]
+    fn download_identity_is_stable_and_request_specific() {
+        let request = default_request();
+        assert_eq!(make_download_id(&request), make_download_id(&request));
+
+        let mut without_terrain = request.clone();
+        without_terrain.include_terrain = false;
+        assert_ne!(
+            make_download_id(&request),
+            make_download_id(&without_terrain)
+        );
+
+        let normalized = normalized_download_request(DownloadMapPackRequest {
+            name: "  Protomaps World  ".to_string(),
+            include_terrain: true,
+            basemap_url: Some("   ".to_string()),
+            terrain_url: None,
+        });
+        assert_eq!(make_download_id(&request), make_download_id(&normalized));
+    }
+
+    #[test]
+    fn parses_resumed_and_unsatisfied_content_ranges() {
+        assert_eq!(
+            parse_content_range("bytes 4096-8191/16384"),
+            Some(ParsedContentRange {
+                start: Some(4096),
+                total: Some(16384),
+            })
+        );
+        assert_eq!(
+            parse_content_range("bytes */16384"),
+            Some(ParsedContentRange {
+                start: None,
+                total: Some(16384),
+            })
+        );
+        assert_eq!(parse_content_range("invalid"), None);
+    }
+
+    #[test]
+    fn interrupted_downloads_are_discoverable_after_restart() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temporary = std::env::temp_dir().join(format!(
+            "thanatology-map-download-test-{}-{unique}",
+            std::process::id()
+        ));
+        ensure_storage_root(&temporary).unwrap();
+        let request = default_request();
+        let id = make_download_id(&request);
+        let directory = temporary.join("downloads").join(&id);
+        fs::create_dir_all(&directory).unwrap();
+        let intent = MapDownloadIntent {
+            version: 1,
+            id: id.clone(),
+            request: request.clone(),
+            resolved_basemap_url: "https://build.protomaps.com/20260821.pmtiles".to_string(),
+            resolved_terrain_url: Some(MAPTERHORN_PLANET_URL.to_string()),
+            created_at_unix: 1,
+            basemap: None,
+            terrain: None,
+        };
+        write_download_intent(&directory.join(DOWNLOAD_INTENT_FILE), &intent).unwrap();
+        fs::write(directory.join("basemap.pmtiles.partial"), b"partial bytes").unwrap();
+
+        let downloads = list_resumable_downloads(&temporary);
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].id, id);
+        assert_eq!(downloads[0].request, request);
+        assert!(downloads[0].downloaded_bytes >= 13);
+        fs::remove_dir_all(&temporary).unwrap();
+    }
 }

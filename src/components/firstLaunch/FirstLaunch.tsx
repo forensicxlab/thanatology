@@ -82,14 +82,14 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
   };
 
   return (
-    <Container maxWidth="sm">
+    <Container maxWidth="sm" sx={{ height: "100%" }}>
       <Box
         sx={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          minHeight: "100vh"
+          minHeight: "100%"
         }}>
         {/* Logo Placeholder */}
         <Box sx={{

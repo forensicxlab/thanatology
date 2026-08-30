@@ -9,6 +9,7 @@ import { Alert, Box, Chip, CircularProgress, Divider, Paper, Typography } from "
 import { getIosDataUsage } from "../../../../../dbutils/sqlite";
 import { IosDataUsageRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, formatBytes, renderTimestampCell } from "./common";
 import DataUsageChart from "./DataUsageChart";
 
@@ -24,6 +25,12 @@ export default function DataUsageGrid({ evidenceId, partitionId }: DataUsageGrid
   const [rows, setRows] = React.useState<IosDataUsageRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  // The application drill-down belongs to the current result set. Do not let
+  // a previously selected app make a newly scoped table appear empty.
+  React.useEffect(() => {
+    setSelectedApp(null);
+  }, [evidenceId, partitionId, start, end]);
 
   React.useEffect(() => {
     let alive = true;
@@ -113,16 +120,26 @@ export default function DataUsageGrid({ evidenceId, partitionId }: DataUsageGrid
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed network usage found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          noun="usage records"
+          timestampLabel="recorded usage time"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed network usage found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        noun="usage records"
+        timestampLabel="recorded usage time"
+      />
       <Paper variant="outlined" sx={{ mb: 1, pt: 1, flexShrink: 0 }}>
         <DataUsageChart
           evidenceId={evidenceId}

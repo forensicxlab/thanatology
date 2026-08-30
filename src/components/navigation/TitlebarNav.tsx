@@ -1,106 +1,34 @@
-import * as React from "react";
-import { AppBar, Box, IconButton, Toolbar, Tooltip } from "@mui/material";
+import { IconButton, Tooltip } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
-import MinimizeIcon from "@mui/icons-material/Minimize";
-import CropSquareIcon from "@mui/icons-material/CropSquare";
-import CloseIcon from "@mui/icons-material/Close";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavHistory } from "./NavHistory";
-
-const TITLEBAR_HEIGHT = 32;
-const BTN = 26; // button square size inside the 32px bar
+import {
+  WindowDragRegion,
+  WindowTitlebar,
+} from "../windows/shared/WindowTitlebar";
 
 export default function TitlebarNav() {
-  const appWindow = React.useMemo(() => getCurrentWindow(), []);
   const { canBack, canForward, back, forward } = useNavHistory();
 
-  const iconBtnSx = {
-    width: BTN,
-    height: BTN,
-    p: 0, // remove default padding that causes visual “drop”
-    alignSelf: "center", // ensure vertical centering
-  } as const;
-
   return (
-    <AppBar
-      position="fixed"
-      elevation={0}
-      color="default"
-      sx={{
-        height: TITLEBAR_HEIGHT,
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
-      <Toolbar
-        disableGutters
-        sx={{
-          height: TITLEBAR_HEIGHT,
-          minHeight: `${TITLEBAR_HEIGHT}px !important`, // override MUI defaults
-          px: 1,
-          alignItems: "center",
-        }}
-      >
-        <IconButton
-          size="small"
-          sx={{
-            ...iconBtnSx,
-            color: "#ef4444",
-            "&:hover": { bgcolor: "rgba(239, 68, 68, 0.12)" },
-          }}
-          onClick={() => appWindow.close()}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
-        <IconButton
-          size="small"
-          sx={{
-            ...iconBtnSx,
-            color: "#f59e0b",
-            "&:hover": { bgcolor: "rgba(245, 158, 11, 0.12)" },
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-          onClick={() => appWindow.minimize()}
-        >
-          <MinimizeIcon
-            fontSize="small"
-            sx={{ transform: "translateY(-5px)" }}
-          />
-        </IconButton>
-        <IconButton
-          size="small"
-          sx={{
-            ...iconBtnSx,
-            color: "#22c55e",
-            "&:hover": { bgcolor: "rgba(34, 197, 94, 0.12)" },
-          }}
-          onClick={() => appWindow.toggleMaximize()}
-        >
-          <CropSquareIcon fontSize="small" />
-        </IconButton>
+    <WindowTitlebar windowName="Thanatology" position="fixed">
+      <Tooltip title="Back">
+        <span>
+          <IconButton size="small" disabled={!canBack} onClick={back} sx={{ width: 24, height: 24 }}>
+            <ArrowBackIcon sx={{ fontSize: 15 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
 
-        {/* Drag region (keep buttons OUTSIDE of this box) */}
-        <Tooltip title="Back">
-          <span>
-            <IconButton disabled={!canBack} onClick={back}>
-              <ArrowBackIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
+      <Tooltip title="Forward">
+        <span>
+          <IconButton size="small" disabled={!canForward} onClick={forward} sx={{ width: 24, height: 24 }}>
+            <ArrowForwardIcon sx={{ fontSize: 15 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
 
-        <Tooltip title="Forward">
-          <span>
-            <IconButton disabled={!canForward} onClick={forward}>
-              <ArrowForwardIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
-
-        <Box data-tauri-drag-region sx={{ flex: 1, height: "100%", pl: 1 }} />
-      </Toolbar>
-    </AppBar>
+      <WindowDragRegion sx={{ pl: 0.5 }} />
+    </WindowTitlebar>
   );
 }

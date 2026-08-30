@@ -30,6 +30,9 @@ export default function NetworkConfigurationView({
       labels={LABELS}
       defaultSortField="tertiary_value"
       defaultSortDirection="asc"
+      timeMode="intrinsic"
+      timeNoun="network observations"
+      timestampLabel="observed/connected, expiry or captive-login time"
       searchPlaceholder="Search Wi-Fi, service, interface, IP or source"
       emptyMessage="No parsed macOS network configuration was found in this scope."
     />

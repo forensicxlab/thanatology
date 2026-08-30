@@ -9,6 +9,7 @@ import { Alert, Box, CircularProgress, Tooltip, Typography } from "@mui/material
 import { getIosNotes } from "../../../../../dbutils/sqlite";
 import { IosNoteRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, renderTimestampCell } from "./common";
 
 interface NotesGridProps {
@@ -81,16 +82,20 @@ export default function NotesGrid({ evidenceId, partitionId }: NotesGridProps) {
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed notes found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner noun="notes" timestampLabel="created or modified time" />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed notes found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner noun="notes" timestampLabel="created or modified time" />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

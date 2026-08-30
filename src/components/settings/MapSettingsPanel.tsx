@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import {
   Alert,
   Box,
@@ -30,6 +30,7 @@ import StorageIcon from "@mui/icons-material/Storage";
 import {
   activateMapPack,
   cancelMapDownload,
+  discardMapDownload,
   downloadMapPack,
   getMapStorageStatus,
   importMapPack,
@@ -50,6 +51,10 @@ function formatBytes(bytes: number | null | undefined): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+const PROTOMAPS_CATALOG_URL = "https://build-metadata.protomaps.dev/builds.json";
+const MAPTERHORN_TERRAIN_URL = "https://download.mapterhorn.com/planet.pmtiles";
+const MAPTERHORN_ATTRIBUTION_URL = "https://mapterhorn.com/attribution";
 
 export default function MapSettingsPanel() {
   const { display_message } = useSnackbar();
@@ -121,6 +126,11 @@ export default function MapSettingsPanel() {
         const message = errorMessage(caught);
         setError(message);
         display_message?.("error", message);
+        try {
+          setStatus(await getMapStorageStatus());
+        } catch {
+          // Keep the actionable download error visible; the regular refresh can retry status later.
+        }
       } finally {
         setBusy(false);
       }
@@ -196,6 +206,20 @@ export default function MapSettingsPanel() {
         Managed offline Protomaps vector maps with optional Mapterhorn 3D terrain.
         Map data is shared by all cases and never copied into evidence storage.
       </Typography>
+      <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+          Default map data sources
+        </Typography>
+        <Typography variant="caption" component="div" sx={{ overflowWrap: "anywhere" }}>
+          Protomaps build catalog: {PROTOMAPS_CATALOG_URL}
+        </Typography>
+        <Typography variant="caption" component="div" sx={{ overflowWrap: "anywhere" }}>
+          Mapterhorn terrain archive: {MAPTERHORN_TERRAIN_URL}
+        </Typography>
+        <Button size="small" sx={{ mt: 0.5, px: 0 }} onClick={() => void openUrl(MAPTERHORN_ATTRIBUTION_URL)}>
+          View Mapterhorn source attribution
+        </Button>
+      </Alert>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {!status && !error && <LinearProgress sx={{ mb: 2 }} />}
@@ -261,6 +285,65 @@ export default function MapSettingsPanel() {
                 </Typography>
               )}
             </Box>
+          )}
+
+          {(status.resumable_downloads ?? []).length > 0 && !busy && (
+            <Alert severity="warning" variant="outlined">
+              <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+                Interrupted downloads available to resume
+              </Typography>
+              <Stack spacing={1}>
+                {(status.resumable_downloads ?? []).map((download) => (
+                  <Box key={download.id}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                        <Typography variant="body2">{download.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatBytes(download.downloaded_bytes)} retained
+                          {download.include_terrain ? " · includes terrain" : ""}
+                        </Typography>
+                      </Box>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => {
+                          setProgress(null);
+                          void run(
+                            () => downloadMapPack(download.request),
+                            "Map pack resumed, installed, and activated.",
+                          );
+                        }}
+                      >
+                        Resume
+                      </Button>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        onClick={() => {
+                          if (window.confirm(`Discard the retained bytes for “${download.name}”?`)) {
+                            void run(
+                              () => discardMapDownload(download.id),
+                              `Retained download for ${download.name} discarded.`,
+                            );
+                          }
+                        }}
+                      >
+                        Discard
+                      </Button>
+                    </Stack>
+                    <Typography
+                      variant="caption"
+                      component="div"
+                      color="text.secondary"
+                      title={download.basemap_source_url}
+                      sx={{ fontFamily: "monospace", overflowWrap: "anywhere", mt: 0.25 }}
+                    >
+                      {download.basemap_source_url}
+                    </Typography>
+                  </Box>
+                ))}
+              </Stack>
+            </Alert>
           )}
 
           {status.packs.length === 0 ? (
@@ -345,12 +428,22 @@ export default function MapSettingsPanel() {
               </>
             ) : (
               <Alert severity="warning">
-                The default Protomaps download is the full planet archive (approximately 120 GB).
-                Terrain requires an additional global archive. For a country or case region, use custom URLs or import an extract made with the PMTiles CLI.
+                <Typography variant="body2">
+                  The default Protomaps download is the full planet archive (approximately 120 GB).
+                  Terrain requires an additional global archive. For a country or case region, use custom URLs or import an extract made with the PMTiles CLI.
+                </Typography>
+                <Typography variant="caption" component="div" sx={{ mt: 0.75, overflowWrap: "anywhere" }}>
+                  Vector catalog: {PROTOMAPS_CATALOG_URL}
+                </Typography>
+                {includeTerrain && (
+                  <Typography variant="caption" component="div" sx={{ overflowWrap: "anywhere" }}>
+                    Terrain source: {MAPTERHORN_TERRAIN_URL}
+                  </Typography>
+                )}
               </Alert>
             )}
             <Typography variant="caption" color="text.secondary">
-              Downloads are resumable and stored as partial files until SHA-256 calculation and PMTiles validation succeed.
+              Downloads automatically retry transient failures. Partial files and the resolved source URLs are retained under one stable download folder, so a later attempt resumes instead of starting over.
             </Typography>
           </Stack>
         </DialogContent>

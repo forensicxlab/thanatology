@@ -33,6 +33,7 @@ import type {
   BrowserVisitRow,
 } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import {
   formatBytes,
   IosJsonDetailPanel,
@@ -255,7 +256,7 @@ export default function BrowserHistoryGrid({
   partitionId,
   tag = "Safari",
 }: BrowserHistoryGridProps) {
-  const { start, end, isActive } = useTimeFilter();
+  const { start, end } = useTimeFilter();
   const [activeTab, setActiveTab] = React.useState<BrowserActivityTab>("visits");
   const [rows, setRows] = React.useState<BrowserActivityRow[]>([]);
   const [rowCount, setRowCount] = React.useState(0);
@@ -367,7 +368,6 @@ export default function BrowserHistoryGrid({
           <Tab value="downloads" label="Downloads" />
         </Tabs>
         <Box sx={{ flexGrow: 1 }} />
-        {isActive && <Chip size="small" color="primary" variant="outlined" label="Time filtered" />}
         <Chip size="small" label={tag} />
         <TextField
           size="small"
@@ -387,6 +387,18 @@ export default function BrowserHistoryGrid({
           }}
         />
       </Stack>
+
+      <TimeFilterBanner
+        mode={activeTab === "downloads" ? "interval" : "intrinsic"}
+        noun={activeTab}
+        timestampLabel={
+          activeTab === "downloads"
+            ? "start/end interval"
+            : activeTab === "sites"
+              ? "underlying visit time"
+              : "visit time"
+        }
+      />
 
       {error && (
         <Alert severity="error" sx={{ m: 1 }}>

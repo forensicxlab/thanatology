@@ -29,12 +29,11 @@ import ExternalApplicationIcon from "../externalApps/ExternalApplicationIcon";
 import { openExternalApplication } from "../../externalApps/launcher";
 import { useExternalApplicationsStore } from "../../store/externalApplicationsStore";
 import { useSnackbar } from "../SnackbarProvider";
+import { WINDOW_TITLEBAR_HEIGHT } from "../windows/shared/WindowTitlebar";
 
 const drawerWidth = 180;
 const collapsedDrawerWidth = 44;
 const collapsedDrawerWidthSm = 44;
-
-const TITLEBAR_HEIGHT = 32;
 
 type NavItem = {
   label: string;
@@ -69,7 +68,7 @@ const openedMixin = (theme: Theme): CSSObject => ({
     duration: theme.transitions.duration.enteringScreen,
   }),
   overflowX: "hidden",
-  marginTop: TITLEBAR_HEIGHT,
+  marginTop: WINDOW_TITLEBAR_HEIGHT,
 });
 
 const closedMixin = (theme: Theme): CSSObject => ({
@@ -82,7 +81,7 @@ const closedMixin = (theme: Theme): CSSObject => ({
   [theme.breakpoints.up("sm")]: {
     width: `${collapsedDrawerWidthSm}px`,
   },
-  marginTop: TITLEBAR_HEIGHT,
+  marginTop: WINDOW_TITLEBAR_HEIGHT,
 });
 
 const Drawer = styled(MuiDrawer, {
@@ -218,7 +217,7 @@ export default function MiniDrawer() {
   return (
     <>
       <TitlebarNav />
-      <Box sx={{ display: "flex", pt: `${TITLEBAR_HEIGHT}px` }}>
+      <Box sx={{ display: "flex", pt: `${WINDOW_TITLEBAR_HEIGHT}px` }}>
         <Drawer variant="permanent" open={open}>
           <Box
             sx={{

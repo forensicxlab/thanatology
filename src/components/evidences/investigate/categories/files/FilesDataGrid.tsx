@@ -21,7 +21,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type { TimelineFileFilter } from "../../../../../dbutils/sqlite";
 import type { TimestampType } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
-import { Chip, Tooltip, Stack, Typography } from "@mui/material";
+import { Alert, Chip, Tooltip } from "@mui/material";
+import TimeFilterBanner from "../../TimeFilterBanner";
 
 interface FileDataGridProps {
   evidence_id: number;
@@ -57,6 +58,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   autoSize = true,
 }) => {
   const onRowsLoadedRef = React.useRef(onRowsLoaded);
+  const requestSequence = React.useRef(0);
   React.useLayoutEffect(() => {
     onRowsLoadedRef.current = onRowsLoaded;
   });
@@ -78,6 +80,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   const [rows, setRows] = React.useState<File[]>([]);
   const [rowCount, setRowCount] = React.useState(0);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
   const [paginationModel, setPaginationModel] = React.useState({
     page: 0,
     pageSize: pageSizeDefault,
@@ -187,49 +190,60 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         ],
       },
     ],
-    [evidence_id],
+    [evidence_id, partition_id],
   );
 
   const fetchData = React.useCallback(async () => {
+    const requestId = ++requestSequence.current;
     const { page, pageSize } = paginationModel;
     const offset = page * pageSize;
 
     setIsLoading(true);
-    const { rows: newRows, rowCount: total } = await getFiles(
-      evidence_id,
-      partition_id,
-      offset,
-      pageSize,
-      filterModel as any,
-      effectiveTimelineFilter ?? undefined,
-      scope,
-      listingMode,
-    );
+    setError(null);
+    try {
+      const { rows: newRows, rowCount: total } = await getFiles(
+        evidence_id,
+        partition_id,
+        offset,
+        pageSize,
+        filterModel as any,
+        effectiveTimelineFilter ?? undefined,
+        scope,
+        listingMode,
+      );
+      if (requestSequence.current !== requestId) return;
 
-    ReactDOM.flushSync(() => {
+      ReactDOM.flushSync(() => {
+        setIsLoading(false);
+        setRows(newRows);
+        setRowCount(total);
+      });
+
+      onRowsLoadedRef.current?.(newRows);
+
+      apiRef.current?.autosizeColumns({
+        columns: [
+          "sig_mime",
+          "permissions",
+          "group",
+          "owner",
+          "created",
+          "modified",
+          "accessed",
+          "size",
+          "actions",
+        ],
+        includeHeaders: true,
+        includeOutliers: true,
+        disableColumnVirtualization: true,
+      });
+    } catch (cause) {
+      if (requestSequence.current !== requestId) return;
+      setRows([]);
+      setRowCount(0);
       setIsLoading(false);
-      setRows(newRows);
-      setRowCount(total);
-    });
-
-    onRowsLoadedRef.current?.(newRows);
-
-    apiRef.current?.autosizeColumns({
-      columns: [
-        "sig_mime",
-        "permissions",
-        "group",
-        "owner",
-        "created",
-        "modified",
-        "accessed",
-        "size",
-        "actions",
-      ],
-      includeHeaders: true,
-      includeOutliers: true,
-      disableColumnVirtualization: true,
-    });
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   }, [
     paginationModel,
     evidence_id,
@@ -242,7 +256,10 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   ]);
 
   React.useEffect(() => {
-    fetchData();
+    void fetchData();
+    return () => {
+      requestSequence.current += 1;
+    };
   }, [fetchData]);
 
   React.useEffect(() => {
@@ -256,28 +273,28 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
 
   return (
     <div style={{ width: "100%", ...(autoSize ? { height: "100%", display: "flex", flexDirection: "column" } : {}) }}>
-      {effectiveTimelineFilter?.start != null && effectiveTimelineFilter?.end != null && (
-        <Stack
-          direction="row"
-          sx={{ mb: 1, flexWrap: "wrap", flexShrink: 0, alignItems: "center", gap: 1 }}
-        >
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Timeline filter:
-          </Typography>
-
-          <Chip
-            size="small"
-            variant="outlined"
-            label={
-              <>
-                <UnixToISO8601UTC timestamp={effectiveTimelineFilter.start} /> →{" "}
-                <UnixToISO8601UTC timestamp={effectiveTimelineFilter.end} /> (
-                {effectiveTimelineFilter.types.join(", ")})
-              </>
+      <TimeFilterBanner
+        mode="source-file"
+        noun="files"
+        {...(timelineFilter
+          ? {
+              range: {
+                start: timelineFilter.start ?? null,
+                end: timelineFilter.end ?? null,
+              },
+              onClear: onClearTimelineFilter,
+              timestampLabel:
+                timelineFilter.types.length > 0
+                  ? `backing-file ${timelineFilter.types.join(" or ")} time`
+                  : "backing-file timestamp",
             }
-            onDelete={onClearTimelineFilter}
-          />
-        </Stack>
+          : {})}
+        sx={{ px: 0, pt: 0, mb: 1, flexShrink: 0 }}
+      />
+      {error && (
+        <Alert severity="error" variant="outlined" sx={{ mb: 1, flexShrink: 0 }}>
+          Failed to load files: {error}
+        </Alert>
       )}
 
       <DataGridPro

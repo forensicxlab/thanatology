@@ -15,12 +15,19 @@ import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, Typography } fr
 import RefreshIcon from "@mui/icons-material/Refresh";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import Psychology from "@mui/icons-material/Psychology";
-import { useNavigate } from "react-router";
 import { emitTo } from "@tauri-apps/api/event";
-import { fetchAiArtifacts } from "../../../../../dbutils/sqlite";
+import {
+    fetchAiArtifacts,
+    type InvestigationTimeScope,
+} from "../../../../../dbutils/sqlite";
 import { ArtifactWithFile } from "../../../../../dbutils/types";
 import { invoke } from "@tauri-apps/api/core";
 import { useEvidenceStore } from "../../../../../store/evidenceStore";
+import {
+    useTimeFilter,
+    useTimeFilterStore,
+} from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 
 interface AiArtifactsProps {
     evidenceId: number;
@@ -71,13 +78,38 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
     partitionId,
 }) => {
     const apiRef = useGridApiRef();
-    const navigate = useNavigate();
     const processingStatus = useEvidenceStore((s) => s.processingStatus);
     const isProcessing = processingStatus === 2;
+    const { start, end, fileTimeField } = useTimeFilter();
+    const scopeEvidenceId = useTimeFilterStore((state) => state.evidenceId);
+    const scopePartitionId = useTimeFilterStore((state) => state.partitionId);
+    const requestSequence = React.useRef(0);
+    const timeScope = useMemo<InvestigationTimeScope | undefined>(
+        () =>
+            scopeEvidenceId === evidenceId && scopePartitionId === partitionId
+                ? {
+                    evidenceId,
+                    partitionId,
+                    startMs: start,
+                    endMs: end,
+                    fileTimeField,
+                }
+                : undefined,
+        [
+            scopeEvidenceId,
+            scopePartitionId,
+            evidenceId,
+            partitionId,
+            start,
+            end,
+            fileTimeField,
+        ],
+    );
 
     const [rows, setRows] = useState<any[]>([]);
     const [rowCount, setRowCount] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const [paginationModel, setPaginationModel] = useState({
         page: 0,
@@ -140,7 +172,9 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 
     /* Data fetch */
     const loadArtifacts = useCallback(async () => {
+        const requestId = ++requestSequence.current;
         setLoading(true);
+        setError(null);
         try {
             const { page, pageSize } = paginationModel;
             const offset = page * pageSize;
@@ -150,22 +184,36 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
                 partitionId,
                 offset,
                 pageSize,
-                filterModel
+                filterModel,
+                timeScope,
             );
 
             const dataWithId = data.map((r: any) => ({ ...r, id: r.artifact_id }));
+
+            if (requestSequence.current !== requestId) return;
 
             setRowCount(total);
             setRows(dataWithId);
             setLoading(false);
         } catch (err) {
+            if (requestSequence.current !== requestId) return;
             setLoading(false);
+            setError(err instanceof Error ? err.message : String(err));
             console.error(err);
         }
-    }, [evidenceId, partitionId, paginationModel, filterModel]);
+    }, [
+        evidenceId,
+        partitionId,
+        paginationModel,
+        filterModel,
+        timeScope,
+    ]);
 
     useEffect(() => {
-        loadArtifacts();
+        void loadArtifacts();
+        return () => {
+            requestSequence.current += 1;
+        };
     }, [loadArtifacts]);
 
     useEffect(() => {
@@ -176,7 +224,7 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 
     useEffect(() => {
         setPaginationModel((prev) => ({ ...prev, page: 0 }));
-    }, [filterModel]);
+    }, [filterModel, timeScope]);
 
     /* Columns */
     const columns: GridColDef[] = useMemo(
@@ -236,7 +284,7 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
                 ],
             },
         ],
-        [evidenceId, partitionId, navigate],
+        [evidenceId, partitionId],
     );
 
     const getDetailPanelContent = useCallback(
@@ -260,6 +308,12 @@ const AiArtifacts: React.FC<AiArtifactsProps> = ({
 
     return (
         <Box sx={{ display: "flex", flexDirection: "column", width: "100%", gap: 1 }}>
+            <TimeFilterBanner mode="source-file" noun="AI source files" sx={{ px: 0, pt: 0 }} />
+            {error && (
+                <Alert severity="error" variant="outlined">
+                    Failed to load AI analysis results: {error}
+                </Alert>
+            )}
             {isProcessing && (
                 <Alert
                     severity="info"

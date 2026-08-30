@@ -13,6 +13,7 @@ import {
 } from "../../../../../dbutils/sqlite";
 import type { File } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 
 /* ─── helpers ─────────────────────────────────────────────────────── */
 
@@ -75,10 +76,11 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
     };
   }, [searchText]);
 
-  // Reset page on filter change
+  // A new evidence, partition, search family or authoritative time scope must
+  // restart server paging; the previous page may not exist in the new result.
   useEffect(() => {
     setPage(0);
-  }, [typeFilter]);
+  }, [evidenceId, partitionId, typeFilter, tfStart, tfEnd, fileTimeField]);
 
   // Fetch stats (once per partition)
   useEffect(() => {
@@ -153,6 +155,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
         gap: 1,
       }}
     >
+      <TimeFilterBanner mode="source-file" noun="media files" sx={{ px: 0 }} />
       {/* Main content: Sidebar + Gallery */}
       <Box
         sx={{

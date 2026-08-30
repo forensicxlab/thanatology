@@ -9,6 +9,7 @@ import { Alert, Box, Chip, CircularProgress, Tooltip, Typography } from "@mui/ma
 import { getIosCalendarEvents } from "../../../../../dbutils/sqlite";
 import { IosCalendarEventRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, renderTimestampCell } from "./common";
 
 interface CalendarGridProps {
@@ -94,16 +95,28 @@ export default function CalendarGrid({ evidenceId, partitionId }: CalendarGridPr
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed calendar events found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          mode="interval"
+          noun="calendar events"
+          timestampLabel="start/end interval"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed calendar events found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        mode="interval"
+        noun="calendar events"
+        timestampLabel="start/end interval"
+      />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

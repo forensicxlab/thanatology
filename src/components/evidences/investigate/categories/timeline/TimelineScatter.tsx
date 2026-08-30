@@ -13,11 +13,14 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import { ScatterChartPro } from "@mui/x-charts-pro/ScatterChartPro";
+import { ChartsReferenceLine } from "@mui/x-charts-pro/ChartsReferenceLine";
 import { getTimelineEventCounts } from "../../../../../dbutils/sqlite";
 import type { TimelineEventsFilter } from "../../../../../dbutils/sqlite";
 import { unixToISO8601UTCString } from "../../../common/UnixToUTC";
+import type { TimelineFilterChangeReason } from "./timelineControl";
 
 import dayjs, { Dayjs } from "dayjs";
+import utc from "dayjs/plugin/utc";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import { DateTimeRangePicker } from "@mui/x-date-pickers-pro/DateTimeRangePicker";
@@ -25,11 +28,20 @@ import { MultiInputDateTimeRangeField } from "@mui/x-date-pickers-pro/MultiInput
 
 type Bucket = "second" | "minute" | "hour" | "day";
 
+dayjs.extend(utc);
+
 type Props = {
   evidenceId: number;
   partitionId: number;
   bucket?: Bucket;
-  onEventFilterChange?: (filter: TimelineEventsFilter | null) => void;
+  /** When provided (including null), the parent owns the applied range. */
+  range?: TimelineEventsFilter | null;
+  /** Exact epoch-ms playhead shared with a location window. */
+  cursorMs?: number | null;
+  onEventFilterChange?: (
+    filter: TimelineEventsFilter | null,
+    reason: TimelineFilterChangeReason,
+  ) => void;
 };
 
 const KNOWN_COLORS: Record<string, string> = {
@@ -40,6 +52,7 @@ const KNOWN_COLORS: Record<string, string> = {
   "windows.pml.event": "#f44336",
   "mobile.communication.message": "#00bcd4",
   "mobile.communication.attachment": "#ff5722",
+  "mobile.location.fix": "#4fc3f7",
 };
 
 const FALLBACK_PALETTE = [
@@ -55,6 +68,7 @@ const KNOWN_LABELS: Record<string, string> = {
   "windows.pml.event": "Process Monitor",
   "mobile.communication.message": "Message",
   "mobile.communication.attachment": "Attachment",
+  "mobile.location.fix": "Location Fix",
 };
 
 const BUCKET_MS: Record<Bucket, number> = {
@@ -87,6 +101,8 @@ export default function TimelineScatter({
   evidenceId,
   partitionId,
   bucket: bucketProp = "day",
+  range,
+  cursorMs = null,
   onEventFilterChange,
 }: Props) {
   const [markerSize, setMarkerSize] = React.useState(3);
@@ -115,6 +131,54 @@ export default function TimelineScatter({
   const [rangePending, setRangePending] = React.useState<[Dayjs | null, Dayjs | null]>([null, null]);
   const [bucketApplied, setBucketApplied] = React.useState<Bucket>(bucketProp);
   const [rangeApplied, setRangeApplied] = React.useState<[Dayjs | null, Dayjs | null]>([null, null]);
+  // The initial unbounded aggregate already contains every point that the
+  // auto-derived min/max range would request. Remember that one derived query
+  // key so applying the range to the controls does not repeat a multi-million
+  // row GROUP BY merely to redraw the same data.
+  const skipAutoRangeFetchKeyRef = React.useRef<string | null>(null);
+
+  const controlledRange = range !== undefined;
+  const controlledStart = range?.start ?? null;
+  const controlledEnd = range?.end ?? null;
+  const controlledEventTypesKey = JSON.stringify(range?.event_types ?? null);
+  const controlledEventTypes = React.useMemo(
+    () => JSON.parse(controlledEventTypesKey) as string[] | null,
+    [controlledEventTypesKey],
+  );
+  const controlledEventTypesRef = React.useRef(controlledEventTypes);
+  controlledEventTypesRef.current = controlledEventTypes;
+
+  // A linked window may move the range without touching this component's local
+  // controls. Mirror only the primitive values so cursor-only session updates do
+  // not reset the picker or refetch the chart.
+  React.useEffect(() => {
+    if (!controlledRange) return;
+    const nextRange: [Dayjs | null, Dayjs | null] = [
+      controlledStart == null ? null : dayjs.utc(controlledStart),
+      controlledEnd == null ? null : dayjs.utc(controlledEnd),
+    ];
+    setRangePending(nextRange);
+    setRangeApplied(nextRange);
+    setRangeFilterBase(
+      controlledStart != null && controlledEnd != null
+        ? { start: controlledStart, end: controlledEnd }
+        : null,
+    );
+    setSelectedKey(null);
+  }, [controlledRange, controlledStart, controlledEnd]);
+
+  React.useEffect(() => {
+    if (!controlledRange) return;
+    const enabled = controlledEventTypes == null ? null : new Set(controlledEventTypes);
+    setVisibleTypes((previous) =>
+      Object.fromEntries(
+        Object.keys(previous).map((eventType) => [eventType, enabled?.has(eventType) ?? true]),
+      ),
+    );
+    setSelectedKey((current) =>
+      current && enabled != null && !enabled.has(current.event_type) ? null : current,
+    );
+  }, [controlledRange, controlledEventTypes]);
 
   const hasPendingChanges =
     bucketPending !== bucketApplied ||
@@ -123,6 +187,23 @@ export default function TimelineScatter({
 
   React.useEffect(() => {
     let cancelled = false;
+    const start = rangeApplied[0]?.valueOf() ?? null;
+    const end = rangeApplied[1]?.valueOf() ?? null;
+    const queryKey = JSON.stringify([
+      evidenceId,
+      partitionId,
+      bucketApplied,
+      start,
+      end,
+    ]);
+
+    if (skipAutoRangeFetchKeyRef.current === queryKey) {
+      skipAutoRangeFetchKeyRef.current = null;
+      return () => {
+        cancelled = true;
+      };
+    }
+
     (async () => {
       try {
         setSelectedKey(null);
@@ -131,8 +212,8 @@ export default function TimelineScatter({
 
         const rows = await getTimelineEventCounts(evidenceId, partitionId, {
           bucket: bucketApplied,
-          start: rangeApplied[0]?.valueOf() ?? null,
-          end: rangeApplied[1]?.valueOf() ?? null,
+          start,
+          end,
         });
 
         if (cancelled) return;
@@ -146,15 +227,33 @@ export default function TimelineScatter({
         setVisibleTypes(prev => {
           const newTypes = [...new Set(data.map(d => d.event_type))];
           const additions: Record<string, boolean> = {};
+          const externallyEnabled = controlledEventTypesRef.current;
           for (const t of newTypes) {
-            if (!(t in prev)) additions[t] = true;
+            if (!(t in prev)) {
+              additions[t] =
+                controlledRange && externallyEnabled != null
+                  ? externallyEnabled.includes(t)
+                  : true;
+            }
           }
           return Object.keys(additions).length > 0 ? { ...prev, ...additions } : prev;
         });
 
         if ((!rangeApplied[0] || !rangeApplied[1]) && data.length > 0) {
           const xs = data.map(d => d.x);
-          const autoRange: [Dayjs, Dayjs] = [dayjs(Math.min(...xs)), dayjs(Math.max(...xs))];
+          const autoRange: [Dayjs, Dayjs] = [
+            dayjs.utc(Math.min(...xs)),
+            // Aggregates store each bucket's start. The picker must cover the
+            // whole final bucket or a later Apply silently drops its events.
+            dayjs.utc(Math.max(...xs) + BUCKET_MS[bucketApplied] - 1),
+          ];
+          skipAutoRangeFetchKeyRef.current = JSON.stringify([
+            evidenceId,
+            partitionId,
+            bucketApplied,
+            autoRange[0].valueOf(),
+            autoRange[1].valueOf(),
+          ]);
           setRangePending(autoRange);
           setRangeApplied(autoRange);
         }
@@ -171,6 +270,7 @@ export default function TimelineScatter({
   }, [
     evidenceId,
     partitionId,
+    controlledRange,
     bucketApplied,
     rangeApplied?.[0]?.valueOf(),
     rangeApplied?.[1]?.valueOf(),
@@ -180,17 +280,26 @@ export default function TimelineScatter({
     .filter(([, v]) => v)
     .map(([k]) => k);
 
-  const chartSeries = enabledTypes.map(et => ({
-    id: et,
-    label: labelForType(et),
-    color: colorForType(et),
-    data: seriesData
+  const chartSeries = enabledTypes.flatMap(et => {
+    const data = seriesData
       .filter(d => d.event_type === et)
-      .map((d, idx) => ({ id: idx, x: d.x, y: d.y })),
-    markerSize,
-    valueFormatter: (v: { x: number; y: number } | null) =>
-      v ? `${v.y} event(s) — ${unixToISO8601UTCString(v.x)}` : "",
-  }));
+      .map((d, idx) => ({ id: idx, x: d.x, y: d.y }));
+
+    // Retain enabled types in the forensic filter even when the current range
+    // has no matching points, but never give MUI X an empty scatter series: its
+    // per-series spatial index requires a strictly positive item count.
+    if (data.length === 0) return [];
+
+    return [{
+      id: et,
+      label: labelForType(et),
+      color: colorForType(et),
+      data,
+      markerSize,
+      valueFormatter: (v: { x: number; y: number } | null) =>
+        v ? `${v.y} event(s) — ${unixToISO8601UTCString(v.x)}` : "",
+    }];
+  });
 
   const selectedSeries = selectedKey
     ? {
@@ -218,7 +327,7 @@ export default function TimelineScatter({
           start: selectedKey.x,
           end: selectedKey.x + BUCKET_MS[bucketApplied] - 1,
           event_types: [selectedKey.event_type],
-        });
+        }, "point");
         return;
       }
 
@@ -233,12 +342,12 @@ export default function TimelineScatter({
         start: bucketStart,
         end: bucketStart + BUCKET_MS[bucketApplied] - 1,
         event_types: [seriesId],
-      });
+      }, "point");
     },
     [chartSeries, bucketApplied, onEventFilterChange, selectedKey],
   );
 
-  const hasChartData = chartSeries.some(s => s.data.length > 0);
+  const hasChartData = chartSeries.length > 0;
   const xMin = rangeApplied[0]?.valueOf() ?? undefined;
   const xMax = rangeApplied[1]?.valueOf() ?? undefined;
 
@@ -268,11 +377,12 @@ export default function TimelineScatter({
       onEventFilterChange?.({
         start,
         end,
-        event_types: enabledTypes.length > 0 ? [...enabledTypes] : null,
-      });
+        // null means every type; an empty array deliberately means none.
+        event_types: [...enabledTypes],
+      }, "range");
     } else {
       setRangeFilterBase(null);
-      onEventFilterChange?.(null);
+      onEventFilterChange?.(null, "clear");
     }
   };
 
@@ -286,7 +396,7 @@ export default function TimelineScatter({
     setRangeFilterBase(null);
     setRangePending([null, null]);
     setRangeApplied([null, null]);
-    onEventFilterChange?.(null);
+    onEventFilterChange?.(null, "clear");
   };
 
   const knownTypes = Object.keys(visibleTypes);
@@ -336,15 +446,20 @@ export default function TimelineScatter({
                         onChange={e => {
                           const newVisible = { ...visibleTypes, [et]: e.target.checked };
                           setVisibleTypes(newVisible);
-                          if (rangeFilterBase) {
+                          if (!e.target.checked) {
+                            setSelectedKey((current) =>
+                              current?.event_type === et ? null : current,
+                            );
+                          }
+                          if (rangeFilterBase || controlledRange) {
                             const newEnabled = Object.entries(newVisible)
                               .filter(([, v]) => v)
                               .map(([k]) => k);
                             onEventFilterChange?.({
-                              start: rangeFilterBase.start,
-                              end: rangeFilterBase.end,
-                              event_types: newEnabled.length > 0 ? newEnabled : null,
-                            });
+                              start: rangeFilterBase?.start ?? controlledStart,
+                              end: rangeFilterBase?.end ?? controlledEnd,
+                              event_types: newEnabled,
+                            }, "types");
                           }
                         }}
                       />
@@ -389,6 +504,7 @@ export default function TimelineScatter({
           <DateTimeRangePicker
             value={rangePending}
             onChange={newValue => setRangePending(newValue)}
+            timezone="UTC"
             slots={{ field: MultiInputDateTimeRangeField }}
             slotProps={{ textField: { size: "small" } }}
             disabled={loading}
@@ -467,7 +583,18 @@ export default function TimelineScatter({
             series={allSeries as any}
             onItemClick={handlePointClick}
             onZoomChange={handleZoomChange}
-          />
+          >
+            {cursorMs != null && Number.isFinite(cursorMs) && (
+              <ChartsReferenceLine
+                axisId="time"
+                x={cursorMs}
+                label="Linked time"
+                labelAlign="start"
+                lineStyle={{ stroke: "#ffcc00", strokeWidth: 2, strokeDasharray: "5 3" }}
+                labelStyle={{ fill: "#ffcc00", fontSize: 11, fontWeight: 600 }}
+              />
+            )}
+          </ScatterChartPro>
         )}
 
         <Typography variant="caption" sx={{ alignSelf: "center" }}>

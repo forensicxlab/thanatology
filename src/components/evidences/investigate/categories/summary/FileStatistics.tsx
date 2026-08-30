@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import Grid from "@mui/material/Grid";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import Skeleton from "@mui/material/Skeleton";
 import Chip from "@mui/material/Chip";
+import Alert from "@mui/material/Alert";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import FolderIcon from "@mui/icons-material/Folder";
 import StorageIcon from "@mui/icons-material/Storage";
@@ -28,6 +29,7 @@ import {
   getMimeTypeDistribution,
   getArtifactCategoryCounts,
   getTopFileSignatures,
+  type InvestigationTimeScope,
 } from "../../../../../dbutils/sqlite";
 import type {
   FileStats,
@@ -35,7 +37,11 @@ import type {
   ArtifactCategoryCount,
   TopSignature,
 } from "../../../../../dbutils/types";
-import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import {
+  useTimeFilter,
+  useTimeFilterStore,
+} from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 
 /* ------------------------------------------------------------------ */
 
@@ -93,6 +99,7 @@ function formatTs(ts: number | null): string {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -204,20 +211,45 @@ const HorizBar: React.FC<{
 
 const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize }) => {
   const { start: tfStart, end: tfEnd, fileTimeField } = useTimeFilter();
+  const scopeEvidenceId = useTimeFilterStore((state) => state.evidenceId);
+  const scopePartitionId = useTimeFilterStore((state) => state.partitionId);
+  const timeScope = useMemo<InvestigationTimeScope | undefined>(
+    () =>
+      scopeEvidenceId === evidenceId && scopePartitionId === partitionId
+        ? {
+            evidenceId,
+            partitionId,
+            startMs: tfStart,
+            endMs: tfEnd,
+            fileTimeField,
+          }
+        : undefined,
+    [
+      scopeEvidenceId,
+      scopePartitionId,
+      evidenceId,
+      partitionId,
+      tfStart,
+      tfEnd,
+      fileTimeField,
+    ],
+  );
   const [stats, setStats]           = useState<FileStats | null>(null);
   const [mimeData, setMimeData]     = useState<MimeTypeCount[]>([]);
   const [artifactData, setArtifactData] = useState<ArtifactCategoryCount[]>([]);
   const [signatures, setSignatures] = useState<TopSignature[]>([]);
   const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     Promise.all([
-      getFileStats(evidenceId, partitionId),
-      getMimeTypeDistribution(evidenceId, partitionId),
-      getArtifactCategoryCounts(evidenceId, partitionId),
-      getTopFileSignatures(evidenceId, partitionId),
+      getFileStats(evidenceId, partitionId, timeScope),
+      getMimeTypeDistribution(evidenceId, partitionId, timeScope),
+      getArtifactCategoryCounts(evidenceId, partitionId, timeScope),
+      getTopFileSignatures(evidenceId, partitionId, 12, timeScope),
     ])
       .then(([s, m, a, sig]) => {
         if (!cancelled) {
@@ -228,19 +260,31 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize })
           setLoading(false);
         }
       })
-      .catch(() => {
-        if (!cancelled) setLoading(false);
+      .catch((cause) => {
+        if (!cancelled) {
+          setStats(null);
+          setMimeData([]);
+          setArtifactData([]);
+          setSignatures([]);
+          setError(cause instanceof Error ? cause.message : String(cause));
+          setLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [evidenceId, partitionId, tfStart, tfEnd, fileTimeField]);
+  }, [evidenceId, partitionId, timeScope]);
 
   /* ── Loading skeleton ─────────────────────────────────────────── */
   if (loading) {
     return (
       <Box sx={{ mt: 3 }}>
         <Skeleton variant="text" width={160} height={28} sx={{ mb: 1.5 }} />
+        <TimeFilterBanner
+          mode="source-file"
+          noun="file and artifact statistics"
+          sx={{ px: 0, pt: 0, mb: 1.5 }}
+        />
         <Grid container spacing={1.5} sx={{ mb: 2 }}>
           {[0, 1, 2, 3].map((i) => (
             <Grid key={i} size={{ xs: 6, md: 3 }}>
@@ -253,7 +297,25 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize })
     );
   }
 
-  if (!stats || stats.total_files + stats.total_dirs === 0) return null;
+  if (error || !stats || stats.total_files + stats.total_dirs === 0) {
+    return (
+      <Box sx={{ mt: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, color: "text.primary", mb: 1.5 }}>
+          File Statistics
+        </Typography>
+        <TimeFilterBanner
+          mode="source-file"
+          noun="file and artifact statistics"
+          sx={{ px: 0, pt: 0, mb: 1.5 }}
+        />
+        <Alert severity={error ? "error" : "info"} variant="outlined">
+          {error
+            ? `Failed to load file statistics: ${error}`
+            : "No files or directories match the current investigation scope."}
+        </Alert>
+      </Box>
+    );
+  }
 
   const mimeMax     = mimeData.reduce((m, d) => Math.max(m, d.count), 0);
   const artifactMax = artifactData.reduce((m, d) => Math.max(m, d.count), 0);
@@ -271,6 +333,11 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize })
       >
         File Statistics
       </Typography>
+      <TimeFilterBanner
+        mode="source-file"
+        noun="file and artifact statistics"
+        sx={{ px: 0, pt: 0, mb: 1.5 }}
+      />
 
       {/* ── Metric cards ─────────────────────────────────────────── */}
       <Grid container spacing={1.5} sx={{ mb: 2 }}>
@@ -299,7 +366,7 @@ const FileStatistics: React.FC<Props> = ({ evidenceId, partitionId, imageSize })
         <Grid size={{ xs: 6, md: 3 }}>
           <StatCard
             icon={<CalendarTodayIcon sx={{ fontSize: 16 }} />}
-            label="Time Range"
+            label="Timestamp Range (UTC)"
             value={formatTs(stats.earliest_ts)}
             sub={
               stats.latest_ts && stats.latest_ts !== stats.earliest_ts

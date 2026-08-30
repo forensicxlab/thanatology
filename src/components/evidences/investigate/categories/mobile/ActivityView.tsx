@@ -18,6 +18,7 @@ import {
 import { getIosActivityEvents } from "../../../../../dbutils/sqlite";
 import { IosActivityEventRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, formatDuration, renderTimestampCell } from "./common";
 import { unixToISO8601UTCString } from "../../../common/UnixToUTC";
 
@@ -155,10 +156,17 @@ export default function ActivityView({ evidenceId, partitionId }: ActivityViewPr
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed device activity found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          mode="interval"
+          noun="activity events"
+          timestampLabel="start/end interval"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed device activity found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
@@ -168,6 +176,12 @@ export default function ActivityView({ evidenceId, partitionId }: ActivityViewPr
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0, gap: 1 }}>
+      <TimeFilterBanner
+        mode="interval"
+        noun="activity events"
+        timestampLabel="start/end interval"
+        sx={{ px: 0 }}
+      />
       {/* Swimlane: foreground app sessions over the covered period */}
       {domain && lanes.length > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, flexShrink: 0 }}>
@@ -179,7 +193,7 @@ export default function ActivityView({ evidenceId, partitionId }: ActivityViewPr
               Foreground app usage — top {lanes.length} of {rows.length.toLocaleString()} events
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {stamp(domain.min)} → {stamp(domain.max)} UTC
+              Matching event extent: {stamp(domain.min)} → {stamp(domain.max)} UTC
             </Typography>
           </Stack>
 

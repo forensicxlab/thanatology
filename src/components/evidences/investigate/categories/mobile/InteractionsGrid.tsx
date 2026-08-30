@@ -11,6 +11,7 @@ import CallMadeIcon from "@mui/icons-material/CallMade";
 import { getIosInteractions } from "../../../../../dbutils/sqlite";
 import { IosInteractionRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, renderTimestampCell } from "./common";
 
 interface InteractionsGridProps {
@@ -101,16 +102,28 @@ export default function InteractionsGrid({
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed interactions found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          mode="interval"
+          noun="interactions"
+          timestampLabel="start/end interval"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed interactions found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        mode="interval"
+        noun="interactions"
+        timestampLabel="start/end interval"
+      />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

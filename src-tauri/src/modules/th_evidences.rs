@@ -1,8 +1,11 @@
+use crate::modules::agents::runtime::{close_agent_sessions_for_evidence, AgentRuntimeState};
+use crate::modules::th_spatiotemporal::{
+    close_spatiotemporal_sessions_for_evidence, SpatiotemporalSessionState,
+};
 use crate::ProcessingState;
-use crate::modules::agents::runtime::{AgentRuntimeState, close_agent_sessions_for_evidence};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
@@ -143,6 +146,7 @@ pub async fn delete_evidences(
     app: AppHandle,
     processing_state: State<'_, ProcessingState>,
     agent_state: State<'_, AgentRuntimeState>,
+    spatiotemporal_state: State<'_, SpatiotemporalSessionState>,
     evidence_ids: Vec<i64>,
 ) -> Result<EvidenceDeletionResult, String> {
     let evidence_ids = evidence_ids
@@ -185,6 +189,17 @@ pub async fn delete_evidences(
 
     for evidence_id in &evidence_ids {
         close_agent_sessions_for_evidence(agent_state.inner(), *evidence_id).await?;
+        close_spatiotemporal_sessions_for_evidence(
+            &app,
+            spatiotemporal_state.inner(),
+            *evidence_id,
+        )
+        .await
+        .map_err(|error| {
+            format!(
+                "Cannot delete evidence {evidence_id}: failed to close linked Timeline/Location windows: {error}"
+            )
+        })?;
     }
 
     let app_data_dir = app

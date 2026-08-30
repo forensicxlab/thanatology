@@ -3,7 +3,7 @@ import {
     Box,
 } from "@mui/material";
 import { DataGrid, GridColDef, GridToolbar, GridFilterModel } from "@mui/x-data-grid";
-import { getPmlEvents } from "../dbutils/sqlite";
+import { getPmlEvents } from "../../../dbutils/sqlite";
 
 interface PmlViewerProps {
     evidenceId: number;

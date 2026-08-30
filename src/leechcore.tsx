@@ -9,13 +9,16 @@ import "@fontsource/roboto/700.css";
 import { glassTheme } from "./glassTheme";
 import { SnackbarProvider } from "./components/SnackbarProvider";
 import LeechCore from "./components/memory/LeechCore";
+import { WindowFrame } from "./components/windows/shared/WindowTitlebar";
 
 createRoot(document.getElementById("leechcore") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider theme={glassTheme}>
       <CssBaseline />
       <SnackbarProvider>
-        <LeechCore />
+        <WindowFrame windowName="LeechCore" title="LeechCore DMA Workspace">
+          <LeechCore />
+        </WindowFrame>
       </SnackbarProvider>
     </ThemeProvider>
   </React.StrictMode>,

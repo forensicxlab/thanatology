@@ -28,6 +28,7 @@ import type {
   MacosArtifactRow,
 } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner, { type TimeFilterMode } from "../../TimeFilterBanner";
 import {
   IosJsonDetailPanel,
   renderTimestampCell,
@@ -57,6 +58,9 @@ export interface MacosArtifactGridProps {
   searchPlaceholder: string;
   defaultSortField: string;
   defaultSortDirection?: "asc" | "desc";
+  timeMode: TimeFilterMode;
+  timeNoun: string;
+  timestampLabel?: string;
   notice?: React.ReactNode;
 }
 
@@ -242,10 +246,12 @@ export default function MacosArtifactGrid({
   searchPlaceholder,
   defaultSortField,
   defaultSortDirection = "desc",
+  timeMode,
+  timeNoun,
+  timestampLabel,
   notice,
 }: MacosArtifactGridProps) {
-  const { start, end, isActive } = useTimeFilter();
-  const timeAware = Boolean(labels.timestamp || labels.secondaryTimestamp);
+  const { start, end } = useTimeFilter();
   const [rows, setRows] = React.useState<MacosArtifactRow[]>([]);
   const [rowCount, setRowCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
@@ -350,6 +356,11 @@ export default function MacosArtifactGrid({
           {error || openError}
         </Alert>
       )}
+      <TimeFilterBanner
+        mode={timeMode}
+        noun={timeNoun}
+        timestampLabel={timestampLabel}
+      />
       <Stack
         direction="row"
         spacing={1}
@@ -357,9 +368,6 @@ export default function MacosArtifactGrid({
       >
         <Chip size="small" label={tag} />
         <Chip size="small" variant="outlined" label={`Partition ${partitionId}`} />
-        {timeAware && isActive && (
-          <Chip size="small" color="primary" variant="outlined" label="Time filtered" />
-        )}
         <Box sx={{ flex: 1 }} />
         <TextField
           size="small"

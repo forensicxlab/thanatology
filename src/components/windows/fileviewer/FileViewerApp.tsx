@@ -28,21 +28,22 @@ import utc from "dayjs/plugin/utc";
 import HexViewerWindow from "./HexViewerWindow";
 import { HexViewerHandle } from "./HexViewer";
 import RawViewer from "./RawViewer";
-import { PeViewer } from "./components/PeViewer";
-import { PmlViewer } from "./components/PmlViewer";
-import BottomActionBar from "./components/navigation/BottomActionBar";
-import WindowsEventsTimeliner from "./components/evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
-import ArtefactObjectsGrid from "./components/evidences/investigate/categories/files/ArtefactObjectsGrid";
+import { PeViewer } from "./PeViewer";
+import { PmlViewer } from "./PmlViewer";
+import BottomActionBar from "../../navigation/BottomActionBar";
+import WindowsEventsTimeliner from "../../evidences/investigate/categories/windows_events/WindowsEventsTimeliner";
+import ArtefactObjectsGrid from "../../evidences/investigate/categories/files/ArtefactObjectsGrid";
 import ApfsXattrInspector, {
   parseApfsFileMetadata,
-} from "./components/fileviewer/ApfsXattrInspector";
-import PlistViewer from "./components/fileviewer/PlistViewer";
-import SqliteViewer from "./components/SqliteViewer";
-import { getEvidenceDb, getEvidenceDbPath } from "./dbutils/db";
+} from "./ApfsXattrInspector";
+import PlistViewer from "./PlistViewer";
+import SqliteViewer from "./SqliteViewer";
+import { getEvidenceDb, getEvidenceDbPath } from "../../../dbutils/db";
 import {
   countParsedArtefactObjects,
   getEvidence,
-} from "./dbutils/sqlite";
+} from "../../../dbutils/sqlite";
+import { WindowTitlebar } from "../shared/WindowTitlebar";
 
 type ViewerTab =
   | "raw"
@@ -448,6 +449,10 @@ const FileViewer: React.FC = () => {
         pb: "28px",
         boxSizing: "border-box",
       }}>
+      <WindowTitlebar
+        windowName="File Viewer"
+        title={file ? `File Viewer — ${file.path}` : "Advanced File Viewer"}
+      />
       {/* Action toolbar */}
       <Paper
         elevation={0}

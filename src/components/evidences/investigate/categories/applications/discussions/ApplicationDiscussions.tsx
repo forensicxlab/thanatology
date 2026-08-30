@@ -134,8 +134,11 @@ export default function ApplicationDiscussions({
 
   if (!conversationLoading && conversations.length === 0) {
     return (
-      <Box sx={{ p: 3 }}>
-        <Typography color="text.secondary">{emptyLabel}</Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <TimeFilterBanner noun="messages" timestampLabel="message time" />
+        <Box sx={{ p: 3 }}>
+          <Typography color="text.secondary">{emptyLabel}</Typography>
+        </Box>
       </Box>
     );
   }
@@ -148,7 +151,12 @@ export default function ApplicationDiscussions({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <TimeFilterBanner noun="messages" shown={inWindowTotal} total={grandTotal} />
+      <TimeFilterBanner
+        noun="messages"
+        timestampLabel="message time"
+        shown={inWindowTotal}
+        total={grandTotal}
+      />
       <DiscussionBrowser
       conversations={conversations}
       messages={messages}

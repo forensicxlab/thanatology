@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use exhume_memory::{
-    BitlockerHit, BitlockerScanCallbacks, BitlockerScanRequest, ConnectorKind, ConnectorOptions,
-    MemdumpCallbacks, MemdumpRequest, MemoryProgressUpdate, MemoryService, ModuleRecord, OsKind,
-    ProcessRecord, PsListRequest, TriageRequest, scan_bitlocker_with_callbacks,
+    scan_bitlocker_with_callbacks, BitlockerHit, BitlockerScanCallbacks, BitlockerScanRequest,
+    ConnectorKind, ConnectorOptions, MemdumpCallbacks, MemdumpRequest, MemoryProgressUpdate,
+    MemoryService, ModuleRecord, OsKind, ProcessRecord, PsListRequest, TriageRequest,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
 const DEFAULT_LIMIT: usize = 32;

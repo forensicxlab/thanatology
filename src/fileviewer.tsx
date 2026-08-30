@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import FileViewerApp from "./FileViewerApp";
+import FileViewerApp from "./components/windows/fileviewer/FileViewerApp";
 import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";

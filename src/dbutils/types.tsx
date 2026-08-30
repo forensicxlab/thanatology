@@ -499,6 +499,76 @@ export type MacosArtifactPage = {
   rowCount: number;
 };
 
+// ---- Spotlight Explore --------------------------------------------------
+
+export type SpotlightSortField =
+  | "updated_ms"
+  | "name"
+  | "path"
+  | "content_type"
+  | "item_kind"
+  | "source_store";
+
+export type SpotlightResolutionStatus = "resolved" | "not_indexed" | "no_path";
+
+export type SpotlightExploreQuery = {
+  evidenceId: number;
+  partitionId: number;
+  offset: number;
+  limit: number;
+  /** Trigram search over the normalized item name and reconstructed path. */
+  search?: string;
+  contentType?: string;
+  itemKind?: string;
+  sourceStore?: string;
+  pathRoot?: string;
+  startMs?: number | null;
+  endMs?: number | null;
+  sortField?: SpotlightSortField;
+  sortDirection?: "asc" | "desc";
+  /** Reuse the current filtered count while only page or sort changes. */
+  knownRowCount?: number;
+};
+
+export type SpotlightExploreRow = {
+  id: number;
+  parser: string;
+  kind: string;
+  spotlight_id: number | null;
+  parent_id: number | null;
+  item_id: number | null;
+  flags: number | null;
+  name: string | null;
+  path: string | null;
+  content_type: string | null;
+  item_kind: string | null;
+  updated_ms: number | null;
+  source_store: string | null;
+  resolution_status: SpotlightResolutionStatus;
+  resolved_file_id: number | null;
+  resolved_identifier: number | null;
+  resolved_size: number | null;
+  resolved_absolute_path: string | null;
+  json: string;
+};
+
+export type SpotlightExplorePage = {
+  rows: SpotlightExploreRow[];
+  rowCount: number;
+};
+
+export type SpotlightFacet = {
+  value: string;
+  count: number;
+};
+
+export type SpotlightExploreFacets = {
+  contentTypes: SpotlightFacet[];
+  itemKinds: SpotlightFacet[];
+  sourceStores: SpotlightFacet[];
+  pathRoots: SpotlightFacet[];
+};
+
 export type IosLocationFixRow = {
   id: number;
   ts: number | null; // unix ms

@@ -5,8 +5,8 @@ use exhume_agent::config::AgentConfig;
 use exhume_agent::paths;
 use exhume_agent::policy::{AgentOptions, AgentPolicy};
 use exhume_agent::report;
-use exhume_agent::session::{AgentSession, AgentSessionSnapshot, persist_agent_event};
-use exhume_agent::ui::{AgentEvent, ApprovalRequest, UiEvent, UiHandle, unique_id};
+use exhume_agent::session::{persist_agent_event, AgentSession, AgentSessionSnapshot};
+use exhume_agent::ui::{unique_id, AgentEvent, ApprovalRequest, UiEvent, UiHandle};
 use rig::tool::ToolDyn;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -19,7 +19,7 @@ use tauri::{
     AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
-use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::sync::{oneshot, Mutex, RwLock};
 
 const AGENT_EVENT_NAME: &str = "agent-event";
 

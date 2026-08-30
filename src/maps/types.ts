@@ -21,6 +21,17 @@ export interface MapStorageStatus {
   packs: MapPackSummary[];
   assets_installed: boolean;
   download_active: boolean;
+  resumable_downloads: MapDownloadSummary[];
+}
+
+export interface MapDownloadSummary {
+  id: string;
+  name: string;
+  downloaded_bytes: number;
+  include_terrain: boolean;
+  basemap_source_url: string;
+  terrain_source_url: string | null;
+  request: DownloadMapPackRequest;
 }
 
 export interface MapPackFile {

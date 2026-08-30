@@ -4,7 +4,8 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import { CssBaseline, ThemeProvider } from "@mui/material";
-import AgentWorkspace from "./components/agent/AgentWorkspace";
+import AgentWorkspace from "./components/windows/agent/AgentWorkspace";
+import { WindowFrame } from "./components/windows/shared/WindowTitlebar";
 import { createGlassTheme } from "./glassTheme";
 import { ThemeModeProvider, useThemeMode } from "./ThemeContext";
 
@@ -18,9 +19,11 @@ function AgentApp() {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <div style={{ padding: 24 }}>
-          The agent window requires a valid evidence identifier.
-        </div>
+        <WindowFrame windowName="AI Agent" title="Exhume Agent">
+          <div style={{ padding: 24 }}>
+            The agent window requires a valid evidence identifier.
+          </div>
+        </WindowFrame>
       </ThemeProvider>
     );
   }

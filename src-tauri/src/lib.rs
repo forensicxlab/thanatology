@@ -1,14 +1,14 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use env_logger;
 use exhume_body::Body;
-use exhume_filesystem::Filesystem;
 use exhume_filesystem::detected_fs::detect_filesystem;
+use exhume_filesystem::Filesystem;
 use exhume_indexer::ensure_tables as ensure_evidence_tables;
-use exhume_partitions::{Partitions, gpt::GPTPartitionEntry, mbr::MBRPartitionEntry};
+use exhume_partitions::{gpt::GPTPartitionEntry, mbr::MBRPartitionEntry, Partitions};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,7 +46,7 @@ fn default_batch_size() -> u32 {
     10
 }
 
-use modules::utils::th_progress::{ProgressMessageLevel, ProgressMessageType, emit_progress_event};
+use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, ProgressMessageType};
 
 use modules::th_identifier::identify_file_types;
 
@@ -348,10 +348,19 @@ async fn cancel_processing(
 
 #[tauri::command]
 async fn reset_evidence(
+    app: AppHandle,
+    spatiotemporal_state: tauri::State<'_, modules::th_spatiotemporal::SpatiotemporalSessionState>,
     evidence_id: i64,
     main_db_path: String,
     evidence_db_path: String,
 ) -> Result<(), String> {
+    modules::th_spatiotemporal::close_spatiotemporal_sessions_for_evidence(
+        &app,
+        spatiotemporal_state.inner(),
+        evidence_id,
+    )
+    .await?;
+
     // Connect to main pool to reset status to 1 (Pending Start)
     // so we don't have to repeat partition discovery/selection.
     let main_pool = open_pool(&main_db_path)
@@ -1679,6 +1688,7 @@ async fn new_whiteboard(app: AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App("escalidraw.html".into()))
         .title("Whiteboard")
+        .decorations(false)
         .maximized(true)
         .build()
         .map(|_| ())
@@ -1699,6 +1709,7 @@ async fn new_fileviewer(app: AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App("fileviewer.html".into()))
         .title("Advanced File Viewer")
+        .decorations(false)
         .maximized(true)
         .build()
         .map(|_| ())
@@ -1737,6 +1748,7 @@ async fn new_leechcore(app: AppHandle) -> Result<(), String> {
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App("leechcore.html".into()))
         .title("LeechCore")
+        .decorations(false)
         .maximized(true)
         .build()
         .map(|_| ())
@@ -1795,6 +1807,7 @@ pub fn run(init_migrations: Vec<Migration>) {
         .manage(modules::th_memory::MemoryExecutionState::default())
         .manage(modules::agents::runtime::AgentRuntimeState::default())
         .manage(modules::th_maps::MapDownloadState::default())
+        .manage(modules::th_spatiotemporal::SpatiotemporalSessionState::default())
         .register_asynchronous_uri_scheme_protocol("thanatology-media", |ctx, request, responder| {
             let fs_state = ctx
                 .app_handle()
@@ -1955,11 +1968,21 @@ pub fn run(init_migrations: Vec<Migration>) {
             modules::th_maps::set_map_storage_root,
             modules::th_maps::activate_map_pack,
             modules::th_maps::remove_map_pack,
+            modules::th_maps::discard_map_download,
             modules::th_maps::download_map_pack,
             modules::th_maps::import_map_pack,
             modules::th_maps::cancel_map_download,
             modules::th_maps::read_map_range,
             modules::th_maps::read_map_asset,
+            modules::th_spatiotemporal::open_timeline_window,
+            modules::th_spatiotemporal::open_location_window,
+            modules::th_spatiotemporal::open_spatiotemporal_windows,
+            modules::th_spatiotemporal::register_spatiotemporal_window,
+            modules::th_spatiotemporal::get_spatiotemporal_snapshot,
+            modules::th_spatiotemporal::update_spatiotemporal_range_from_main,
+            modules::th_spatiotemporal::set_spatiotemporal_sync_from_main,
+            modules::th_spatiotemporal::update_spatiotemporal_state,
+            modules::th_spatiotemporal::set_spatiotemporal_sync,
             modules::th_external_apps::open_external_application,
             modules::th_external_apps::test_external_application,
             modules::agents::investigate_with_agent,

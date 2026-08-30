@@ -9,6 +9,7 @@ import { Alert, Box, Chip, CircularProgress, Typography } from "@mui/material";
 import { getIosTccGrants } from "../../../../../dbutils/sqlite";
 import { IosTccGrantRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, renderTimestampCell } from "./common";
 
 interface TccGridProps {
@@ -93,16 +94,26 @@ export default function TccGrid({ evidenceId, partitionId }: TccGridProps) {
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed privacy permissions found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          noun="permission decisions"
+          timestampLabel="decision time"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed privacy permissions found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        noun="permission decisions"
+        timestampLabel="decision time"
+      />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

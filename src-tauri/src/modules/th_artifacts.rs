@@ -1,16 +1,16 @@
 use anyhow::Result;
 use exhume_artefacts::parsers::ParserRegistry;
-use exhume_filesystem::Filesystem;
 use exhume_filesystem::filesystem::FileCommon;
-use sqlx::Row;
+use exhume_filesystem::Filesystem;
 use sqlx::sqlite::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::Row;
 
 use log::{info, warn};
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::mpsc;
 

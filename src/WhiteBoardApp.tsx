@@ -6,12 +6,15 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import { Box } from "@mui/material";
+import { WindowFrame } from "./components/windows/shared/WindowTitlebar";
 
 const WhiteBoard: React.FC = () => {
   return (
-    <Box sx={{ position: "fixed", inset: 0 }}>
-      <Excalidraw />
-    </Box>
+    <WindowFrame windowName="Whiteboard" title="Whiteboard">
+      <Box sx={{ position: "relative", width: "100%", height: "100%" }}>
+        <Excalidraw />
+      </Box>
+    </WindowFrame>
   );
 };
 

@@ -1,7 +1,7 @@
-use crate::AiConfig;
 use crate::modules::utils::th_progress::{
-    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
+use crate::AiConfig;
 use exhume_filesystem::Filesystem;
 use log::{error, info, warn};
 use rig::client::CompletionClient;

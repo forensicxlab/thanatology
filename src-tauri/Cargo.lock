@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_apfs"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "byteorder",
  "chrono",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_artefacts"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_body"
-version = "0.5.5"
+version = "0.5.6"
 dependencies = [
  "clap",
  "clap-num",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_exfat"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "clap",
@@ -2014,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_extfs"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "byteorder",
  "chrono",
@@ -2030,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_filesystem"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "clap",
  "clap-num",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_indexer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2075,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_lvm"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "acid_io",
  "byteorder",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_ntfs"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "aes",
  "byteorder",
@@ -2139,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "exhume_partitions"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "byteorder",
  "capstone",

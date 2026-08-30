@@ -28,6 +28,8 @@ export default function RecentItemsGrid({
       labels={LABELS}
       defaultSortField="primary_value"
       defaultSortDirection="asc"
+      timeMode="timeless"
+      timeNoun="recent-item records"
       searchPlaceholder="Search recent item, path, list or source"
       emptyMessage="No parsed macOS recent items were found in this scope."
     />

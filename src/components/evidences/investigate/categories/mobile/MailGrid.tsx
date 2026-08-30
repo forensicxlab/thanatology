@@ -9,6 +9,7 @@ import { Alert, Box, Chip, CircularProgress, Stack, Tooltip, Typography } from "
 import { getIosMailMessages } from "../../../../../dbutils/sqlite";
 import { IosMailMessageRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
+import TimeFilterBanner from "../../TimeFilterBanner";
 import { IosJsonDetailPanel, renderTimestampCell } from "./common";
 
 interface MailGridProps {
@@ -106,16 +107,26 @@ export default function MailGrid({ evidenceId, partitionId }: MailGridProps) {
   }
   if (rows.length === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed mail messages found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          noun="mail messages"
+          timestampLabel="sent or received time"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed mail messages found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        noun="mail messages"
+        timestampLabel="sent or received time"
+      />
       <DataGridPro
         apiRef={apiRef}
         rows={rows}

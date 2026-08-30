@@ -34,6 +34,10 @@ import type {
   MacosArtifactPage,
   MacosArtifactPanel,
   MacosArtifactQuery,
+  SpotlightExploreFacets,
+  SpotlightExplorePage,
+  SpotlightExploreQuery,
+  SpotlightExploreRow,
   IosLocationFixRow,
   IosCalendarEventRow,
   IosMailMessageRow,
@@ -700,6 +704,69 @@ export async function getFilesystemTreeChildren(
   });
 }
 
+/**
+ * Return the indexed file plus its directory ancestors. This is intentionally
+ * a tiny recursive path lookup, used to reveal a Spotlight result without
+ * preloading unrelated branches of the filesystem tree.
+ */
+export async function getFilesystemTreeTrail(
+  evidenceId: number,
+  partitionId: number,
+  fileId: number,
+): Promise<FilesystemTreeItem[]> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows = await db.select<Array<FilesystemTreeRow & { depth: number }>>(
+    `WITH RECURSIVE trail AS (
+       SELECT
+         id, name, absolute_path, path_key, parent_path_key,
+         ftype, is_dir, depth, 0 AS level
+       FROM system_files
+       WHERE evidence_id = $1 AND partition_id = $2 AND id = $3
+       UNION ALL
+       SELECT
+         parent.id, parent.name, parent.absolute_path, parent.path_key,
+         parent.parent_path_key, parent.ftype, parent.is_dir, parent.depth,
+         trail.level + 1
+       FROM system_files parent
+       INNER JOIN trail ON parent.path_key = trail.parent_path_key
+       WHERE parent.evidence_id = $1 AND parent.partition_id = $2
+         AND trail.level < 256
+     )
+     SELECT
+       trail.id,
+       trail.name,
+       trail.absolute_path,
+       trail.path_key,
+       trail.parent_path_key,
+       trail.ftype,
+       trail.is_dir,
+       trail.depth,
+       (
+         SELECT COUNT(*) FROM system_files child
+         WHERE child.evidence_id = $1 AND child.partition_id = $2
+           AND child.parent_path_key = trail.path_key
+       ) AS children_count
+     FROM trail
+     ORDER BY trail.depth ASC, trail.id ASC`,
+    [evidenceId, partitionId, fileId],
+  );
+  return rows.map((row) => {
+    const isDir = Number(row.is_dir ?? 0) === 1;
+    return {
+      id: row.path_key,
+      label: makeFilesystemTreeLabel(row.name, row.absolute_path, isDir),
+      pathKey: row.path_key,
+      parentPathKey: row.parent_path_key,
+      absolutePath: row.absolute_path,
+      name: row.name,
+      ftype: row.ftype,
+      isDir,
+      childrenCount: Number(row.children_count ?? 0),
+      itemKind: isDir ? "directory" : "file",
+    };
+  });
+}
+
 export async function getFileByEvidenceAndAbsolutePath(
   db: Database | null,
   evidenceId: number,
@@ -734,17 +801,27 @@ export async function searchMedia(
   partition_id: number,
   offset: number,
   limit: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<{ rows: File[]; rowCount: number }> {
   const db = await getEvidenceDb(evidence_id);
-
-  const rows: File[] = await db.select(
-    "SELECT * FROM system_files WHERE partition_id = $1 AND ( (sig_mime LIKE 'image%') OR (sig_mime LIKE 'video%') OR (sig_mime LIKE 'audio%') ) LIMIT $2 OFFSET $3",
-    [partition_id, limit, offset],
+  const scope = resolveInvestigationTimeScope(
+    evidence_id,
+    partition_id,
+    timeScope,
   );
-
+  const params: any[] = [partition_id];
+  const timeWhere = fileTimeFilterClause("system_files", params, scope);
+  const where = `WHERE partition_id = $1
+    AND (sig_mime LIKE 'image%' OR sig_mime LIKE 'video%' OR sig_mime LIKE 'audio%')
+    ${timeWhere}`;
+  const rows: File[] = await db.select(
+    `SELECT * FROM system_files ${where}
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
   const countResult: Array<any> = await db.select(
-    "SELECT COUNT(*) as count FROM system_files WHERE partition_id = $1 AND ( (sig_mime LIKE 'image%') OR (sig_mime LIKE 'video%') OR (sig_mime LIKE 'audio%') )",
-    [partition_id],
+    `SELECT COUNT(*) as count FROM system_files ${where}`,
+    params,
   );
   const rowCount = countResult[0].count;
 
@@ -761,11 +838,21 @@ export interface MediaStats {
 export async function getMediaStats(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<MediaStats> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    evidenceId,
+    partitionId,
+    timeScope,
+  );
 
   const statsParams: any[] = [partitionId];
-  const statsTimeWhere = fileTimeFilterClause("system_files", statsParams);
+  const statsTimeWhere = fileTimeFilterClause(
+    "system_files",
+    statsParams,
+    scope,
+  );
   const result: Array<{ kind: string; count: number }> = await db.select(
     `SELECT
        CASE
@@ -803,8 +890,14 @@ export async function searchMediaFiltered(
     includeVideos?: boolean;
     includeAudio?: boolean;
   },
+  timeScope?: InvestigationTimeScope,
 ): Promise<{ rows: File[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    evidenceId,
+    partitionId,
+    timeScope,
+  );
 
   const includeImages = options?.includeImages ?? true;
   const includeVideos = options?.includeVideos ?? true;
@@ -829,7 +922,7 @@ export async function searchMediaFiltered(
     searchWhere = ` AND (name LIKE $${params.length - 1} OR absolute_path LIKE $${params.length})`;
   }
 
-  const mediaTimeWhere = fileTimeFilterClause("system_files", params);
+  const mediaTimeWhere = fileTimeFilterClause("system_files", params, scope);
   const where = `WHERE partition_id = $1 AND ${typeWhere}${searchWhere}${mediaTimeWhere}`;
 
   const countResult: Array<{ count: number }> = await db.select(
@@ -1034,25 +1127,39 @@ export async function fetchArtifactsByCategory(
   limit: number,
   filterModel?: FilterModel,
   tag?: string,
+  parser?: string,
+  timeScope?: InvestigationTimeScope,
 ): Promise<{ rows: any[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    evidenceId,
+    partitionId,
+    timeScope,
+  );
 
-  // $1=category, $2=evidenceId, $3=partitionId, [$4=tag if provided]
-  const fixedParamCount = tag ? 4 : 3;
+  const fixedParams: Array<string | number> = [
+    category,
+    evidenceId,
+    partitionId,
+  ];
+  let tagWhere = "";
+  let parserWhere = "";
+  if (tag) {
+    fixedParams.push(tag);
+    tagWhere = ` AND artifacts.tag = $${fixedParams.length}`;
+  }
+  if (parser) {
+    fixedParams.push(parser);
+    parserWhere = ` AND artifacts.parser = $${fixedParams.length}`;
+  }
+  const fixedParamCount = fixedParams.length;
   const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, fixedParamCount);
-  const tagWhere = tag ? ` AND artifacts.tag = $4` : "";
   const extraWhere = built.where ? ` AND (${built.where})` : "";
 
   // Global time window. Built against the params accumulated so far so its
   // placeholders land after the grid filters and before LIMIT/OFFSET.
-  const queryParams = [
-    category,
-    evidenceId,
-    partitionId,
-    ...(tag ? [tag] : []),
-    ...built.params,
-  ];
-  const timeWhere = fileTimeFilterClause("system_files", queryParams);
+  const queryParams = [...fixedParams, ...built.params];
+  const timeWhere = fileTimeFilterClause("system_files", queryParams, scope);
   const limitIdx = queryParams.length + 1;
   const offsetIdx = queryParams.length + 2;
 
@@ -1089,6 +1196,7 @@ export async function fetchArtifactsByCategory(
       artifacts.evidence_id = $2 AND
       artifacts.partition_id = $3
       ${tagWhere}
+      ${parserWhere}
       ${extraWhere}
       ${timeWhere}
     LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -1103,6 +1211,7 @@ export async function fetchArtifactsByCategory(
       artifacts.evidence_id = $2 AND
       artifacts.partition_id = $3
       ${tagWhere}
+      ${parserWhere}
       ${extraWhere}
       ${timeWhere}
   `;
@@ -1168,12 +1277,15 @@ export async function fetchArtifactTags(
 export async function getIosCalls(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosCallRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.call.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -1205,8 +1317,10 @@ export async function getIosCalls(
 export async function getIosContacts(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosContactRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   // A contact is in range if it was created OR last modified inside the window.
   const timeClause = msTimeFilterClause(
@@ -1215,6 +1329,7 @@ export async function getIosContacts(
       "CAST(json_extract(ao.json, '$.timestamps.modified.unix_ms') AS INTEGER)",
     ],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -1248,12 +1363,15 @@ export async function getIosContacts(
 export async function getIosBrowserHistory(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosBrowserVisitRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.visit.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -1328,8 +1446,14 @@ function browserPageBounds(query: BrowserActivityQuery): {
  */
 export async function getBrowserActivityVisits(
   query: BrowserActivityQuery,
+  timeScope?: InvestigationTimeScope,
 ): Promise<BrowserPage<BrowserVisitRow>> {
   const db = await getEvidenceDb(query.evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    query.evidenceId,
+    query.partitionId,
+    timeScope,
+  );
   const params: any[] = [query.evidenceId, query.partitionId, query.tag];
   const titleExpr =
     "COALESCE(json_extract(ao.json, '$.visit.title'), json_extract(ao.json, '$.site.title'))";
@@ -1350,7 +1474,7 @@ export async function getBrowserActivityVisits(
     query.search,
     params,
   );
-  where += msTimeFilterClause([tsExpr], params);
+  where += msTimeFilterClause([tsExpr], params, scope);
 
   const countRows = (await db.select(
     `SELECT COUNT(*) AS count
@@ -1415,8 +1539,14 @@ export async function getBrowserActivityVisits(
  */
 export async function getBrowserActivitySites(
   query: BrowserActivityQuery,
+  timeScope?: InvestigationTimeScope,
 ): Promise<BrowserPage<BrowserSiteRow>> {
   const db = await getEvidenceDb(query.evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    query.evidenceId,
+    query.partitionId,
+    timeScope,
+  );
   const params: any[] = [query.evidenceId, query.partitionId, query.tag];
   const titleExpr =
     "COALESCE(json_extract(ao.json, '$.visit.title'), json_extract(ao.json, '$.site.title'))";
@@ -1437,7 +1567,7 @@ export async function getBrowserActivitySites(
     query.search,
     params,
   );
-  where += msTimeFilterClause([tsExpr], params);
+  where += msTimeFilterClause([tsExpr], params, scope);
 
   const groupedFrom = `
     FROM artifact_objects ao
@@ -1500,8 +1630,14 @@ export async function getBrowserActivitySites(
 /** Parsed Chromium-family downloads for the active artifact tag. */
 export async function getBrowserActivityDownloads(
   query: BrowserActivityQuery,
+  timeScope?: InvestigationTimeScope,
 ): Promise<BrowserPage<BrowserDownloadRow>> {
   const db = await getEvidenceDb(query.evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    query.evidenceId,
+    query.partitionId,
+    timeScope,
+  );
   const params: any[] = [query.evidenceId, query.partitionId, query.tag];
   const targetExpr = "json_extract(ao.json, '$.download.target_path')";
   const urlExpr = "json_extract(ao.json, '$.download.url')";
@@ -1523,7 +1659,7 @@ export async function getBrowserActivityDownloads(
     query.search,
     params,
   );
-  where += msTimeFilterClause([startExpr, endExpr], params);
+  where += msIntervalTimeFilterClause(startExpr, endExpr, params, scope);
 
   const countRows = (await db.select(
     `SELECT COUNT(*) AS count
@@ -1592,6 +1728,8 @@ type MacosPanelSql = {
   state: string;
   numeric: string;
   timestamps: string[];
+  /** All intrinsic timestamps eligible for time matching (defaults to timestamps). */
+  filterTimestamps?: string[];
   sortFields: Record<string, string>;
   defaultSort: string;
 };
@@ -1803,6 +1941,17 @@ function macosPanelSql(panel: MacosArtifactPanel): MacosPanelSql {
             CAST(json_extract(ao.json, '$.timestamps.captive_login.unix_ms') AS INTEGER)
           )`,
         ],
+        // Keep the compact observed/expiry values above for presentation, but
+        // match every timestamp independently. COALESCE would otherwise hide a
+        // later in-range timestamp whenever an earlier non-null alternative is
+        // outside the selected range.
+        filterTimestamps: [
+          "CAST(json_extract(ao.json, '$.timestamps.last_connected.unix_ms') AS INTEGER)",
+          "CAST(json_extract(ao.json, '$.timestamps.lease_start.unix_ms') AS INTEGER)",
+          "CAST(json_extract(ao.json, '$.timestamps.added.unix_ms') AS INTEGER)",
+          "CAST(json_extract(ao.json, '$.timestamps.lease_expiration.unix_ms') AS INTEGER)",
+          "CAST(json_extract(ao.json, '$.timestamps.captive_login.unix_ms') AS INTEGER)",
+        ],
         sortFields: commonSortFields,
         defaultSort: "tertiary_value",
       };
@@ -1815,10 +1964,16 @@ function macosPanelSql(panel: MacosArtifactPanel): MacosPanelSql {
  */
 export async function getMacosArtifactPage(
   query: MacosArtifactQuery,
+  timeScope?: InvestigationTimeScope,
 ): Promise<MacosArtifactPage> {
   const db = await getEvidenceDb(query.evidenceId);
   const indexHint = await macosArtifactIndexHint(db, query.evidenceId);
   const config = macosPanelSql(query.panel);
+  const scope = resolveInvestigationTimeScope(
+    query.evidenceId,
+    query.partitionId,
+    timeScope,
+  );
   const params: any[] = [
     query.evidenceId,
     query.partitionId,
@@ -1843,9 +1998,10 @@ export async function getMacosArtifactPage(
       OR LOWER(COALESCE(ao.kind, '')) LIKE ${placeholder} ESCAPE '\\'
     )`;
   }
+  const filterTimestamps = config.filterTimestamps ?? config.timestamps;
   const timeClause =
-    config.timestamps.length > 0
-      ? msTimeFilterClause(config.timestamps, params)
+    filterTimestamps.length > 0
+      ? msTimeFilterClause(filterTimestamps, params, scope)
       : "";
   const where = `
     WHERE ao.evidence_id = $1
@@ -1932,6 +2088,481 @@ export async function getMacosArtifactPage(
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* V5 Spotlight Explore                                               */
+/* ------------------------------------------------------------------ */
+
+const SPOTLIGHT_PARSER = "macos_spotlight";
+const SPOTLIGHT_KIND = "macos.spotlight.item";
+const SPOTLIGHT_NAME_EXPR = `COALESCE(
+  NULLIF(json_extract(ao.json, '$.item.name'), ''),
+  NULLIF(json_extract(ao.json, '$.attributes._kMDItemFileName'), ''),
+  NULLIF(json_extract(ao.json, '$.attributes.kMDItemDisplayName'), ''),
+  ''
+)`;
+const SPOTLIGHT_PATH_EXPR = `COALESCE(json_extract(ao.json, '$.item.path'), '')`;
+const SPOTLIGHT_CONTENT_TYPE_EXPR = `COALESCE(
+  NULLIF(json_extract(ao.json, '$.attributes.kMDItemContentType'), ''),
+  '(unknown)'
+)`;
+const SPOTLIGHT_ITEM_KIND_EXPR = `COALESCE(
+  NULLIF(json_extract(ao.json, '$.attributes.kMDItemKind'), ''),
+  '(unknown)'
+)`;
+const SPOTLIGHT_SOURCE_EXPR = `COALESCE(
+  NULLIF(json_extract(ao.json, '$.source.path'), ''),
+  '(unknown)'
+)`;
+const SPOTLIGHT_UPDATED_EXPR = `CAST(
+  json_extract(ao.json, '$.timestamps.updated.unix_ms') AS INTEGER
+)`;
+const SPOTLIGHT_PATH_ROOT_EXPR = `CASE
+  WHEN ${SPOTLIGHT_PATH_EXPR} = '' THEN '(no path)'
+  ELSE substr(
+    ltrim(${SPOTLIGHT_PATH_EXPR}, '/'),
+    1,
+    instr(ltrim(${SPOTLIGHT_PATH_EXPR}, '/') || '/', '/') - 1
+  )
+END`;
+
+export type SpotlightPreparationStage =
+  | "indexes"
+  | "search-index"
+  | "ready";
+
+export type SpotlightPreparationProgress = {
+  stage: SpotlightPreparationStage;
+  message: string;
+};
+
+const spotlightPreparationCache = new Map<string, Promise<void>>();
+
+/**
+ * Build the derived, partial indexes used by Spotlight Explore. They are kept
+ * out of ingestion deliberately: JSON expression indexes make a 200k+ object
+ * store interactive, but maintaining them row-by-row would slow artefact
+ * parsing. The FTS5 trigram table is refreshed when the scoped source count or
+ * maximum object id changes.
+ */
+export async function prepareSpotlightExplore(
+  evidenceId: number,
+  partitionId: number,
+  onProgress?: (progress: SpotlightPreparationProgress) => void,
+): Promise<void> {
+  const cacheKey = `${evidenceId}:${partitionId}`;
+  const existing = spotlightPreparationCache.get(cacheKey);
+  if (existing) {
+    await existing;
+    onProgress?.({ stage: "ready", message: "Spotlight indexes are ready." });
+    return;
+  }
+
+  const preparation = (async () => {
+    const db = await getEvidenceDb(evidenceId);
+    onProgress?.({
+      stage: "indexes",
+      message: "Preparing Spotlight sort and facet indexes…",
+    });
+
+    const predicate = `WHERE parser = '${SPOTLIGHT_PARSER}' AND kind = '${SPOTLIGHT_KIND}'`;
+    const indexStatements = [
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_updated
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           CAST(json_extract(json, '$.timestamps.updated.unix_ms') AS INTEGER) DESC,
+           id DESC
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_content_type
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           COALESCE(NULLIF(json_extract(json, '$.attributes.kMDItemContentType'), ''), '(unknown)'),
+           CAST(json_extract(json, '$.timestamps.updated.unix_ms') AS INTEGER) DESC,
+           id DESC
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_item_kind
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           COALESCE(NULLIF(json_extract(json, '$.attributes.kMDItemKind'), ''), '(unknown)'),
+           CAST(json_extract(json, '$.timestamps.updated.unix_ms') AS INTEGER) DESC,
+           id DESC
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_source
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           COALESCE(NULLIF(json_extract(json, '$.source.path'), ''), '(unknown)'),
+           CAST(json_extract(json, '$.timestamps.updated.unix_ms') AS INTEGER) DESC,
+           id DESC
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_path_root
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           CASE
+             WHEN COALESCE(json_extract(json, '$.item.path'), '') = '' THEN '(no path)'
+             ELSE substr(
+               ltrim(COALESCE(json_extract(json, '$.item.path'), ''), '/'),
+               1,
+               instr(ltrim(COALESCE(json_extract(json, '$.item.path'), ''), '/') || '/', '/') - 1
+             )
+           END,
+           CAST(json_extract(json, '$.timestamps.updated.unix_ms') AS INTEGER) DESC,
+           id DESC
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_name
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           LOWER(COALESCE(
+             NULLIF(json_extract(json, '$.item.name'), ''),
+             NULLIF(json_extract(json, '$.attributes._kMDItemFileName'), ''),
+             NULLIF(json_extract(json, '$.attributes.kMDItemDisplayName'), ''),
+             ''
+           )),
+           id
+         ) ${predicate}`,
+      `CREATE INDEX IF NOT EXISTS idx_spotlight_explore_path
+         ON artifact_objects(
+           evidence_id,
+           partition_id,
+           LOWER(COALESCE(json_extract(json, '$.item.path'), '')),
+           id
+         ) ${predicate}`,
+    ];
+    for (const statement of indexStatements) {
+      await db.execute(statement);
+    }
+
+    onProgress?.({
+      stage: "search-index",
+      message: "Preparing fast Spotlight name/path search…",
+    });
+    await db.execute(`CREATE TABLE IF NOT EXISTS spotlight_explore_meta (
+      scope_key TEXT PRIMARY KEY,
+      source_count INTEGER NOT NULL,
+      source_max_id INTEGER NOT NULL,
+      built_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    )`);
+    await db.execute(`CREATE VIRTUAL TABLE IF NOT EXISTS spotlight_explore_fts
+      USING fts5(
+        evidence_id UNINDEXED,
+        partition_id UNINDEXED,
+        name,
+        path,
+        tokenize='trigram'
+      )`);
+
+    const sourceRows = await db.select<
+      Array<{ source_count: number | string; source_max_id: number | string }>
+    >(
+      `SELECT COUNT(*) AS source_count, COALESCE(MAX(id), 0) AS source_max_id
+       FROM artifact_objects
+       WHERE evidence_id = $1 AND partition_id = $2
+         AND parser = '${SPOTLIGHT_PARSER}'
+         AND kind = '${SPOTLIGHT_KIND}'`,
+      [evidenceId, partitionId],
+    );
+    const sourceCount = Number(sourceRows[0]?.source_count ?? 0);
+    const sourceMaxId = Number(sourceRows[0]?.source_max_id ?? 0);
+    const scopeKey = `${evidenceId}:${partitionId}`;
+    const metaRows = await db.select<
+      Array<{ source_count: number | string; source_max_id: number | string }>
+    >(
+      `SELECT source_count, source_max_id
+       FROM spotlight_explore_meta WHERE scope_key = $1`,
+      [scopeKey],
+    );
+    const current = metaRows[0];
+    const needsRefresh =
+      !current ||
+      Number(current.source_count) !== sourceCount ||
+      Number(current.source_max_id) !== sourceMaxId;
+
+    if (needsRefresh) {
+      // plugin-sql is pool-backed, so do not emulate a transaction with
+      // separate BEGIN/COMMIT execute calls. The metadata marker is written
+      // last; an interrupted rebuild is therefore detected and repeated.
+      await db.execute(
+        "DELETE FROM spotlight_explore_meta WHERE scope_key = $1",
+        [scopeKey],
+      );
+      await db.execute(
+        "DELETE FROM spotlight_explore_fts WHERE evidence_id = $1 AND partition_id = $2",
+        [evidenceId, partitionId],
+      );
+      await db.execute(
+        `INSERT INTO spotlight_explore_fts(
+           rowid, evidence_id, partition_id, name, path
+         )
+         SELECT
+           ao.id,
+           ao.evidence_id,
+           ao.partition_id,
+           ${SPOTLIGHT_NAME_EXPR},
+           ${SPOTLIGHT_PATH_EXPR}
+         FROM artifact_objects ao
+         WHERE ao.evidence_id = $1 AND ao.partition_id = $2
+           AND ao.parser = '${SPOTLIGHT_PARSER}'
+           AND ao.kind = '${SPOTLIGHT_KIND}'`,
+        [evidenceId, partitionId],
+      );
+      await db.execute(
+        `INSERT INTO spotlight_explore_meta(
+           scope_key, source_count, source_max_id, built_at
+         ) VALUES ($1, $2, $3, strftime('%s','now'))
+         ON CONFLICT(scope_key) DO UPDATE SET
+           source_count = excluded.source_count,
+           source_max_id = excluded.source_max_id,
+           built_at = excluded.built_at`,
+        [scopeKey, sourceCount, sourceMaxId],
+      );
+    }
+
+    onProgress?.({ stage: "ready", message: "Spotlight indexes are ready." });
+  })();
+
+  spotlightPreparationCache.set(cacheKey, preparation);
+  try {
+    await preparation;
+  } catch (error) {
+    spotlightPreparationCache.delete(cacheKey);
+    throw error;
+  }
+}
+
+type SpotlightWhere = {
+  from: string;
+  where: string;
+  params: Array<string | number>;
+};
+
+function spotlightWhere(query: SpotlightExploreQuery): SpotlightWhere {
+  const params: Array<string | number> = [query.evidenceId, query.partitionId];
+  const clauses = [
+    "ao.evidence_id = $1",
+    "ao.partition_id = $2",
+    `ao.parser = '${SPOTLIGHT_PARSER}'`,
+    `ao.kind = '${SPOTLIGHT_KIND}'`,
+  ];
+  const search = query.search?.trim();
+  const from = "artifact_objects ao";
+  if (search && search.length >= 3) {
+    params.push(`"${search.replace(/"/g, '""')}"`);
+    // IN materializes the small FTS rowid result and lets SQLite keep using the
+    // appropriate Spotlight expression index for sorting/facets. A direct JOIN
+    // can otherwise choose the 231k-row updated index as the outer loop.
+    clauses.push(`ao.id IN (
+      SELECT rowid FROM spotlight_explore_fts
+      WHERE spotlight_explore_fts MATCH $${params.length}
+        AND evidence_id = $1 AND partition_id = $2
+    )`);
+  }
+  const exactFilters: Array<[string | undefined, string]> = [
+    [query.contentType, SPOTLIGHT_CONTENT_TYPE_EXPR],
+    [query.itemKind, SPOTLIGHT_ITEM_KIND_EXPR],
+    [query.sourceStore, SPOTLIGHT_SOURCE_EXPR],
+    [query.pathRoot, SPOTLIGHT_PATH_ROOT_EXPR],
+  ];
+  for (const [value, expression] of exactFilters) {
+    if (!value) continue;
+    params.push(value);
+    clauses.push(`${expression} = $${params.length}`);
+  }
+  if (query.startMs != null) {
+    params.push(query.startMs);
+    clauses.push(`${SPOTLIGHT_UPDATED_EXPR} >= $${params.length}`);
+  }
+  if (query.endMs != null) {
+    params.push(query.endMs);
+    clauses.push(`${SPOTLIGHT_UPDATED_EXPR} <= $${params.length}`);
+  }
+  return { from, where: clauses.join(" AND "), params };
+}
+
+const SPOTLIGHT_SORT_FIELDS: Record<string, string> = {
+  updated_ms: SPOTLIGHT_UPDATED_EXPR,
+  name: `LOWER(${SPOTLIGHT_NAME_EXPR})`,
+  path: `LOWER(${SPOTLIGHT_PATH_EXPR})`,
+  content_type: SPOTLIGHT_CONTENT_TYPE_EXPR,
+  item_kind: SPOTLIGHT_ITEM_KIND_EXPR,
+  source_store: SPOTLIGHT_SOURCE_EXPR,
+};
+
+function spotlightPathCandidates(
+  path: string | null,
+  sourceStore: string | null,
+): string[] {
+  if (!path) return [];
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  const prefix = sourceStore?.match(/^\/volume_\d+/)?.[0] ?? null;
+  return Array.from(
+    new Set([normalized, prefix ? `${prefix}${normalized}` : null].filter(Boolean) as string[]),
+  );
+}
+
+async function resolveSpotlightPageFiles(
+  db: Database,
+  query: SpotlightExploreQuery,
+  rows: SpotlightExploreRow[],
+): Promise<SpotlightExploreRow[]> {
+  const candidates = Array.from(
+    new Set(rows.flatMap((row) => spotlightPathCandidates(row.path, row.source_store))),
+  );
+  if (candidates.length === 0) {
+    return rows.map((row) => ({
+      ...row,
+      resolution_status: row.path ? "not_indexed" : "no_path",
+    }));
+  }
+  const placeholders = candidates.map((_, index) => `$${index + 3}`).join(", ");
+  const files = await db.select<
+    Array<{
+      id: number | string;
+      identifier: number | string;
+      size: number | string;
+      absolute_path: string;
+    }>
+  >(
+    `SELECT id, identifier, size, absolute_path
+     FROM system_files
+     WHERE evidence_id = $1 AND partition_id = $2
+       AND absolute_path IN (${placeholders})`,
+    [query.evidenceId, query.partitionId, ...candidates],
+  );
+  const byPath = new Map(files.map((file) => [file.absolute_path, file]));
+  return rows.map((row) => {
+    const resolved = spotlightPathCandidates(row.path, row.source_store)
+      .map((candidate) => byPath.get(candidate))
+      .find(Boolean);
+    if (!resolved) {
+      return {
+        ...row,
+        resolution_status: row.path ? "not_indexed" : "no_path",
+      };
+    }
+    return {
+      ...row,
+      resolution_status: "resolved",
+      resolved_file_id: Number(resolved.id),
+      resolved_identifier: Number(resolved.identifier),
+      resolved_size: Number(resolved.size),
+      resolved_absolute_path: resolved.absolute_path,
+    };
+  });
+}
+
+/** Fetch one bounded Spotlight page; only returned rows carry full JSON. */
+export async function getSpotlightExplorePage(
+  query: SpotlightExploreQuery,
+  timeScope?: InvestigationTimeScope,
+): Promise<SpotlightExplorePage> {
+  const effectiveQuery = timeScope
+    ? (() => {
+        const scope = resolveInvestigationTimeScope(
+          query.evidenceId,
+          query.partitionId,
+          timeScope,
+        );
+        return { ...query, startMs: scope.startMs, endMs: scope.endMs };
+      })()
+    : query;
+  await prepareSpotlightExplore(effectiveQuery.evidenceId, effectiveQuery.partitionId);
+  const db = await getEvidenceDb(effectiveQuery.evidenceId);
+  const built = spotlightWhere(effectiveQuery);
+  const limit = Math.max(1, Math.min(250, Math.trunc(effectiveQuery.limit || 50)));
+  const offset = Math.max(0, Math.trunc(effectiveQuery.offset || 0));
+  const direction = effectiveQuery.sortDirection === "asc" ? "ASC" : "DESC";
+  const sort =
+    SPOTLIGHT_SORT_FIELDS[effectiveQuery.sortField ?? "updated_ms"] ??
+    SPOTLIGHT_UPDATED_EXPR;
+  let rowCount = effectiveQuery.knownRowCount;
+  if (rowCount == null || !Number.isFinite(rowCount) || rowCount < 0) {
+    const countRows = await db.select<Array<{ count: number | string }>>(
+      `SELECT COUNT(*) AS count FROM ${built.from} WHERE ${built.where}`,
+      built.params,
+    );
+    rowCount = Number(countRows[0]?.count ?? 0);
+  }
+  const rows = await db.select<SpotlightExploreRow[]>(
+    `SELECT
+       ao.id AS id,
+       ao.parser AS parser,
+       ao.kind AS kind,
+       CAST(json_extract(ao.json, '$.item.id') AS INTEGER) AS spotlight_id,
+       CAST(json_extract(ao.json, '$.item.parent_id') AS INTEGER) AS parent_id,
+       CAST(json_extract(ao.json, '$.item.item_id') AS INTEGER) AS item_id,
+       CAST(json_extract(ao.json, '$.item.flags') AS INTEGER) AS flags,
+       NULLIF(${SPOTLIGHT_NAME_EXPR}, '') AS name,
+       NULLIF(${SPOTLIGHT_PATH_EXPR}, '') AS path,
+       ${SPOTLIGHT_CONTENT_TYPE_EXPR} AS content_type,
+       ${SPOTLIGHT_ITEM_KIND_EXPR} AS item_kind,
+       ${SPOTLIGHT_UPDATED_EXPR} AS updated_ms,
+       ${SPOTLIGHT_SOURCE_EXPR} AS source_store,
+       'no_path' AS resolution_status,
+       NULL AS resolved_file_id,
+       NULL AS resolved_identifier,
+       NULL AS resolved_size,
+       NULL AS resolved_absolute_path,
+       ao.json AS json
+     FROM ${built.from}
+     WHERE ${built.where}
+     ORDER BY ${sort} ${direction}, ao.id ${direction}
+     LIMIT $${built.params.length + 1} OFFSET $${built.params.length + 2}`,
+    [...built.params, limit, offset],
+  );
+  return {
+    rows: await resolveSpotlightPageFiles(db, effectiveQuery, rows ?? []),
+    rowCount: Number(rowCount),
+  };
+}
+
+/** Facets are computed from expression indexes, never by flattening JSON in JS. */
+export async function getSpotlightExploreFacets(
+  evidenceId: number,
+  partitionId: number,
+  timeScope?: InvestigationTimeScope,
+): Promise<SpotlightExploreFacets> {
+  await prepareSpotlightExplore(evidenceId, partitionId);
+  const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
+  const baseParams: Array<string | number> = [evidenceId, partitionId];
+  const timeClause = msTimeFilterClause(
+    [SPOTLIGHT_UPDATED_EXPR],
+    baseParams,
+    scope,
+  );
+  const facet = async (
+    expression: string,
+    indexName: string,
+    limit: number,
+  ) => {
+    const params = [...baseParams, limit];
+    const rows = await db.select<Array<{ value: string; count: number | string }>>(
+      `SELECT ${expression} AS value, COUNT(*) AS count
+       FROM artifact_objects ao INDEXED BY ${indexName}
+       WHERE ao.evidence_id = $1 AND ao.partition_id = $2
+         AND ao.parser = '${SPOTLIGHT_PARSER}'
+         AND ao.kind = '${SPOTLIGHT_KIND}'
+         ${timeClause}
+       GROUP BY ${expression}
+       ORDER BY count DESC, value COLLATE NOCASE ASC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return rows.map((row) => ({ value: String(row.value), count: Number(row.count) }));
+  };
+  const [contentTypes, itemKinds, sourceStores, pathRoots] = await Promise.all([
+    facet(SPOTLIGHT_CONTENT_TYPE_EXPR, "idx_spotlight_explore_content_type", 250),
+    facet(SPOTLIGHT_ITEM_KIND_EXPR, "idx_spotlight_explore_item_kind", 250),
+    facet(SPOTLIGHT_SOURCE_EXPR, "idx_spotlight_explore_source", 50),
+    facet(SPOTLIGHT_PATH_ROOT_EXPR, "idx_spotlight_explore_path_root", 100),
+  ]);
+  return { contentTypes, itemKinds, sourceStores, pathRoots };
+}
+
 /**
  * Parsed iOS routined GPS location fixes for a partition, ordered chronologically
  * for track/timeline rendering. Only rows with a coordinate are returned.
@@ -1939,12 +2570,15 @@ export async function getMacosArtifactPage(
 export async function getIosLocationFixes(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosLocationFixRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.fix.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -1977,16 +2611,18 @@ export async function getIosLocationFixes(
 export async function getIosCalendarEvents(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosCalendarEventRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
-  // An event is in range if it starts or ends inside the window.
-  const timeClause = msTimeFilterClause(
-    [
-      "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
-      "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
-    ],
+  // Include any event whose [start, end] interval overlaps the selected range,
+  // including events which entirely contain that range.
+  const timeClause = msIntervalTimeFilterClause(
+    "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
+    "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2019,8 +2655,10 @@ export async function getIosCalendarEvents(
 export async function getIosMailMessages(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosMailMessageRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   // Match on either leg so a message sent before but received inside the
   // window (or vice versa) is not lost.
@@ -2030,6 +2668,7 @@ export async function getIosMailMessages(
       "CAST(json_extract(ao.json, '$.timestamps.sent.unix_ms') AS INTEGER)",
     ],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2062,8 +2701,10 @@ export async function getIosMailMessages(
 export async function getIosNotes(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosNoteRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     [
@@ -2071,6 +2712,7 @@ export async function getIosNotes(
       "CAST(json_extract(ao.json, '$.timestamps.modified.unix_ms') AS INTEGER)",
     ],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2099,19 +2741,92 @@ export async function getIosNotes(
 /* ------------------------------------------------------------------ */
 
 /**
- * The active investigation time window, read straight from the Zustand store.
+ * Immutable time scope for one evidence partition.
  *
- * Query helpers consult the store rather than taking the range as a parameter,
- * so a new filtered view needs no signature changes. Components still list the
- * filter in their effect dependencies so they refetch when it moves.
+ * New query paths should receive this value explicitly from their caller. The
+ * optional query parameters added alongside this type intentionally preserve
+ * the existing call signatures while the UI migrates away from implicit store
+ * reads. Keeping the evidence and partition in the value prevents a range from
+ * one scope being applied during a partition-switch render race.
  */
-function activeTimeWindow(): {
-  start: number | null;
-  end: number | null;
+export type InvestigationTimeScope = {
+  evidenceId: number;
+  partitionId: number;
+  startMs: number | null;
+  endMs: number | null;
   fileTimeField: FileTimeField;
-} {
+};
+
+function normalizeInvestigationTimeScope(
+  scope: InvestigationTimeScope,
+): InvestigationTimeScope {
+  const startMs = Number.isFinite(scope.startMs) ? scope.startMs : null;
+  const endMs = Number.isFinite(scope.endMs) ? scope.endMs : null;
+  const [lo, hi] =
+    startMs != null && endMs != null && startMs > endMs
+      ? [endMs, startMs]
+      : [startMs, endMs];
+  const fileTimeField: FileTimeField =
+    scope.fileTimeField === "created" ||
+    scope.fileTimeField === "modified" ||
+    scope.fileTimeField === "accessed"
+      ? scope.fileTimeField
+      : "any";
+  return { ...scope, startMs: lo, endMs: hi, fileTimeField };
+}
+
+/**
+ * Resolve an explicit scope, or adapt the current Zustand value for legacy
+ * callers. A mismatched explicit scope is a programming error; a mismatched
+ * ambient scope is treated as inactive so it can never bleed across partitions.
+ */
+export function resolveInvestigationTimeScope(
+  evidenceId: number,
+  partitionId: number,
+  explicit?: InvestigationTimeScope,
+): InvestigationTimeScope {
+  if (explicit) {
+    if (
+      explicit.evidenceId !== evidenceId ||
+      explicit.partitionId !== partitionId
+    ) {
+      throw new Error(
+        `Investigation time scope ${explicit.evidenceId}:${explicit.partitionId} ` +
+          `does not match query scope ${evidenceId}:${partitionId}`,
+      );
+    }
+    return normalizeInvestigationTimeScope(explicit);
+  }
+
   const s = useTimeFilterStore.getState();
-  return { start: s.start, end: s.end, fileTimeField: s.fileTimeField };
+  if (s.evidenceId !== evidenceId || s.partitionId !== partitionId) {
+    return {
+      evidenceId,
+      partitionId,
+      startMs: null,
+      endMs: null,
+      fileTimeField: "any",
+    };
+  }
+  return normalizeInvestigationTimeScope({
+    evidenceId,
+    partitionId,
+    startMs: s.start,
+    endMs: s.end,
+    fileTimeField: s.fileTimeField,
+  });
+}
+
+/** Backward-compatible fallback for internal predicate callers not yet scoped. */
+function ambientTimeScope(): InvestigationTimeScope {
+  const s = useTimeFilterStore.getState();
+  return normalizeInvestigationTimeScope({
+    evidenceId: s.evidenceId ?? -1,
+    partitionId: s.partitionId ?? -1,
+    startMs: s.start,
+    endMs: s.end,
+    fileTimeField: s.fileTimeField,
+  });
 }
 
 /**
@@ -2120,8 +2835,12 @@ function activeTimeWindow(): {
  * them lies inside (e.g. a contact created OR modified in range). Appends bound
  * values to `params` and returns "" when no filter is active.
  */
-export function msTimeFilterClause(exprs: string[], params: any[]): string {
-  const match = msTimeMatchExpr(exprs, params);
+export function msTimeFilterClause(
+  exprs: string[],
+  params: any[],
+  scope?: InvestigationTimeScope,
+): string {
+  const match = msTimeMatchExpr(exprs, params, scope);
   return match === "1" ? "" : ` AND ${match}`;
 }
 
@@ -2131,18 +2850,22 @@ export function msTimeFilterClause(exprs: string[], params: any[]): string {
  * WHERE predicate and inside an aggregate, e.g. counting how many of a
  * conversation's messages land in the window.
  */
-export function msTimeMatchExpr(exprs: string[], params: any[]): string {
-  const { start, end } = activeTimeWindow();
-  if ((start == null && end == null) || exprs.length === 0) return "1";
+export function msTimeMatchExpr(
+  exprs: string[],
+  params: any[],
+  scope?: InvestigationTimeScope,
+): string {
+  const { startMs, endMs } = scope ?? ambientTimeScope();
+  if ((startMs == null && endMs == null) || exprs.length === 0) return "1";
 
   const perExpr = exprs.map((expr) => {
     const parts: string[] = [`${expr} IS NOT NULL`];
-    if (start != null) {
-      params.push(start);
+    if (startMs != null) {
+      params.push(startMs);
       parts.push(`${expr} >= $${params.length}`);
     }
-    if (end != null) {
-      params.push(end);
+    if (endMs != null) {
+      params.push(endMs);
       parts.push(`${expr} <= $${params.length}`);
     }
     return `(${parts.join(" AND ")})`;
@@ -2152,14 +2875,46 @@ export function msTimeMatchExpr(exprs: string[], params: any[]): string {
 }
 
 /**
+ * AND-clause for an interval that overlaps the active UTC window.
+ *
+ * Endpoint-within-window logic drops long-running events that begin before and
+ * end after the selected range. Overlap instead means:
+ *   event.start <= scope.end AND COALESCE(event.end,event.start) >= scope.start.
+ */
+export function msIntervalTimeFilterClause(
+  startExpr: string,
+  endExpr: string,
+  params: any[],
+  scope?: InvestigationTimeScope,
+): string {
+  const { startMs, endMs } = scope ?? ambientTimeScope();
+  if (startMs == null && endMs == null) return "";
+
+  const parts = [`${startExpr} IS NOT NULL`];
+  if (endMs != null) {
+    params.push(endMs);
+    parts.push(`${startExpr} <= $${params.length}`);
+  }
+  if (startMs != null) {
+    params.push(startMs);
+    parts.push(`COALESCE(${endExpr}, ${startExpr}) >= $${params.length}`);
+  }
+  return ` AND (${parts.join(" AND ")})`;
+}
+
+/**
  * AND-clause for `system_files`-style rows, whose created/modified/accessed
  * columns are stored in Unix **seconds** (the indexer multiplies by 1000 when
  * building timeline_events). The investigator-selected field decides which
  * column(s) are consulted.
  */
-export function fileTimeFilterClause(alias: string, params: any[]): string {
-  const { start, end, fileTimeField } = activeTimeWindow();
-  if (start == null && end == null) return "";
+export function fileTimeFilterClause(
+  alias: string,
+  params: any[],
+  scope?: InvestigationTimeScope,
+): string {
+  const { startMs, endMs, fileTimeField } = scope ?? ambientTimeScope();
+  if (startMs == null && endMs == null) return "";
 
   const columns =
     fileTimeField === "any"
@@ -2169,12 +2924,15 @@ export function fileTimeFilterClause(alias: string, params: any[]): string {
   const perColumn = columns.map((col) => {
     const expr = `${alias}.${col}`;
     const parts: string[] = [`${expr} IS NOT NULL`, `${expr} > 0`];
-    if (start != null) {
-      params.push(Math.floor(start / 1000));
+    if (startMs != null) {
+      // system_files timestamps have whole-second precision. Ceil the lower
+      // bound and floor the upper bound so the SQL interval never expands past
+      // the investigator's exact millisecond selection.
+      params.push(Math.ceil(startMs / 1000));
       parts.push(`${expr} >= $${params.length}`);
     }
-    if (end != null) {
-      params.push(Math.ceil(end / 1000));
+    if (endMs != null) {
+      params.push(Math.floor(endMs / 1000));
       parts.push(`${expr} <= $${params.length}`);
     }
     return `(${parts.join(" AND ")})`;
@@ -2288,8 +3046,10 @@ export async function getIosPhotoAssetsPage(
   partitionId: number,
   offset: number,
   limit: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<{ rows: IosPhotoAssetRow[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const root = await getPhotoPathRoot(evidenceId, partitionId);
 
   const params: any[] = [evidenceId, partitionId, root];
@@ -2299,6 +3059,7 @@ export async function getIosPhotoAssetsPage(
       "CAST(json_extract(ao.json, '$.timestamps.added.unix_ms') AS INTEGER)",
     ],
     params,
+    scope,
   );
   const limitIdx = params.length + 1;
   const offsetIdx = params.length + 2;
@@ -2358,8 +3119,10 @@ export async function getIosPhotoAssetsPage(
 export async function getIosPhotoAssets(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosPhotoAssetRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   // Capture date, or failing that the date it entered the library.
   const timeClause = msTimeFilterClause(
@@ -2368,6 +3131,7 @@ export async function getIosPhotoAssets(
       "CAST(json_extract(ao.json, '$.timestamps.added.unix_ms') AS INTEGER)",
     ],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2407,15 +3171,16 @@ export async function getIosPhotoAssets(
 export async function getIosActivityEvents(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosActivityEventRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
-  const timeClause = msTimeFilterClause(
-    [
-      "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
-      "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
-    ],
+  const timeClause = msIntervalTimeFilterClause(
+    "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
+    "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2485,12 +3250,15 @@ async function getPhotoPathRoot(
 export async function getIosTccGrants(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosTccGrantRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.last_modified.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2521,15 +3289,16 @@ export async function getIosTccGrants(
 export async function getIosInteractions(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosInteractionRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
-  const timeClause = msTimeFilterClause(
-    [
-      "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
-      "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
-    ],
+  const timeClause = msIntervalTimeFilterClause(
+    "CAST(json_extract(ao.json, '$.timestamps.start.unix_ms') AS INTEGER)",
+    "CAST(json_extract(ao.json, '$.timestamps.end.unix_ms') AS INTEGER)",
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2574,12 +3343,15 @@ export async function getIosDataUsageTopApps(
   partitionId: number,
   limit: number,
   orderBy: "cellular" | "wifi" | "total" = "cellular",
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosDataUsageAppTotal[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.usage.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const orderExpr =
     orderBy === "wifi"
@@ -2634,12 +3406,15 @@ export async function getIosDataUsageTopApps(
 export async function getIosDataUsage(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<IosDataUsageRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const params: any[] = [evidenceId, partitionId];
   const timeClause = msTimeFilterClause(
     ["CAST(json_extract(ao.json, '$.timestamps.usage.unix_ms') AS INTEGER)"],
     params,
+    scope,
   );
   const rows = (await db.select(
     `
@@ -2742,11 +3517,17 @@ export async function getChatConversations(
   evidenceId: number,
   partitionId: number,
   scope?: ChatQueryScope,
+  timeScope?: InvestigationTimeScope,
 ): Promise<DiscussionConversationRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const investigationScope = resolveInvestigationTimeScope(
+    evidenceId,
+    partitionId,
+    timeScope,
+  );
   const params: any[] = [evidenceId, partitionId];
   const scopeClauses = appendChatScope(scope, params);
-  const inWindow = msTimeMatchExpr([CHAT_TS], params);
+  const inWindow = msTimeMatchExpr([CHAT_TS], params, investigationScope);
   const hasAttachmentRefs = await hasArtifactAttachmentRefs(db);
   const attachmentExists = hasAttachmentRefs
     ? `EXISTS (
@@ -2818,8 +3599,14 @@ export async function getChatMessages(params: {
   limit: number;
   search?: string;
   scope?: ChatQueryScope;
+  timeScope?: InvestigationTimeScope;
 }): Promise<{ rows: DiscussionMessageRow[]; rowCount: number }> {
   const db = await getEvidenceDb(params.evidenceId);
+  const investigationScope = resolveInvestigationTimeScope(
+    params.evidenceId,
+    params.partitionId,
+    params.timeScope,
+  );
   const hasAttachmentRefs = await hasArtifactAttachmentRefs(db);
   const queryParams: any[] = [params.evidenceId, params.partitionId, params.conversationId];
   const clauses = [
@@ -2865,7 +3652,7 @@ export async function getChatMessages(params: {
     }
     clauses.push(`(${searchClauses.join(" OR ")})`);
   }
-  const timeMatch = msTimeMatchExpr([CHAT_TS], queryParams);
+  const timeMatch = msTimeMatchExpr([CHAT_TS], queryParams, investigationScope);
   if (timeMatch !== "1") clauses.push(timeMatch);
 
   const whereSql = clauses.join(" AND ");
@@ -3120,8 +3907,18 @@ export async function getTimelineEventCounts(
 export type TimelineEventsFilter = {
   start: number | null;
   end: number | null;
-  /** null = all types; array = only these event_type values */
+  /** null = all types; [] = no types; non-empty array = only those values. */
   event_types: string[] | null;
+};
+
+export type TimelineCursorQuery = {
+  cursorMs: number;
+  beforeMs: number;
+  afterMs: number;
+  /** Hard result bound; cursor-following never runs an unbounded event query. */
+  limit?: number;
+  /** Optional outer range and event-type selection from the timeline workspace. */
+  filter?: TimelineEventsFilter;
 };
 
 export async function getTimelineEvents(
@@ -3134,9 +3931,7 @@ export async function getTimelineEvents(
   const db = await getEvidenceDb(evidenceId);
 
   const eventTypesJson =
-    filter?.event_types && filter.event_types.length > 0
-      ? JSON.stringify(filter.event_types)
-      : null;
+    filter?.event_types == null ? null : JSON.stringify(filter.event_types);
 
   const params = [
     evidenceId,
@@ -3181,8 +3976,10 @@ export async function getTimelineEvents(
       AND sf.partition_id = te.partition_id
     LEFT JOIN artifact_objects ao
       ON ao.id = te.artifact_object_id
+      AND ao.evidence_id = te.evidence_id
+      AND ao.partition_id = te.partition_id
     WHERE ${baseWhere}
-    ORDER BY te.ts ASC
+    ORDER BY te.ts ASC, te.id ASC
     LIMIT $6 OFFSET $7
     `,
     [...params, limit, offset],
@@ -3194,6 +3991,81 @@ export async function getTimelineEvents(
   );
 
   return { rows, rowCount: Number(countResult?.[0]?.count ?? 0) };
+}
+
+/**
+ * Fetch a small, bounded neighbourhood around a moving investigation cursor.
+ *
+ * This intentionally skips the companion COUNT query used by the paged grid:
+ * location playback can publish several cursor positions per second, and a full
+ * count on every position would needlessly serialize the evidence DB. Results
+ * are ordered by proximity, then timestamp/id for deterministic ties.
+ */
+export async function getTimelineEventsNearCursor(
+  evidenceId: number,
+  partitionId: number,
+  query: TimelineCursorQuery,
+): Promise<TimelineEvent[]> {
+  const db = await getEvidenceDb(evidenceId);
+  if (!Number.isFinite(query.cursorMs)) return [];
+  const cursorMs = Math.trunc(query.cursorMs);
+  const beforeMs = Number.isFinite(query.beforeMs)
+    ? Math.max(0, Math.trunc(query.beforeMs))
+    : 0;
+  const afterMs = Number.isFinite(query.afterMs)
+    ? Math.max(0, Math.trunc(query.afterMs))
+    : 0;
+  const requestedLimit = query.limit ?? 100;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(500, Math.trunc(requestedLimit)))
+    : 100;
+  const filter = query.filter;
+  const start = Math.max(cursorMs - beforeMs, filter?.start ?? Number.NEGATIVE_INFINITY);
+  const end = Math.min(cursorMs + afterMs, filter?.end ?? Number.POSITIVE_INFINITY);
+  if (start > end) return [];
+
+  const eventTypesJson =
+    filter?.event_types == null ? null : JSON.stringify(filter.event_types);
+
+  return db.select<TimelineEvent[]>(
+    `
+    SELECT
+      te.id,
+      te.ts,
+      te.source,
+      te.event_type,
+      te.description,
+      te.actor,
+      te.file_id,
+      te.artifact_object_id,
+      sf.name AS file_name,
+      COALESCE(
+        sf.absolute_path,
+        CASE te.source
+          WHEN 'mobile_ios_whatsapp' THEN json_extract(ao.json, '$.attachment.local_path')
+          WHEN 'mobile_ios_imessage' THEN json_extract(ao.json, '$.attachment.filename')
+          ELSE NULL
+        END
+      ) AS file_path
+    FROM timeline_events te
+    LEFT JOIN system_files sf
+      ON sf.id = te.file_id
+      AND sf.evidence_id = te.evidence_id
+      AND sf.partition_id = te.partition_id
+    LEFT JOIN artifact_objects ao
+      ON ao.id = te.artifact_object_id
+      AND ao.evidence_id = te.evidence_id
+      AND ao.partition_id = te.partition_id
+    WHERE te.evidence_id = $1
+      AND te.partition_id = $2
+      AND te.ts >= $3
+      AND te.ts <= $4
+      AND ($5 IS NULL OR te.event_type IN (SELECT value FROM json_each($5)))
+    ORDER BY ABS(te.ts - $6) ASC, te.ts ASC, te.id ASC
+    LIMIT $7
+    `,
+    [evidenceId, partitionId, start, end, eventTypesJson, cursorMs, limit],
+  );
 }
 
 /*  SERVER-SIDE FILTERING FOR FILES Exploration */
@@ -3491,13 +4363,13 @@ export async function getFiles(
     const startSec =
       timelineFilter?.start != null
         ? timelineFilter.start < 1e11
-          ? timelineFilter.start
-          : Math.floor(timelineFilter.start / 1000)
+          ? Math.ceil(timelineFilter.start)
+          : Math.ceil(timelineFilter.start / 1000)
         : null;
     const endSec =
       timelineFilter?.end != null
         ? timelineFilter.end < 1e11
-          ? timelineFilter.end
+          ? Math.floor(timelineFilter.end)
           : Math.floor(timelineFilter.end / 1000)
         : null;
 
@@ -4106,11 +4978,13 @@ function mapAttachmentRef(row: WhatsAppAttachmentRefRow): DiscussionAttachmentRo
 export async function getWhatsAppConversations(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<DiscussionConversationRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
 
   const convParams: any[] = [evidenceId, partitionId];
-  const inWindow = msTimeMatchExpr([WHATSAPP_TS_EXPR], convParams);
+  const inWindow = msTimeMatchExpr([WHATSAPP_TS_EXPR], convParams, scope);
 
   const rows = (await db.select(
     `
@@ -4164,8 +5038,14 @@ export async function getWhatsAppMessages(params: {
   offset: number;
   limit: number;
   search?: string;
+  timeScope?: InvestigationTimeScope;
 }): Promise<{ rows: DiscussionMessageRow[]; rowCount: number }> {
   const db = await getEvidenceDb(params.evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    params.evidenceId,
+    params.partitionId,
+    params.timeScope,
+  );
 
   const queryParams: any[] = [
     params.evidenceId,
@@ -4196,7 +5076,7 @@ export async function getWhatsAppMessages(params: {
     `);
   }
 
-  const timeMatch = msTimeMatchExpr([WHATSAPP_TS_EXPR], queryParams);
+  const timeMatch = msTimeMatchExpr([WHATSAPP_TS_EXPR], queryParams, scope);
   if (timeMatch !== "1") clauses.push(timeMatch);
 
   const whereSql = clauses.join(" AND ");
@@ -4424,11 +5304,13 @@ export async function getWhatsAppMessages(params: {
 export async function getIMessageConversations(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<DiscussionConversationRow[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
 
   const convParams: any[] = [evidenceId, partitionId];
-  const inWindow = msTimeMatchExpr([IMESSAGE_TS_EXPR], convParams);
+  const inWindow = msTimeMatchExpr([IMESSAGE_TS_EXPR], convParams, scope);
 
   const rows = (await db.select(
     `
@@ -4486,8 +5368,14 @@ export async function getIMessageMessages(params: {
   offset: number;
   limit: number;
   search?: string;
+  timeScope?: InvestigationTimeScope;
 }): Promise<{ rows: DiscussionMessageRow[]; rowCount: number }> {
   const db = await getEvidenceDb(params.evidenceId);
+  const scope = resolveInvestigationTimeScope(
+    params.evidenceId,
+    params.partitionId,
+    params.timeScope,
+  );
 
   const queryParams: any[] = [
     params.evidenceId,
@@ -4517,7 +5405,7 @@ export async function getIMessageMessages(params: {
     `);
   }
 
-  const timeMatch = msTimeMatchExpr([IMESSAGE_TS_EXPR], queryParams);
+  const timeMatch = msTimeMatchExpr([IMESSAGE_TS_EXPR], queryParams, scope);
   if (timeMatch !== "1") clauses.push(timeMatch);
 
   const whereSql = clauses.join(" AND ");
@@ -5047,8 +5935,10 @@ export async function fetchAiArtifacts(
   offset: number,
   limit: number,
   filterModel?: FilterModel,
+  timeScope?: InvestigationTimeScope,
 ): Promise<{ rows: any[]; rowCount: number }> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
 
   // Re-use standard built artifact placeholders where applicable for filtering
   const built = buildArtifactFiltersWithDollarPlaceholders(filterModel, 3);
@@ -5056,7 +5946,7 @@ export async function fetchAiArtifacts(
 
   // Global time window over the backing file's timestamps.
   const queryParams = [evidenceId, partitionId, ...built.params];
-  const timeWhere = fileTimeFilterClause("sf", queryParams);
+  const timeWhere = fileTimeFilterClause("sf", queryParams, scope);
   const aiLimitIdx = queryParams.length + 1;
   const aiOffsetIdx = queryParams.length + 2;
 
@@ -5097,8 +5987,8 @@ export async function fetchAiArtifacts(
       ao.evidence_id = $1 AND
       ao.partition_id = $2
       ${extraWhere.replace(/artifacts\./g, 'ao.')}
+      ${timeWhere}
     ORDER BY score DESC
-    ${timeWhere}
     LIMIT $${aiLimitIdx} OFFSET $${aiOffsetIdx}
   `;
 
@@ -5405,18 +6295,41 @@ import type {
 export async function getFileStats(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<FileStats> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
   const fsParams: any[] = [evidenceId, partitionId];
-  const fsTimeWhere = fileTimeFilterClause("system_files", fsParams);
+  const fsTimeWhere = fileTimeFilterClause("system_files", fsParams, scope);
+  // Derive the displayed range from the same timestamp basis that admitted the
+  // rows. These are scalar-per-row extrema wrapped in aggregate MIN/MAX, so the
+  // file table is still scanned only once. The sentinels are removed before the
+  // outer aggregate and therefore cannot leak into an empty result.
+  const [earliestExpr, latestExpr] =
+    scope.fileTimeField === "any"
+      ? [
+          `MIN(NULLIF(MIN(
+            CASE WHEN created > 0 THEN created ELSE 9223372036854775807 END,
+            CASE WHEN modified > 0 THEN modified ELSE 9223372036854775807 END,
+            CASE WHEN accessed > 0 THEN accessed ELSE 9223372036854775807 END
+          ), 9223372036854775807))`,
+          `MAX(NULLIF(MAX(
+            CASE WHEN created > 0 THEN created ELSE 0 END,
+            CASE WHEN modified > 0 THEN modified ELSE 0 END,
+            CASE WHEN accessed > 0 THEN accessed ELSE 0 END
+          ), 0))`,
+        ]
+      : [
+          `MIN(CASE WHEN ${scope.fileTimeField} > 0 THEN ${scope.fileTimeField} END)`,
+          `MAX(CASE WHEN ${scope.fileTimeField} > 0 THEN ${scope.fileTimeField} END)`,
+        ];
   const rows: any[] = await db.select(
     `SELECT
        COALESCE(SUM(CASE WHEN is_dir = 0 THEN 1 ELSE 0 END), 0)  AS total_files,
        COALESCE(SUM(CASE WHEN is_dir = 1 THEN 1 ELSE 0 END), 0)  AS total_dirs,
        COALESCE(SUM(CASE WHEN is_dir = 0 THEN size ELSE 0 END), 0) AS total_size,
-       MIN(CASE WHEN created  > 0 THEN created  END)              AS earliest_ts,
-       MAX(CASE WHEN modified > 0 THEN modified
-                WHEN created  > 0 THEN created  END)              AS latest_ts
+       ${earliestExpr} AS earliest_ts,
+       ${latestExpr} AS latest_ts
      FROM system_files
      WHERE evidence_id = $1 AND partition_id = $2 ${fsTimeWhere}`,
     fsParams,
@@ -5434,8 +6347,12 @@ export async function getFileStats(
 export async function getMimeTypeDistribution(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<MimeTypeCount[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
+  const params: any[] = [evidenceId, partitionId];
+  const timeWhere = fileTimeFilterClause("system_files", params, scope);
   const rows: any[] = await db.select(
     `SELECT
        CASE
@@ -5466,9 +6383,10 @@ export async function getMimeTypeDistribution(
        COUNT(*) AS count
      FROM system_files
      WHERE evidence_id = $1 AND partition_id = $2 AND is_dir = 0
+       ${timeWhere}
      GROUP BY mime_category
      ORDER BY count DESC`,
-    [evidenceId, partitionId],
+    params,
   );
   return rows.map((r) => ({
     mime_category: String(r.mime_category),
@@ -5479,16 +6397,22 @@ export async function getMimeTypeDistribution(
 export async function getArtifactCategoryCounts(
   evidenceId: number,
   partitionId: number,
+  timeScope?: InvestigationTimeScope,
 ): Promise<ArtifactCategoryCount[]> {
   try {
     const db = await getEvidenceDb(evidenceId);
+    const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
+    const params: any[] = [evidenceId, partitionId];
+    const timeWhere = fileTimeFilterClause("sf", params, scope);
     const rows: any[] = await db.select(
-      `SELECT category, COUNT(*) AS count
-       FROM artifacts
-       WHERE evidence_id = $1 AND partition_id = $2
-       GROUP BY category
+      `SELECT a.category AS category, COUNT(*) AS count
+       FROM artifacts a
+       INNER JOIN system_files sf ON sf.id = a.file_id
+       WHERE a.evidence_id = $1 AND a.partition_id = $2
+         ${timeWhere}
+       GROUP BY a.category
        ORDER BY count DESC`,
-      [evidenceId, partitionId],
+      params,
     );
     return rows.map((r) => ({
       category: String(r.category),
@@ -5503,18 +6427,24 @@ export async function getTopFileSignatures(
   evidenceId: number,
   partitionId: number,
   limit = 12,
+  timeScope?: InvestigationTimeScope,
 ): Promise<TopSignature[]> {
   const db = await getEvidenceDb(evidenceId);
+  const scope = resolveInvestigationTimeScope(evidenceId, partitionId, timeScope);
+  const params: any[] = [evidenceId, partitionId];
+  const timeWhere = fileTimeFilterClause("system_files", params, scope);
+  const limitPlaceholder = `$${params.length + 1}`;
   const rows: any[] = await db.select(
     `SELECT sig_name, COUNT(*) AS count
      FROM system_files
      WHERE evidence_id = $1 AND partition_id = $2
        AND is_dir = 0
        AND sig_name IS NOT NULL AND sig_name != ''
+       ${timeWhere}
      GROUP BY sig_name
      ORDER BY count DESC
-     LIMIT $3`,
-    [evidenceId, partitionId, limit],
+     LIMIT ${limitPlaceholder}`,
+    [...params, limit],
   );
   return rows.map((r) => ({
     sig_name: String(r.sig_name),

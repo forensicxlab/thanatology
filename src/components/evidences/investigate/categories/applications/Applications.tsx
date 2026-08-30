@@ -14,11 +14,19 @@ import BrowserHistoryGrid from "../mobile/BrowserHistoryGrid";
 import CalendarGrid from "../mobile/CalendarGrid";
 import MailGrid from "../mobile/MailGrid";
 import NotesGrid from "../mobile/NotesGrid";
+import SpotlightExplore from "../explore/SpotlightExplore";
 
 interface ApplicationsProps {
   evidenceId: number;
   partitionId: number;
+  onRevealFile: (fileId: number) => void;
 }
+
+type ApplicationTagDescriptor = ArtifactTagDescriptor & {
+  sourceCategory: "Application" | "System";
+  sourceTag: string;
+  sourceParser?: string;
+};
 
 const CHAT_PARSERS = [
   "mobile_ios_imessage",
@@ -35,15 +43,55 @@ const BROWSER_PARSERS = [
   "macos_firefox",
 ] as const;
 
-const loadApplicationGroups = (evidenceId: number, partitionId: number) =>
-  fetchArtifactTagDescriptors(evidenceId, partitionId, "Application");
+/**
+ * Spotlight used to be catalogued as System/filesystem. Merge that legacy
+ * capability into Applications so already-processed evidence is immediately
+ * usable; newly identified evidence arrives as Application/spotlight.
+ */
+const loadApplicationGroups = async (
+  evidenceId: number,
+  partitionId: number,
+): Promise<ApplicationTagDescriptor[]> => {
+  const [applicationGroups, systemGroups] = await Promise.all([
+    fetchArtifactTagDescriptors(evidenceId, partitionId, "Application"),
+    fetchArtifactTagDescriptors(evidenceId, partitionId, "System"),
+  ]);
+
+  const currentSpotlight = applicationGroups.find((item) =>
+    hasParserCapability(item, "macos_spotlight"),
+  );
+  const legacySpotlight = systemGroups.find((item) =>
+    hasParserCapability(item, "macos_spotlight"),
+  );
+  const regular: ApplicationTagDescriptor[] = applicationGroups
+    .filter((item) => !hasParserCapability(item, "macos_spotlight"))
+    .map((item) => ({
+      ...item,
+      sourceCategory: "Application" as const,
+      sourceTag: item.tag,
+    }));
+  const spotlightSource = currentSpotlight ?? legacySpotlight;
+  if (spotlightSource) {
+    regular.push({
+      tag: "spotlight",
+      capabilities: spotlightSource.capabilities.filter(
+        ({ parser }) => parser === "macos_spotlight" || parser == null,
+      ),
+      sourceCategory: currentSpotlight ? "Application" : "System",
+      sourceTag: spotlightSource.tag,
+      sourceParser: "macos_spotlight",
+    });
+  }
+  return regular.sort((left, right) => left.tag.localeCompare(right.tag));
+};
 
 const Applications: React.FC<ApplicationsProps> = ({
   evidenceId,
   partitionId,
+  onRevealFile,
 }) => {
   const viewsForItem = useCallback(
-    (item: ArtifactTagDescriptor): CategoryTagView[] => {
+    (item: ApplicationTagDescriptor): CategoryTagView[] => {
       const views: CategoryTagView[] = [];
 
       if (hasParserCapability(item, ...CHAT_PARSERS)) {
@@ -100,27 +148,41 @@ const Applications: React.FC<ApplicationsProps> = ({
           node: <NotesGrid evidenceId={evidenceId} partitionId={partitionId} />,
         });
       }
+      if (hasParserCapability(item, "macos_spotlight")) {
+        views.push({
+          id: "spotlight",
+          label: "Spotlight",
+          node: (
+            <SpotlightExplore
+              evidenceId={evidenceId}
+              partitionId={partitionId}
+              onRevealFile={onRevealFile}
+            />
+          ),
+        });
+      }
 
       return views;
     },
-    [evidenceId, partitionId],
+    [evidenceId, onRevealFile, partitionId],
   );
 
   const filesForItem = useCallback(
-    (item: ArtifactTagDescriptor) => (
+    (item: ApplicationTagDescriptor) => (
       <Artifacts
         key={item.tag}
         evidence_id={evidenceId}
         partition_id={partitionId}
-        category="Application"
-        tag={item.tag}
+        category={item.sourceCategory}
+        tag={item.sourceTag}
+        parser={item.sourceParser}
       />
     ),
     [evidenceId, partitionId],
   );
 
   return (
-    <CategoryTagWorkspace<ArtifactTagDescriptor>
+    <CategoryTagWorkspace<ApplicationTagDescriptor>
       evidenceId={evidenceId}
       partitionId={partitionId}
       workspaceLabel="Application artifacts"

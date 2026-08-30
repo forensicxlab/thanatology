@@ -8,16 +8,23 @@ import {
   useGridApiRef,
   GridRenderCellParams,
 } from "@mui/x-data-grid-pro";
-import { Box, Tooltip, Typography, Paper, Stack, Chip } from "@mui/material";
+import { Alert, Box, Tooltip, Typography, Paper, Stack, Chip } from "@mui/material";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import { useNavigate } from "react-router";
 import { emitTo } from "@tauri-apps/api/event";
 import UnixToUTC from "../common/UnixToUTC";
-import { fetchArtifactsByCategory } from "../../../dbutils/sqlite";
+import {
+  fetchArtifactsByCategory,
+  type InvestigationTimeScope,
+} from "../../../dbutils/sqlite";
 import * as ReactDOM from "react-dom";
 import { ArtifactWithFile } from "../../../dbutils/types";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  useTimeFilter,
+  useTimeFilterStore,
+} from "../../../store/timeFilterStore";
+import TimeFilterBanner from "./TimeFilterBanner";
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                             */
@@ -31,6 +38,7 @@ interface ArtifactsProps {
   partition_id: number;
   category: string;
   tag?: string;
+  parser?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -75,9 +83,34 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   partition_id,
   category,
   tag,
+  parser,
 }) => {
   const apiRef = useGridApiRef();
-  const navigate = useNavigate();
+  const { start, end, fileTimeField } = useTimeFilter();
+  const scopeEvidenceId = useTimeFilterStore((state) => state.evidenceId);
+  const scopePartitionId = useTimeFilterStore((state) => state.partitionId);
+  const requestSequence = React.useRef(0);
+  const timeScope = useMemo<InvestigationTimeScope | undefined>(
+    () =>
+      scopeEvidenceId === evidence_id && scopePartitionId === partition_id
+        ? {
+            evidenceId: evidence_id,
+            partitionId: partition_id,
+            startMs: start,
+            endMs: end,
+            fileTimeField,
+          }
+        : undefined,
+    [
+      scopeEvidenceId,
+      scopePartitionId,
+      evidence_id,
+      partition_id,
+      start,
+      end,
+      fileTimeField,
+    ],
+  );
 
   /* Keep a stable, empty array reference as rows prop (grid will be driven through `updateRows`) */
   const [rows, setRows] = useState<ArtifactWithFile[]>([]);
@@ -155,6 +188,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
 
   /* Data fetch */
   const loadArtifacts = useCallback(async () => {
+    const requestId = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
@@ -169,9 +203,13 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         pageSize,
         filterModel,
         tag,
+        parser,
+        timeScope,
       );
 
       const dataWithId = data.map((r: any) => ({ ...r, id: r.artifact_id })) as ArtifactWithFile[];
+
+      if (requestSequence.current !== requestId) return;
 
       /* Flush the row update synchronously so the DOM is updated immediately */
       ReactDOM.flushSync(() => {
@@ -205,20 +243,33 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         disableColumnVirtualization: true,
       });
     } catch (err) {
+      if (requestSequence.current !== requestId) return;
       setLoading(false);
       setError((err as Error).message || "Unknown error");
-      console.log(error);
     }
-  }, [apiRef, category, tag, evidence_id, partition_id, paginationModel, filterModel]);
+  }, [
+    apiRef,
+    category,
+    tag,
+    parser,
+    evidence_id,
+    partition_id,
+    paginationModel,
+    filterModel,
+    timeScope,
+  ]);
 
   /* Initial load + refresh when deps change */
   useEffect(() => {
-    loadArtifacts();
+    void loadArtifacts();
+    return () => {
+      requestSequence.current += 1;
+    };
   }, [loadArtifacts]);
 
   useEffect(() => {
     setPaginationModel((prev) => ({ ...prev, page: 0 }));
-  }, [filterModel]);
+  }, [filterModel, timeScope]);
 
   /* Columns */
   const columns: GridColDef[] = useMemo(
@@ -349,7 +400,7 @@ const Artifacts: React.FC<ArtifactsProps> = ({
         ],
       },
     ],
-    [navigate],
+    [evidence_id, partition_id],
   );
 
   /* Detail panel handlers */
@@ -365,6 +416,12 @@ const Artifacts: React.FC<ArtifactsProps> = ({
   /* Render */
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner mode="source-file" noun="source files" />
+      {error && (
+        <Alert severity="error" variant="outlined" sx={{ mx: 1, mt: 0.75 }}>
+          Failed to load artifact source files: {error}
+        </Alert>
+      )}
       <DataGridPro
         apiRef={apiRef}
         density="compact"

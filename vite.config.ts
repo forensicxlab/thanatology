@@ -15,6 +15,8 @@ export default defineConfig(async () => ({
         escalidraw: "escalidraw.html",
         fileviewer: "fileviewer.html",
         leechcore: "leechcore.html",
+        timeline: "timeline.html",
+        location: "location.html",
       },
     },
   },

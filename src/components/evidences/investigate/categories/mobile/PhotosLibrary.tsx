@@ -19,6 +19,7 @@ import { getIosPhotoAssetsPage } from "../../../../../dbutils/sqlite";
 import { IosPhotoAssetRow } from "../../../../../dbutils/types";
 import { useTimeFilter } from "../../../../../store/timeFilterStore";
 import { unixToISO8601UTCString } from "../../../common/UnixToUTC";
+import TimeFilterBanner from "../../TimeFilterBanner";
 
 interface PhotosLibraryProps {
   evidenceId: number;
@@ -200,16 +201,26 @@ export default function PhotosLibrary({ evidenceId, partitionId }: PhotosLibrary
 
   if (rowCount === 0) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography color="text.secondary">
-          No parsed photo library assets found for this partition.
-        </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
+        <TimeFilterBanner
+          noun="photo assets"
+          timestampLabel="capture or library-added time"
+        />
+        <Box sx={{ p: 4 }}>
+          <Typography color="text.secondary">
+            No parsed photo library assets found for this partition.
+          </Typography>
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minHeight: 0 }}>
+      <TimeFilterBanner
+        noun="photo assets"
+        timestampLabel="capture or library-added time"
+      />
       <Stack
         direction="row"
         spacing={1}

@@ -66,7 +66,7 @@ impl Tool for ExhumeExtractionTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         use crate::modules::utils::th_progress::{
-            ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+            emit_progress_event, ProgressMessageLevel, ProgressMessageType,
         };
         emit_progress_event(
             &self.evidence_id,
@@ -211,7 +211,7 @@ impl Tool for QuerySystemFilesTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         use crate::modules::utils::th_progress::{
-            ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+            emit_progress_event, ProgressMessageLevel, ProgressMessageType,
         };
         emit_progress_event(
             &self.evidence_id,
@@ -344,7 +344,7 @@ impl Tool for AnalyzeImageTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         use crate::modules::utils::th_progress::{
-            ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+            emit_progress_event, ProgressMessageLevel, ProgressMessageType,
         };
         emit_progress_event(
             &self.evidence_id,
@@ -354,7 +354,7 @@ impl Tool for AnalyzeImageTool {
             &self.app,
         );
 
-        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
         use rig::client::CompletionClient;
         use rig::completion::Prompt;
         use rig::providers::openai;
@@ -593,7 +593,7 @@ impl Tool for QueryParsedArtifactsTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         use crate::modules::utils::th_progress::{
-            ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+            emit_progress_event, ProgressMessageLevel, ProgressMessageType,
         };
         emit_progress_event(
             &self.evidence_id,
@@ -704,7 +704,7 @@ impl Tool for QuerySqliteFileTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         use crate::modules::utils::th_progress::{
-            ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+            emit_progress_event, ProgressMessageLevel, ProgressMessageType,
         };
         emit_progress_event(
             &self.evidence_id,

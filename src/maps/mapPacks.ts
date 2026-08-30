@@ -24,6 +24,9 @@ export const activateMapPack = (packId: string) =>
 export const removeMapPack = (packId: string) =>
   invoke<void>("remove_map_pack", { packId });
 
+export const discardMapDownload = (downloadId: string) =>
+  invoke<void>("discard_map_download", { downloadId });
+
 export const downloadMapPack = (request: DownloadMapPackRequest) =>
   invoke<MapPackManifest>("download_map_pack", { request });
 

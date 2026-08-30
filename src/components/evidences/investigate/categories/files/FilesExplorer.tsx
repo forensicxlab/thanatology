@@ -15,6 +15,7 @@ import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import {
   getFilesystemTreeChildren,
+  getFilesystemTreeTrail,
   ROOT_PATH_KEY,
 } from "../../../../../dbutils/sqlite";
 import type {
@@ -27,6 +28,7 @@ import FileDataGrid from "./FilesDataGrid";
 interface FilesExplorerProps {
   evidenceId: number;
   partitionId: number;
+  revealFile?: { fileId: number; requestId: number } | null;
 }
 
 const ROOT_ITEM_ID = "__filesystem_root__";
@@ -47,6 +49,7 @@ const ROOT_TREE_ITEM: FilesystemTreeItem = {
 const FilesExplorer: React.FC<FilesExplorerProps> = ({
   evidenceId,
   partitionId,
+  revealFile,
 }) => {
   const [selectedItemId, setSelectedItemId] = React.useState(ROOT_ITEM_ID);
   const [expandedItems, setExpandedItems] = React.useState<string[]>([ROOT_ITEM_ID]);
@@ -123,6 +126,48 @@ const FilesExplorer: React.FC<FilesExplorerProps> = ({
       void loadChildren(itemId);
     }
   }, [expandedItems, treeItems, loadChildren]);
+
+  // A Spotlight result can reveal one exact indexed file without expanding or
+  // materializing the rest of the tree. Merge only its ancestor chain, then
+  // let normal lazy loading fetch siblings if the investigator expands it.
+  React.useEffect(() => {
+    if (!revealFile) return;
+    let cancelled = false;
+    void getFilesystemTreeTrail(evidenceId, partitionId, revealFile.fileId)
+      .then((trail) => {
+        if (cancelled || trail.length === 0) return;
+        setTreeItems((previous) => {
+          const next = { ...previous };
+          for (const item of trail) next[item.id] = item;
+          return next;
+        });
+        setChildrenByParent((previous) => {
+          const next = { ...previous };
+          for (const item of trail) {
+            const parentId =
+              item.parentPathKey == null || item.parentPathKey === ROOT_PATH_KEY
+                ? ROOT_ITEM_ID
+                : item.parentPathKey;
+            const siblings = next[parentId] ?? [];
+            if (!siblings.includes(item.id)) next[parentId] = [...siblings, item.id];
+          }
+          return next;
+        });
+        setExpandedItems((previous) => {
+          const next = new Set(previous);
+          next.add(ROOT_ITEM_ID);
+          for (const item of trail) if (item.isDir) next.add(item.id);
+          return Array.from(next);
+        });
+        setSelectedItemId(trail[trail.length - 1].id);
+      })
+      .catch((reason) => {
+        if (!cancelled) setTreeError(reason instanceof Error ? reason.message : String(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [evidenceId, partitionId, revealFile?.fileId, revealFile?.requestId]);
 
   const selectedTreeItem = treeItems[selectedItemId] ?? ROOT_TREE_ITEM;
 

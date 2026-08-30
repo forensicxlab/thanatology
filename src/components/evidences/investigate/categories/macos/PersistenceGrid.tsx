@@ -30,6 +30,8 @@ export default function PersistenceGrid({
       labels={LABELS}
       defaultSortField="primary_value"
       defaultSortDirection="asc"
+      timeMode="timeless"
+      timeNoun="launchd jobs"
       searchPlaceholder="Search label, executable, domain or source"
       emptyMessage="No parsed macOS launchd persistence records were found in this scope."
     />

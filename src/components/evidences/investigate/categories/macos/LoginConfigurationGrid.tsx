@@ -28,6 +28,8 @@ export default function LoginConfigurationGrid({
       labels={LABELS}
       defaultSortField="tertiary_value"
       defaultSortDirection="asc"
+      timeMode="timeless"
+      timeNoun="login configuration records"
       searchPlaceholder="Search user, login item, hook, scope or source"
       emptyMessage="No parsed macOS login configuration was found in this scope."
     />

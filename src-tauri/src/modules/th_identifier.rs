@@ -1,11 +1,11 @@
-use exhume_filesystem::Filesystem;
 use exhume_filesystem::filesystem::DirectoryCommon;
+use exhume_filesystem::Filesystem;
 use serde::Serialize;
 use sqlx::{Pool, Sqlite};
 use tauri::AppHandle;
 
 use crate::modules::utils::th_progress::{
-    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
 use tokio::sync::mpsc;
 

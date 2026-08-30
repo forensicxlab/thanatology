@@ -1,15 +1,15 @@
 use crate::modules::utils::th_progress::{
-    ProgressMessageLevel, ProgressMessageType, emit_progress_event,
+    emit_progress_event, ProgressMessageLevel, ProgressMessageType,
 };
 use exhume_indexer::{
-    IndexerEvent, IndexerEventType, index_folder as inner_index_folder,
-    index_partition as inner_index_partition,
+    index_folder as inner_index_folder, index_partition as inner_index_partition, IndexerEvent,
+    IndexerEventType,
 };
 use log::{error, info};
 use serde::Serialize;
 use sqlx::sqlite::SqlitePool;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::mpsc;
 

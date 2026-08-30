@@ -28,6 +28,9 @@ export default function QuarantineGrid({
       panel="quarantine"
       labels={LABELS}
       defaultSortField="timestamp_ms"
+      timeMode="intrinsic"
+      timeNoun="quarantine events"
+      timestampLabel="quarantine time"
       searchPlaceholder="Search agent, URL, origin, sender or source"
       emptyMessage="No parsed macOS quarantine events were found in this scope."
     />
