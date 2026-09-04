@@ -2201,8 +2201,8 @@ dependencies = [
 
 [[package]]
 name = "exhume_memory"
-version = "0.1.3"
-source = "git+https://github.com/forensicxlab/exhume_memory?rev=2baf62b9f8fc7f4fc2c450783c1be160d90d4202#2baf62b9f8fc7f4fc2c450783c1be160d90d4202"
+version = "0.1.4"
+source = "git+https://github.com/forensicxlab/exhume_memory?rev=23fe495884dcb0013b54560dde0004c336c4e267#23fe495884dcb0013b54560dde0004c336c4e267"
 dependencies = [
  "anyhow",
  "clap",
