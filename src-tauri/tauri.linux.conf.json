@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/leechcore/x86_64-unknown-linux-gnu/LICENSE.txt": "leechcore-runtime/LICENSE.txt",
+      "resources/leechcore/x86_64-unknown-linux-gnu/leechcore_driver.so": "leechcore-runtime/leechcore_driver.so",
+      "resources/leechcore/x86_64-unknown-linux-gnu/leechcore_ft601_driver_linux.so": "leechcore-runtime/leechcore_ft601_driver_linux.so",
+      "resources/leechcore/x86_64-unknown-linux-gnu/license_info_all.txt": "leechcore-runtime/license_info_all.txt"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "resources/leechcore/x86_64-pc-windows-msvc/FTD3XX.dll": "leechcore-runtime/FTD3XX.dll",
+      "resources/leechcore/x86_64-pc-windows-msvc/FTD3XXWU.dll": "leechcore-runtime/FTD3XXWU.dll",
+      "resources/leechcore/x86_64-pc-windows-msvc/LICENSE.txt": "leechcore-runtime/LICENSE.txt",
+      "resources/leechcore/x86_64-pc-windows-msvc/leechcore_driver.dll": "leechcore-runtime/leechcore_driver.dll",
+      "resources/leechcore/x86_64-pc-windows-msvc/license_info_all.txt": "leechcore-runtime/license_info_all.txt",
+      "resources/leechcore/x86_64-pc-windows-msvc/redist_vcruntime.txt": "leechcore-runtime/redist_vcruntime.txt",
+      "resources/leechcore/x86_64-pc-windows-msvc/vcruntime140.dll": "leechcore-runtime/vcruntime140.dll"
+    }
+  }
+}

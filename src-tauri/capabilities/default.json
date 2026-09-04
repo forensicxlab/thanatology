@@ -19,21 +19,5 @@
     "core:window:allow-is-fullscreen",
     "core:window:allow-set-fullscreen",
     "core:window:allow-close"
-  ],
-  "allow": [
-    {
-      "name": "binaries/bin-macos/LeechCore/pcileech-aarch64-apple-darwin",
-      "sidecar": true,
-      "args": [
-        "--input",
-        { "validator": ".+" },
-
-        "--port",
-        { "validator": "^[0-9]{1,5}$" },
-
-        "--mode",
-        { "validator": "^[A-Za-z0-9_-]+$" }
-      ]
-    }
   ]
 }

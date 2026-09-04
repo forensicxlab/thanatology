@@ -1,6 +1,11 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "externalBin": ["binaries/bin-macos/LeechCore/pcileech"],
-    "resources": ["binaries/bin-macos/LeechCore/runtime"]
+    "resources": {
+      "resources/leechcore/aarch64-apple-darwin/LICENSE.txt": "leechcore-runtime/LICENSE.txt",
+      "resources/leechcore/aarch64-apple-darwin/leechcore_ft601_driver_macos.dylib": "leechcore-runtime/leechcore_ft601_driver_macos.dylib",
+      "resources/leechcore/aarch64-apple-darwin/libftd3xx.dylib": "leechcore-runtime/libftd3xx.dylib",
+      "resources/leechcore/aarch64-apple-darwin/license_info_all.txt": "leechcore-runtime/license_info_all.txt"
+    }
   }
 }
