@@ -25,15 +25,15 @@ This roadmap is dynamic, consider all of the alpha tagged release as not product
 - [x] FileSystem Artefact extraction.
 - [X] Logical And Physical Acquisition support.
 - [X] Disk Layout Discovery and Partition Selection for Physical Analysis.
-- [ ] Optimized File Viewer.
+- [X] Optimized File Viewer.
 - [x] Terminal Intergration: (Bash, ZSH, Powershell).
-- [ ] AI integration for artifacts description, content summary on demand. 
+- [X] AI integration for artifacts description, content summary on demand. 
 
 
 ## v2026-2-alpha: Release (Q2 of 2026)
-- [ ] Embeded advanced Hexadecimal Editor
-- [ ] Memory Forensics Basic Features
-- [ ] ProcMon Artefacts Vizualisation for Malware Analysis.
+- [X] Embeded advanced Hexadecimal Editor
+- [X] Memory Forensics Basic Features
+- [X] ProcMon Artefacts Vizualisation for Malware Analysis.
 
 ## v2026-3-alpha Release (Q3 of 2026)
 

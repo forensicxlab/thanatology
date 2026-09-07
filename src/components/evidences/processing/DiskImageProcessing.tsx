@@ -11,16 +11,11 @@ import {
   Evidence,
   GPTPartitionEntry,
   MBRPartitionEntry,
-  ProcessedEvidenceMetadata,
 } from "../../../dbutils/types";
 import MBRPartition from "../common/MBRPartition";
 import GPTPartition from "../common/GPTPartition";
 import ProcessingParticlesView from "./ProcessingParticlesView";
-import { appLocalDataDir } from "@tauri-apps/api/path";
-import {
-  getSelectedPartitions,
-  setProcessingInProgress,
-} from "../../../dbutils/sqlite";
+import { getSelectedPartitions } from "../../../dbutils/sqlite";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnackbar } from "../../SnackbarProvider";
 import { useNavigate } from "react-router";
@@ -44,9 +39,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
   const [mbrPartitions, setMbrPartitions] = useState<MBRPartitionEntry[]>([]);
   const [gptPartitions, setGptPartitions] = useState<GPTPartitionEntry[]>([]);
   const [processing, setProcessing] = useState<boolean>(false);
-
-  const [mainDbPath, setMainDbPath] = useState<string>("");
-  const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
 
   useEffect(() => {
     async function fetchPartitions() {
@@ -73,10 +65,6 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
 
         setMbrPartitions(mbrRows);
         setGptPartitions(fetchedPartitions.gptRows);
-
-        const baseDir = await appLocalDataDir();
-        setMainDbPath(`${baseDir}/thanatology.db`);
-        setEvidenceDbPath(`${baseDir}/evidences/${evidence.id}.db`);
       } catch (error) {
         console.error("Error fetching processing data", error);
         display_message("error", "Error fetching processing data");
@@ -108,49 +96,23 @@ const DiskImageProcessing: React.FC<DiskImageProcessingProps> = ({
       display_message("info", "Evidence data is not loaded yet.");
       return;
     }
-    if (!mainDbPath || !evidenceDbPath) {
-      display_message("error", "Database paths are not ready yet.");
-      return;
-    }
-
-    const metadata: ProcessedEvidenceMetadata = {
-      evidenceData: evidence,
-      diskImageFormat: "",
-      selectedMbrPartitions: mbrPartitions,
-      selectedGptPartitions: gptPartitions,
-    };
-
-    try {
-      await setProcessingInProgress(null, metadata);
-      await fetchEvidence();
-    } catch (err) {
-      console.error("Error setting processing in progress", err);
-      display_message(
-        "error",
-        "Failed to update evidence status to in progress.",
-      );
-      return;
-    }
-
+    // Disable duplicate starts locally while the backend atomically admits the
+    // lifecycle transition and registers the processing task.
     setProcessing(true);
-    display_message("info", "Processing Started");
-
 
     try {
       const aiConfig = aiConfigStore;
 
       await invoke("process_partitions", {
         evidenceId: evidence.id,
-        mainDbPath: mainDbPath,
-        evidenceDbPath: evidenceDbPath,
         aiConfig: aiConfig,
       });
+      setEvidence((current) => current ? { ...current, status: 2 } : current);
+      await fetchEvidence();
+      display_message("info", "Processing Started");
     } catch (err) {
       console.error("Error invoking process_partitions", err);
-      display_message(
-        "error",
-        "An error occurred while starting the processing task.",
-      );
+      display_message("error", `Could not start processing: ${String(err)}`);
       setProcessing(false);
     }
   };

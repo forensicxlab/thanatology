@@ -5,15 +5,8 @@ import Button from "@mui/material/Button";
 import { getEvidence } from "../../../dbutils/sqlite";
 import { useAiConfigStore } from "../../../store/aiConfigStore";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import {
-    Evidence,
-    ProcessedEvidenceMetadata,
-} from "../../../dbutils/types";
+import { Evidence } from "../../../dbutils/types";
 import ProcessingParticlesView from "./ProcessingParticlesView";
-import { appLocalDataDir } from "@tauri-apps/api/path";
-import {
-    setProcessingInProgress,
-} from "../../../dbutils/sqlite";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnackbar } from "../../SnackbarProvider";
 import { useNavigate } from "react-router";
@@ -34,23 +27,6 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
 
     useEffect(() => { loadConfig(); }, [loadConfig]);
     const [processing, setProcessing] = useState<boolean>(false);
-
-    const [mainDbPath, setMainDbPath] = useState<string>("");
-    const [evidenceDbPath, setEvidenceDbPath] = useState<string>("");
-
-    useEffect(() => {
-        async function initPaths() {
-            try {
-                const baseDir = await appLocalDataDir();
-                setMainDbPath(`${baseDir}/thanatology.db`);
-                setEvidenceDbPath(`${baseDir}/evidences/${evidence.id}.db`);
-            } catch (error) {
-                console.error("Error setting paths", error);
-                display_message("error", "Error setting application paths");
-            }
-        }
-        initPaths();
-    }, [evidence, display_message]);
 
     async function fetchEvidence() {
         try {
@@ -74,52 +50,27 @@ const FolderProcessing: React.FC<FolderProcessingProps> = ({
             display_message("info", "Evidence data is not loaded yet.");
             return;
         }
-        if (!mainDbPath || !evidenceDbPath) {
-            display_message("error", "Database paths are not ready yet.");
-            return;
-        }
-
-        const metadata: ProcessedEvidenceMetadata = {
-            evidenceData: evidence,
-            diskImageFormat: "Folder",
-            selectedMbrPartitions: [],
-            selectedGptPartitions: [],
-            logicalFilesystem: "Folder",
-        };
-
-        try {
-            await setProcessingInProgress(null, metadata);
-            await fetchEvidence();
-        } catch (err) {
-            console.error("Error setting processing in progress", err);
-            display_message(
-                "error",
-                "Failed to update evidence status to in progress.",
-            );
-            return;
-        }
-
+        // Disable duplicate starts locally while the backend atomically admits
+        // the lifecycle transition and registers the processing task.
         setProcessing(true);
-        display_message("info", "Processing Started");
-
-        // Let ProcessingTask mount its event listeners before the backend emits early discovery updates.
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
         try {
             const aiConfig = aiConfigStore;
 
             await invoke("process_folder", {
                 evidenceId: evidence.id,
-                mainDbPath: mainDbPath,
-                evidenceDbPath: evidenceDbPath,
-                folderPath: evidence.path,
                 aiConfig: aiConfig,
             });
+            setEvidence((current) =>
+                current ? { ...current, status: 2 } : current,
+            );
+            await fetchEvidence();
+            display_message("info", "Processing Started");
         } catch (err) {
             console.error("Error invoking process_folder", err);
             display_message(
                 "error",
-                "An error occurred while starting the processing task.",
+                `Could not start processing: ${String(err)}`,
             );
             setProcessing(false);
         }

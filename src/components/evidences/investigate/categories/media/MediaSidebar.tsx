@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useEffect } from "react";
 import {
     Box,
     Chip,
+    CircularProgress,
     InputAdornment,
     ListItemButton,
     ListItemIcon,
@@ -19,6 +20,8 @@ import {
     PhotoLibrary,
 } from "@mui/icons-material";
 import { FixedSizeList, ListChildComponentProps } from "react-window";
+import { alpha } from "@mui/material/styles";
+import type { SxProps, Theme } from "@mui/material/styles";
 import type { File } from "../../../../../dbutils/types";
 import type { MediaStats } from "../../../../../dbutils/sqlite";
 
@@ -46,6 +49,40 @@ const mimeChipColor = (mime?: string | null): "primary" | "secondary" | "warning
     return "primary";
 };
 
+const filterChipSx = (
+    active: boolean,
+    tone: "primary" | "secondary" | "warning",
+): SxProps<Theme> => (theme) => {
+    const palette = theme.palette[tone];
+    const isDark = theme.palette.mode === "dark";
+    const accent = palette.main;
+    const inactiveBase = isDark ? theme.palette.common.white : theme.palette.common.black;
+    const activeBorder = alpha(accent, isDark ? 0.72 : 0.6);
+
+    return {
+        fontSize: "0.72rem",
+        fontWeight: active ? 650 : 500,
+        color: active ? (isDark ? palette.light : palette.dark) : theme.palette.text.secondary,
+        backgroundColor: active
+            ? alpha(accent, isDark ? 0.22 : 0.12)
+            : alpha(inactiveBase, 0.025),
+        borderColor: active ? activeBorder : alpha(inactiveBase, 0.12),
+        opacity: active ? 1 : 0.7,
+        boxShadow: active ? `inset 0 0 0 1px ${activeBorder}` : "none",
+        transition: "background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease",
+        "& .MuiChip-icon": {
+            color: active ? (isDark ? palette.light : palette.dark) : theme.palette.text.secondary,
+        },
+        "&:hover": {
+            backgroundColor: active
+                ? alpha(accent, isDark ? 0.28 : 0.17)
+                : alpha(inactiveBase, 0.07),
+            borderColor: active ? activeBorder : alpha(inactiveBase, 0.22),
+            opacity: 1,
+        },
+    };
+};
+
 /* ─── types ───────────────────────────────────────────────────────── */
 
 export interface MediaTypeFilter {
@@ -60,7 +97,10 @@ interface MediaSidebarProps {
     typeFilter: MediaTypeFilter;
     onTypeFilterChange: (filter: MediaTypeFilter) => void;
     stats: MediaStats;
+    statsLoading: boolean;
+    statsError: string | null;
     files: File[];
+    loading: boolean;
     selectedFileId: number | null;
     onFileSelect: (file: File) => void;
 }
@@ -140,7 +180,10 @@ const MediaSidebar: React.FC<MediaSidebarProps> = ({
     typeFilter,
     onTypeFilterChange,
     stats,
+    statsLoading,
+    statsError,
     files,
+    loading,
     selectedFileId,
     onFileSelect,
 }) => {
@@ -211,28 +254,28 @@ const MediaSidebar: React.FC<MediaSidebarProps> = ({
                     icon={<ImageIcon />}
                     label="Images"
                     size="small"
-                    color={typeFilter.images ? "primary" : "default"}
-                    variant={typeFilter.images ? "filled" : "outlined"}
+                    variant="outlined"
+                    aria-pressed={typeFilter.images}
                     onClick={() => toggleType("images")}
-                    sx={{ fontSize: "0.72rem" }}
+                    sx={filterChipSx(typeFilter.images, "primary")}
                 />
                 <Chip
                     icon={<VideoIcon />}
                     label="Videos"
                     size="small"
-                    color={typeFilter.videos ? "secondary" : "default"}
-                    variant={typeFilter.videos ? "filled" : "outlined"}
+                    variant="outlined"
+                    aria-pressed={typeFilter.videos}
                     onClick={() => toggleType("videos")}
-                    sx={{ fontSize: "0.72rem" }}
+                    sx={filterChipSx(typeFilter.videos, "secondary")}
                 />
                 <Chip
                     icon={<AudioIcon />}
                     label="Audio"
                     size="small"
-                    color={typeFilter.audio ? "warning" : "default"}
-                    variant={typeFilter.audio ? "filled" : "outlined"}
+                    variant="outlined"
+                    aria-pressed={typeFilter.audio}
                     onClick={() => toggleType("audio")}
-                    sx={{ fontSize: "0.72rem" }}
+                    sx={filterChipSx(typeFilter.audio, "warning")}
                 />
             </Stack>
 
@@ -255,39 +298,65 @@ const MediaSidebar: React.FC<MediaSidebarProps> = ({
                         Media Statistics
                     </Typography>
                 </Stack>
-                <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.7rem" }}>
-                    {stats.images} Images · {stats.videos} Videos · {stats.audio} Audio
-                    <Typography
-                        component="span"
-                        variant="caption"
-                        sx={{ color: "text.primary", fontWeight: 600, ml: 1, fontSize: "0.7rem" }}
-                    >
-                        {stats.total} Total
+                {statsLoading ? (
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", minHeight: 20 }}>
+                        <CircularProgress size={13} thickness={5} />
+                        <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.7rem" }}>
+                            Loading statistics…
+                        </Typography>
+                    </Stack>
+                ) : statsError ? (
+                    <Typography variant="caption" sx={{ color: "warning.main", fontSize: "0.7rem" }}>
+                        Statistics unavailable
                     </Typography>
-                </Typography>
+                ) : (
+                    <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.7rem" }}>
+                        {stats.images} Images · {stats.videos} Videos · {stats.audio} Audio
+                        <Typography
+                            component="span"
+                            variant="caption"
+                            sx={{ color: "text.primary", fontWeight: 600, ml: 1, fontSize: "0.7rem" }}
+                        >
+                            {stats.total} Total
+                        </Typography>
+                    </Typography>
+                )}
             </Paper>
 
             {/* File list header */}
             <Box sx={{ px: 1.5, pb: 0.5 }}>
                 <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                    Files ({files.length})
+                    {loading ? "Files (loading…)" : `Files (${files.length})`}
                 </Typography>
             </Box>
 
             {/* Virtualised file list */}
             <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-                <FixedSizeList
-                    ref={listRef}
-                    height={600}
-                    width="100%"
-                    itemCount={files.length}
-                    itemSize={56}
-                    itemData={itemData}
-                    overscanCount={8}
-                    style={{ overflowX: "hidden" }}
-                >
-                    {FileRow}
-                </FixedSizeList>
+                {loading ? (
+                    <Box
+                        sx={{
+                            height: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        <CircularProgress size={22} />
+                    </Box>
+                ) : (
+                    <FixedSizeList
+                        ref={listRef}
+                        height={600}
+                        width="100%"
+                        itemCount={files.length}
+                        itemSize={56}
+                        itemData={itemData}
+                        overscanCount={8}
+                        style={{ overflowX: "hidden" }}
+                    >
+                        {FileRow}
+                    </FixedSizeList>
+                )}
             </Box>
         </Paper>
     );

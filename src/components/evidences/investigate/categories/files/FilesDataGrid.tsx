@@ -8,7 +8,7 @@ import {
   GridRenderCellParams,
   useGridApiRef,
   GridFilterModel,
-  GridRowParams,
+  GridCellParams,
 } from "@mui/x-data-grid-pro";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { InfoOutlined } from "@mui/icons-material";
@@ -28,6 +28,9 @@ interface FileDataGridProps {
   evidence_id: number;
   partition_id: number;
   onRowsLoaded?: (rows: File[]) => void;
+  /** Called when an ordinary data cell is selected with one click. */
+  onRowSelect?: (row: File) => void;
+  /** Called when an ordinary data cell is activated with a double-click. */
   onRowActivate?: (row: File) => void;
   filterModel?: GridFilterModel;
   onFilterModelChange?: (m: GridFilterModel) => void;
@@ -48,6 +51,7 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
   evidence_id,
   partition_id,
   onRowsLoaded,
+  onRowSelect,
   onRowActivate,
   filterModel,
   onFilterModelChange,
@@ -266,8 +270,19 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
     setPaginationModel((prev) => ({ ...prev, page: 0 }));
   }, [effectiveTimelineFilter]);
 
-  const handleRowDoubleClick = React.useCallback(
-    (params: GridRowParams) => onRowActivate?.(params.row as File),
+  const handleCellClick = React.useCallback(
+    (params: GridCellParams) => {
+      if (params.field === "actions") return;
+      onRowSelect?.(params.row as File);
+    },
+    [onRowSelect],
+  );
+
+  const handleCellDoubleClick = React.useCallback(
+    (params: GridCellParams) => {
+      if (params.field === "actions") return;
+      onRowActivate?.(params.row as File);
+    },
     [onRowActivate],
   );
 
@@ -323,7 +338,8 @@ const FileDataGrid: React.FC<FileDataGridProps> = ({
         rowHeight={50}
         density="compact"
         showToolbar
-        onRowDoubleClick={handleRowDoubleClick}
+        onCellClick={handleCellClick}
+        onCellDoubleClick={handleCellDoubleClick}
         autosizeOnMount={false}
         filterModel={filterModel}
         onFilterModelChange={(m) => onFilterModelChange?.(m)}

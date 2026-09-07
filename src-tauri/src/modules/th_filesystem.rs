@@ -821,7 +821,8 @@ pub fn get_fs_info(
         return Ok(info);
     }
 
-    let mut body: Body = Body::new(path.to_string(), "auto");
+    let mut body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     // For a whole-disk logical image (offset == 0), always use the body's declared
     // logical size so compressed formats (AFF4, EWF) report the uncompressed size.
     // For sub-partitions (offset > 0) the caller-supplied sector count is authoritative.

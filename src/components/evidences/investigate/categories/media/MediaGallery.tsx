@@ -9,6 +9,8 @@ import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
 import CardMedia from "@mui/material/CardMedia";
+import Alert from "@mui/material/Alert";
+import CircularProgress from "@mui/material/CircularProgress";
 import Typography from "@mui/material/Typography";
 import Stack from "@mui/material/Stack";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutlined";
@@ -45,6 +47,12 @@ export interface MediaEntry {
 
 interface MediaGalleryProps {
   media: MediaEntry[];
+  /** Whether the media query is still running. Takes precedence over empty state. */
+  loading?: boolean;
+  /** Query failure shown in place of stale or empty results. */
+  error?: string | null;
+  /** Context-specific settled empty state. */
+  emptyMessage?: string;
   /** If set, highlights and scrolls to this item */
   selectedId?: number | null;
   /** Called when user clicks a thumbnail */
@@ -348,6 +356,9 @@ type Slide =
 
 export default function MediaGallery({
   media,
+  loading = false,
+  error = null,
+  emptyMessage = "No media files found",
   selectedId,
   onSelect,
   renderBadges,
@@ -440,7 +451,28 @@ export default function MediaGallery({
         p: 1.5,
       }}
     >
-      {media.length === 0 ? (
+      {loading ? (
+        <Box
+          sx={{
+            height: "100%",
+            minHeight: 220,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Stack spacing={1.25} sx={{ alignItems: "center" }}>
+            <CircularProgress size={28} />
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              Loading media files…
+            </Typography>
+          </Stack>
+        </Box>
+      ) : error ? (
+        <Box sx={{ p: 2 }}>
+          <Alert severity="error">Failed to load media files: {error}</Alert>
+        </Box>
+      ) : media.length === 0 ? (
         <Box
           sx={{
             height: "100%",
@@ -452,7 +484,7 @@ export default function MediaGallery({
           <Stack spacing={1} sx={{ alignItems: "center" }}>
             <AudioFileIcon sx={{ fontSize: 48, color: "text.secondary", opacity: 0.4 }} />
             <Typography variant="body2" sx={{ color: "text.secondary" }}>
-              No media files found
+              {emptyMessage}
             </Typography>
           </Stack>
         </Box>

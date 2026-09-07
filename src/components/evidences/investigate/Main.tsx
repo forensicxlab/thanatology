@@ -619,6 +619,7 @@ const InvestigateLinux: React.FC = () => {
               <TabPanel value={value} index={1}>
                 <Box sx={{ flexGrow: 1, minHeight: 0 }}>
                   <FilesExplorer
+                    key={`${evidence.id}:${selectedPartition}`}
                     evidenceId={evidence.id}
                     partitionId={selectedPartition}
                     revealFile={fileReveal}

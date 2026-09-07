@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod th_artifacts;
+pub mod th_directory_export;
 pub mod th_evidences;
 pub mod th_external_apps;
 pub mod th_filesystem;

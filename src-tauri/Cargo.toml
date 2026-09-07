@@ -1,6 +1,6 @@
 [package]
 name = "thanatology"
-version = "0.1.0"
+version = "26.1.0"
 description = "The Thanatology Desktop Application"
 authors = ["k1nd0ne"]
 edition = "2021"

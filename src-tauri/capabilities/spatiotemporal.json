@@ -6,8 +6,6 @@
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:event:deny-emit",
-    "core:event:deny-emit-to",
     "core:path:allow-resolve-directory",
     "core:path:allow-join",
     "core:window:allow-start-dragging",

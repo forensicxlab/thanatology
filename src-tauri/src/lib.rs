@@ -9,7 +9,7 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -309,51 +309,557 @@ pub struct ProcessingEntry {
 
 pub struct ProcessingState {
     pub tokens: Mutex<HashMap<i64, ProcessingEntry>>,
+    lifecycle_operations: Mutex<HashSet<i64>>,
+}
+
+pub(crate) struct ProcessingLifecycleGuard<'a> {
+    state: &'a ProcessingState,
+    evidence_ids: Vec<i64>,
+}
+
+impl Drop for ProcessingLifecycleGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut operations) = self.state.lifecycle_operations.lock() {
+            for evidence_id in &self.evidence_ids {
+                operations.remove(evidence_id);
+            }
+        }
+    }
+}
+
+impl ProcessingState {
+    fn reap_finished_task(tokens: &mut HashMap<i64, ProcessingEntry>, evidence_id: i64) {
+        if tokens
+            .get(&evidence_id)
+            .is_some_and(|entry| entry.handle.inner().is_finished())
+        {
+            tokens.remove(&evidence_id);
+        }
+    }
+
+    /// Reserve an evidence lifecycle transition while proving no processing
+    /// task is live. The marker remains held across awaits through the returned
+    /// guard, so processing/cancel/reset/relocate/delete cannot cross each
+    /// other between a liveness check and a filesystem/database mutation.
+    pub(crate) fn begin_idle_lifecycle(
+        &self,
+        evidence_id: i64,
+        operation: &str,
+    ) -> Result<ProcessingLifecycleGuard<'_>, String> {
+        let mut operations = self
+            .lifecycle_operations
+            .lock()
+            .map_err(|_| "Failed to inspect evidence lifecycle operations.".to_string())?;
+        if operations.contains(&evidence_id) {
+            return Err(format!(
+                "Cannot {operation} evidence {evidence_id}: another lifecycle operation is in progress."
+            ));
+        }
+        let mut tokens = self
+            .tokens
+            .lock()
+            .map_err(|_| "Failed to inspect active evidence processing tasks.".to_string())?;
+        Self::reap_finished_task(&mut tokens, evidence_id);
+        if tokens.contains_key(&evidence_id) {
+            return Err(format!(
+                "Cannot {operation} evidence {evidence_id} while processing is active. Stop it first."
+            ));
+        }
+        operations.insert(evidence_id);
+        Ok(ProcessingLifecycleGuard {
+            state: self,
+            evidence_ids: vec![evidence_id],
+        })
+    }
+
+    pub(crate) fn begin_idle_lifecycle_batch(
+        &self,
+        evidence_ids: &[i64],
+        operation: &str,
+    ) -> Result<ProcessingLifecycleGuard<'_>, String> {
+        let mut operations = self
+            .lifecycle_operations
+            .lock()
+            .map_err(|_| "Failed to inspect evidence lifecycle operations.".to_string())?;
+        let conflicting = evidence_ids
+            .iter()
+            .filter(|evidence_id| operations.contains(evidence_id))
+            .copied()
+            .collect::<Vec<_>>();
+        if !conflicting.is_empty() {
+            return Err(format!(
+                "Cannot {operation} evidence while another lifecycle operation is active: {}",
+                conflicting
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        let mut tokens = self
+            .tokens
+            .lock()
+            .map_err(|_| "Failed to inspect active evidence processing tasks.".to_string())?;
+        for evidence_id in evidence_ids {
+            Self::reap_finished_task(&mut tokens, *evidence_id);
+        }
+        let active = evidence_ids
+            .iter()
+            .filter(|evidence_id| tokens.contains_key(evidence_id))
+            .copied()
+            .collect::<Vec<_>>();
+        if !active.is_empty() {
+            return Err(format!(
+                "Cannot {operation} evidence while processing is active: {}",
+                active
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        operations.extend(evidence_ids.iter().copied());
+        Ok(ProcessingLifecycleGuard {
+            state: self,
+            evidence_ids: evidence_ids.to_vec(),
+        })
+    }
+
+    fn begin_cancellation(
+        &self,
+        evidence_id: i64,
+    ) -> Result<(ProcessingLifecycleGuard<'_>, Option<ProcessingEntry>), String> {
+        let mut operations = self
+            .lifecycle_operations
+            .lock()
+            .map_err(|_| "Failed to acquire evidence lifecycle lock.".to_string())?;
+        if operations.contains(&evidence_id) {
+            return Err(format!(
+                "Cannot stop evidence {evidence_id}: another lifecycle operation is in progress."
+            ));
+        }
+        let mut tokens = self
+            .tokens
+            .lock()
+            .map_err(|_| "Failed to acquire processing state lock.".to_string())?;
+        Self::reap_finished_task(&mut tokens, evidence_id);
+        let entry = tokens.remove(&evidence_id);
+        operations.insert(evidence_id);
+        Ok((
+            ProcessingLifecycleGuard {
+                state: self,
+                evidence_ids: vec![evidence_id],
+            },
+            entry,
+        ))
+    }
+
+    fn has_in_flight_work(&self) -> Result<bool, String> {
+        let operations_active = !self
+            .lifecycle_operations
+            .lock()
+            .map_err(|_| "Failed to inspect evidence lifecycle operations.".to_string())?
+            .is_empty();
+        let mut tokens = self
+            .tokens
+            .lock()
+            .map_err(|_| "Failed to inspect active evidence processing tasks.".to_string())?;
+        tokens.retain(|_, entry| !entry.handle.inner().is_finished());
+        Ok(operations_active || !tokens.is_empty())
+    }
+
+    fn abort_all_live_tasks(&self) -> Result<Vec<i64>, String> {
+        let mut tokens = self
+            .tokens
+            .lock()
+            .map_err(|_| "Failed to inspect active evidence processing tasks.".to_string())?;
+        tokens.retain(|_, entry| !entry.handle.inner().is_finished());
+        for entry in tokens.values() {
+            entry.cancel.store(true, Ordering::Relaxed);
+            entry.handle.abort();
+        }
+        Ok(tokens.keys().copied().collect())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct CancelProcessingResult {
+    outcome: &'static str,
+    status: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct EvidenceSourceRelinkResult {
+    evidence_id: i64,
+    old_path: String,
+    new_path: String,
+    status: i64,
+}
+
+#[derive(Debug, Clone)]
+struct EvidenceSourceRecord {
+    path: String,
+    evidence_type: String,
+    status: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessingSourceKind {
+    DiskImage,
+    Folder,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessingAdmission {
+    source: EvidenceSourceRecord,
+    previous_status: i64,
+    resume_stage: i64,
+    main_db_path: PathBuf,
+    evidence_db_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct EvidenceSourceStatus {
+    available: bool,
+    reason: Option<String>,
+    path: String,
+    evidence_type: String,
+}
+
+fn app_evidence_paths(app: &AppHandle, evidence_id: i64) -> Result<(PathBuf, PathBuf), String> {
+    if evidence_id <= 0 {
+        return Err("Evidence ID must be positive.".to_string());
+    }
+    let app_data_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app-local data directory: {error}"))?;
+    Ok((
+        app_data_dir.join("thanatology.db"),
+        app_data_dir
+            .join("evidences")
+            .join(format!("{evidence_id}.db")),
+    ))
+}
+
+fn existing_sqlite_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(30))
+}
+
+async fn open_existing_main_pool(path: &Path) -> Result<SqlitePool, String> {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(existing_sqlite_options(path))
+        .await
+        .map_err(|error| format!("Failed to open the main database: {error}"))
+}
+
+async fn fetch_evidence_source(
+    pool: &SqlitePool,
+    evidence_id: i64,
+) -> Result<EvidenceSourceRecord, String> {
+    let row = sqlx::query("SELECT path, type, status FROM evidence WHERE id = ? LIMIT 1")
+        .bind(evidence_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| format!("Failed to load evidence {evidence_id}: {error}"))?
+        .ok_or_else(|| format!("Evidence {evidence_id} was not found."))?;
+    Ok(EvidenceSourceRecord {
+        path: row
+            .try_get("path")
+            .map_err(|error| format!("Evidence {evidence_id} has an invalid path: {error}"))?,
+        evidence_type: row
+            .try_get("type")
+            .map_err(|error| format!("Evidence {evidence_id} has an invalid type: {error}"))?,
+        status: row
+            .try_get("status")
+            .map_err(|error| format!("Evidence {evidence_id} has an invalid status: {error}"))?,
+    })
+}
+
+/// Map a resting lifecycle status to the pipeline stage from which processing
+/// may start. Positive running statuses are deliberately excluded: when no
+/// task owns one of those statuses, `cancel_processing` must perform the stale
+/// cleanup before preprocessing can be started again.
+fn processing_resume_stage(status: i64) -> Option<i64> {
+    match status {
+        // setup_evidence_pools intentionally clears generated analysis rows,
+        // including system_files. Every accepted retry must therefore rebuild
+        // the index before later stages; skipping to abs(status) would run
+        // artefact work against an empty index.
+        1 | -1 | -3 | -4 => Some(1),
+        _ => None,
+    }
+}
+
+async fn admit_processing_start_at_paths(
+    main_db_path: &Path,
+    evidence_db_path: &Path,
+    evidence_id: i64,
+    expected_kind: ProcessingSourceKind,
+) -> Result<ProcessingAdmission, String> {
+    let main_pool = open_existing_main_pool(main_db_path).await?;
+    let result = async {
+        let source = fetch_evidence_source(&main_pool, evidence_id).await?;
+        validate_evidence_source(Path::new(&source.path), &source.evidence_type)?;
+
+        match (expected_kind, source.evidence_type.as_str()) {
+            (ProcessingSourceKind::Folder, "Folder") => {}
+            (ProcessingSourceKind::DiskImage, "Folder") => {
+                return Err(format!(
+                    "Evidence {evidence_id} is a folder and cannot be processed as a disk image."
+                ));
+            }
+            (ProcessingSourceKind::Folder, evidence_type) => {
+                return Err(format!(
+                    "Evidence {evidence_id} has type {evidence_type} and cannot be processed as a folder."
+                ));
+            }
+            (ProcessingSourceKind::DiskImage, _) => {}
+        }
+
+        let resume_stage = processing_resume_stage(source.status).ok_or_else(|| {
+            if source.status == 0 {
+                format!(
+                    "Evidence {evidence_id} is not preprocessed. Complete preprocessing before starting analysis."
+                )
+            } else {
+                format!(
+                    "Evidence {evidence_id} cannot start processing from lifecycle status {}.",
+                    source.status
+                )
+            }
+        })?;
+
+        // The conditional write makes the admission robust against any legacy
+        // renderer that still writes lifecycle state directly. The surrounding
+        // ProcessingLifecycleGuard makes this status transition and task
+        // registration indivisible to backend stop/reset/delete operations.
+        let updated = sqlx::query("UPDATE evidence SET status = 2 WHERE id = ? AND status = ?")
+            .bind(evidence_id)
+            .bind(source.status)
+            .execute(&main_pool)
+            .await
+            .map_err(|error| format!("Failed to mark evidence as processing: {error}"))?;
+        if updated.rows_affected() != 1 {
+            return Err(format!(
+                "Evidence {evidence_id} changed state while processing was starting. Try again."
+            ));
+        }
+
+        Ok(ProcessingAdmission {
+            previous_status: source.status,
+            source,
+            resume_stage,
+            main_db_path: main_db_path.to_path_buf(),
+            evidence_db_path: evidence_db_path.to_path_buf(),
+        })
+    }
+    .await;
+    main_pool.close().await;
+    result
+}
+
+async fn restore_processing_admission(main_db_path: &Path, evidence_id: i64, previous_status: i64) {
+    let Ok(main_pool) = open_existing_main_pool(main_db_path).await else {
+        return;
+    };
+    // Do not roll a pipeline back after it has advanced to a later stage.
+    let _ = sqlx::query("UPDATE evidence SET status = ? WHERE id = ? AND status = 2")
+        .bind(previous_status)
+        .bind(evidence_id)
+        .execute(&main_pool)
+        .await;
+    main_pool.close().await;
+}
+
+/// Validate both the expected source kind and basic readability without ever
+/// parsing user-controlled evidence. Physical devices are accepted as long as
+/// they are non-directories and can be opened for reading.
+fn validate_evidence_source(path: &Path, evidence_type: &str) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("Evidence source path cannot be empty.".to_string());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!("Evidence source was not found: {}", path.display())
+        } else {
+            format!(
+                "Cannot access evidence source '{}': {error}",
+                path.display()
+            )
+        }
+    })?;
+
+    if evidence_type == "Folder" {
+        if !metadata.is_dir() {
+            return Err(format!(
+                "Evidence type Folder requires a directory, but '{}' is not a directory.",
+                path.display()
+            ));
+        }
+        std::fs::read_dir(path).map_err(|error| {
+            format!(
+                "Evidence folder '{}' is not readable: {error}",
+                path.display()
+            )
+        })?;
+    } else {
+        if metadata.is_dir() {
+            return Err(format!(
+                "Evidence type {evidence_type} requires a file or device, but '{}' is a directory.",
+                path.display()
+            ));
+        }
+        File::open(path).map_err(|error| {
+            format!(
+                "Evidence source '{}' is not readable: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn evidence_source_status(source: &EvidenceSourceRecord) -> EvidenceSourceStatus {
+    match validate_evidence_source(Path::new(&source.path), &source.evidence_type) {
+        Ok(()) => EvidenceSourceStatus {
+            available: true,
+            reason: None,
+            path: source.path.clone(),
+            evidence_type: source.evidence_type.clone(),
+        },
+        Err(reason) => EvidenceSourceStatus {
+            available: false,
+            reason: Some(reason),
+            path: source.path.clone(),
+            evidence_type: source.evidence_type.clone(),
+        },
+    }
+}
+
+async fn remove_file_if_present(path: &Path) -> Result<(), String> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.is_dir() => Err(format!(
+            "Refusing to remove analysis database path '{}' because it is a directory.",
+            path.display()
+        )),
+        Ok(_) => tokio::fs::remove_file(path)
+            .await
+            .map_err(|error| format!("Failed to remove '{}': {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Failed to inspect '{}': {error}", path.display())),
+    }
+}
+
+async fn remove_analysis_database_files(database_path: &Path) -> Result<(), String> {
+    let database_path_text = database_path.to_string_lossy();
+    for path in [
+        database_path.to_path_buf(),
+        PathBuf::from(format!("{database_path_text}-wal")),
+        PathBuf::from(format!("{database_path_text}-shm")),
+    ] {
+        remove_file_if_present(&path).await?;
+    }
+    Ok(())
+}
+
+async fn reset_stale_processing_state(pool: &SqlitePool, evidence_id: i64) -> Result<(), String> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| format!("Failed to begin evidence recovery: {error}"))?;
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM evidence WHERE id = ?")
+        .bind(evidence_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|error| format!("Failed to verify evidence {evidence_id}: {error}"))?;
+    if exists == 0 {
+        return Err(format!("Evidence {evidence_id} was not found."));
+    }
+    sqlx::query("DELETE FROM evidence_preprocessing_metadata WHERE evidence_id = ?")
+        .bind(evidence_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Failed to clear preprocessing metadata: {error}"))?;
+    sqlx::query("DELETE FROM partitions WHERE evidence_id = ?")
+        .bind(evidence_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Failed to clear evidence partitions: {error}"))?;
+    sqlx::query("UPDATE evidence SET status = 0 WHERE id = ?")
+        .bind(evidence_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Failed to reset evidence status: {error}"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("Failed to commit evidence recovery: {error}"))
+}
+
+fn is_stale_running_status(status: i64) -> bool {
+    matches!(status, 2 | 3 | 4 | -2)
 }
 
 #[tauri::command]
 async fn cancel_processing(
     evidence_id: i64,
     state: tauri::State<'_, ProcessingState>,
-    app: tauri::AppHandle,
-) -> Result<(), String> {
-    let entry = if let Ok(mut tokens) = state.tokens.lock() {
-        tokens
-            .remove(&evidence_id)
-            .ok_or_else(|| "No active processing task found for this evidence.".to_string())?
-    } else {
-        return Err("Failed to acquire state lock.".to_string());
-    };
-
-    // Signal graceful stop, then immediately kill the task at its next await point.
-    entry.cancel.store(true, Ordering::Relaxed);
-    entry.handle.abort();
-
-    let base_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
-    let main_db_path = format!("{}/thanatology.db", base_dir.display());
-
-    let main_pool = open_pool(&main_db_path)
-        .await
-        .map_err(|e| format!("Failed to open main DB: {}", e))?;
-
-    update_evidence_status(&main_pool, evidence_id, -2)
-        .await
-        .map_err(|e| format!("Failed to update evidence status: {}", e))?;
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn reset_evidence(
-    app: AppHandle,
+    agent_state: tauri::State<'_, modules::agents::runtime::AgentRuntimeState>,
     spatiotemporal_state: tauri::State<'_, modules::th_spatiotemporal::SpatiotemporalSessionState>,
-    evidence_id: i64,
-    main_db_path: String,
-    evidence_db_path: String,
-) -> Result<(), String> {
+    app: tauri::AppHandle,
+) -> Result<CancelProcessingResult, String> {
+    // Atomically take the task and reserve this evidence until it has fully
+    // dropped its pools and the status/database transition is complete.
+    let (_lifecycle_guard, entry) = state.begin_cancellation(evidence_id)?;
+    let had_live_task = entry
+        .as_ref()
+        .is_some_and(|entry| !entry.handle.inner().is_finished());
+
+    if let Some(entry) = entry {
+        if had_live_task {
+            entry.cancel.store(true, Ordering::Relaxed);
+            entry.handle.abort();
+        }
+        // Awaiting guarantees the task has dropped its SQLite pools before a
+        // later reset/delete is allowed to touch the database files.
+        let _ = entry.handle.await;
+    }
+
+    let (main_db_path, evidence_db_path) = app_evidence_paths(&app, evidence_id)?;
+    let main_pool = open_existing_main_pool(&main_db_path).await?;
+
+    if had_live_task {
+        update_evidence_status(&main_pool, evidence_id, -1)
+            .await
+            .map_err(|error| format!("Failed to update evidence status: {error}"))?;
+        main_pool.close().await;
+        return Ok(CancelProcessingResult {
+            outcome: "stopped",
+            status: -1,
+        });
+    }
+
+    let source = fetch_evidence_source(&main_pool, evidence_id).await?;
+    if !is_stale_running_status(source.status) {
+        main_pool.close().await;
+        return Err(format!(
+            "No active processing task was found for evidence {evidence_id}, but status {} is not a stale running state. No analysis data was removed.",
+            source.status
+        ));
+    }
+
+    modules::agents::runtime::close_agent_sessions_for_evidence(agent_state.inner(), evidence_id)
+        .await?;
     modules::th_spatiotemporal::close_spatiotemporal_sessions_for_evidence(
         &app,
         spatiotemporal_state.inner(),
@@ -361,37 +867,165 @@ async fn reset_evidence(
     )
     .await?;
 
-    // Connect to main pool to reset status to 1 (Pending Start)
-    // so we don't have to repeat partition discovery/selection.
-    let main_pool = open_pool(&main_db_path)
-        .await
-        .map_err(|e| format!("Failed to open main DB: {}", e))?;
+    remove_analysis_database_files(&evidence_db_path).await?;
+    reset_stale_processing_state(&main_pool, evidence_id).await?;
+    main_pool.close().await;
+    Ok(CancelProcessingResult {
+        outcome: "resetToNotProcessed",
+        status: 0,
+    })
+}
 
+#[tauri::command]
+async fn reset_evidence(
+    app: AppHandle,
+    processing_state: tauri::State<'_, ProcessingState>,
+    agent_state: tauri::State<'_, modules::agents::runtime::AgentRuntimeState>,
+    spatiotemporal_state: tauri::State<'_, modules::th_spatiotemporal::SpatiotemporalSessionState>,
+    evidence_id: i64,
+) -> Result<(), String> {
+    let _lifecycle_guard = processing_state.begin_idle_lifecycle(evidence_id, "restart")?;
+
+    let (main_db_path, evidence_db_path) = app_evidence_paths(&app, evidence_id)?;
+    let main_pool = open_existing_main_pool(&main_db_path).await?;
+    let source = fetch_evidence_source(&main_pool, evidence_id).await?;
+    validate_evidence_source(Path::new(&source.path), &source.evidence_type)?;
+
+    modules::agents::runtime::close_agent_sessions_for_evidence(agent_state.inner(), evidence_id)
+        .await?;
+    modules::th_spatiotemporal::close_spatiotemporal_sessions_for_evidence(
+        &app,
+        spatiotemporal_state.inner(),
+        evidence_id,
+    )
+    .await?;
+
+    remove_analysis_database_files(&evidence_db_path).await?;
+    // Pending Start preserves the already selected preprocessing metadata and
+    // partitions, while all generated analysis rows were removed with the DB.
     update_evidence_status(&main_pool, evidence_id, 1)
         .await
-        .map_err(|e| format!("Failed to update evidence status: {}", e))?;
-
-    // Delete the evidence specific database file if it exists
-    let e_path = std::path::Path::new(&evidence_db_path);
-    if e_path.exists() {
-        if let Err(e) = std::fs::remove_file(e_path) {
-            error!("Failed to delete evidence DB {}: {}", evidence_db_path, e);
-            return Err(format!("Failed to delete evidence DB: {}", e));
-        }
-
-        // Also cleanup sqlite-wal and sqlite-shm if they exist
-        let wal_path = format!("{}-wal", evidence_db_path);
-        if std::path::Path::new(&wal_path).exists() {
-            std::fs::remove_file(&wal_path).ok();
-        }
-        let shm_path = format!("{}-shm", evidence_db_path);
-        if std::path::Path::new(&shm_path).exists() {
-            std::fs::remove_file(&shm_path).ok();
-        }
-    }
+        .map_err(|error| format!("Failed to update evidence status: {error}"))?;
+    main_pool.close().await;
 
     info!("Successfully reset evidence ID {}", evidence_id);
     Ok(())
+}
+
+async fn relink_evidence_source_and_reset_storage(
+    main_pool: &SqlitePool,
+    evidence_db_path: &Path,
+    evidence_id: i64,
+    new_path: &str,
+) -> Result<EvidenceSourceRelinkResult, String> {
+    // Re-read the authoritative record immediately before cleanup. The
+    // renderer never supplies the evidence type or prior lifecycle state.
+    let source = fetch_evidence_source(main_pool, evidence_id).await?;
+    validate_evidence_source(Path::new(new_path), &source.evidence_type)?;
+
+    // Do not change the registered source until every generated analysis file
+    // has been removed. On validation or cleanup failure, the authoritative
+    // path/status remain unchanged (the cleanup error reports any partial
+    // filesystem failure rather than committing the new source).
+    remove_analysis_database_files(evidence_db_path)
+        .await
+        .map_err(|error| {
+            format!(
+                "Evidence source was not changed because generated analysis cleanup failed: {error}"
+            )
+        })?;
+
+    let update_result: Result<(), String> = async {
+        let mut transaction = main_pool
+            .begin()
+            .await
+            .map_err(|error| format!("Failed to begin evidence source recovery: {error}"))?;
+        let updated = sqlx::query(
+            "UPDATE evidence SET path = ?, status = 1 \
+             WHERE id = ? AND path = ? AND status = ?",
+        )
+        .bind(new_path)
+        .bind(evidence_id)
+        .bind(&source.path)
+        .bind(source.status)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Failed to update evidence source: {error}"))?;
+        if updated.rows_affected() != 1 {
+            return Err(format!(
+                "Evidence {evidence_id} changed while source recovery was running."
+            ));
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| format!("Failed to commit evidence source recovery: {error}"))
+    }
+    .await;
+
+    if let Err(error) = update_result {
+        // SQLite rolls the transaction back on failure, so it cannot expose a
+        // new source path beside results parsed from the old source. Cleanup
+        // has already happened, however, and that fact must not be hidden.
+        return Err(format!(
+            "Generated analysis database files were removed, but the evidence source could not be updated. The registered source path and status remain unchanged; retry the recovery before processing. {error}"
+        ));
+    }
+
+    Ok(EvidenceSourceRelinkResult {
+        evidence_id,
+        old_path: source.path,
+        new_path: new_path.to_string(),
+        status: 1,
+    })
+}
+
+#[tauri::command]
+async fn relink_evidence_source_and_reset(
+    app: AppHandle,
+    processing_state: tauri::State<'_, ProcessingState>,
+    agent_state: tauri::State<'_, modules::agents::runtime::AgentRuntimeState>,
+    spatiotemporal_state: tauri::State<'_, modules::th_spatiotemporal::SpatiotemporalSessionState>,
+    evidence_id: i64,
+    new_path: String,
+) -> Result<EvidenceSourceRelinkResult, String> {
+    let _lifecycle_guard =
+        processing_state.begin_idle_lifecycle(evidence_id, "relink and reset")?;
+    if new_path.trim().is_empty() {
+        return Err("New evidence source path cannot be empty.".to_string());
+    }
+    let (main_db_path, evidence_db_path) = app_evidence_paths(&app, evidence_id)?;
+    let main_pool = open_existing_main_pool(&main_db_path).await?;
+
+    let operation_result = async {
+        // Validate before closing sessions so a bad picker selection is a
+        // fully non-mutating failure.
+        let source = fetch_evidence_source(&main_pool, evidence_id).await?;
+        validate_evidence_source(Path::new(&new_path), &source.evidence_type)?;
+
+        modules::agents::runtime::close_agent_sessions_for_evidence(
+            agent_state.inner(),
+            evidence_id,
+        )
+        .await?;
+        modules::th_spatiotemporal::close_spatiotemporal_sessions_for_evidence(
+            &app,
+            spatiotemporal_state.inner(),
+            evidence_id,
+        )
+        .await?;
+
+        relink_evidence_source_and_reset_storage(
+            &main_pool,
+            &evidence_db_path,
+            evidence_id,
+            &new_path,
+        )
+        .await
+    }
+    .await;
+    main_pool.close().await;
+    operation_result
 }
 
 #[tauri::command]
@@ -517,19 +1151,35 @@ async fn get_evidence_images(
 /// Check if the evidence file exists at the given path.
 #[tauri::command]
 fn check_evidence_exists(path: String) -> Result<bool, String> {
-    let path_obj = Path::new(&path);
-    if path_obj.exists() {
-        Ok(true)
-    } else {
-        Err(format!("File not found at path: {}", path))
+    match std::fs::metadata(Path::new(&path)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Cannot inspect evidence path '{path}': {error}")),
     }
+}
+
+/// Report whether the source registered for an evidence is still usable.
+///
+/// The source path and type are loaded from the main database so the renderer
+/// cannot accidentally validate stale card data or a mismatched evidence kind.
+#[tauri::command]
+async fn get_evidence_source_status(
+    app: AppHandle,
+    evidence_id: i64,
+) -> Result<EvidenceSourceStatus, String> {
+    let (main_db_path, _) = app_evidence_paths(&app, evidence_id)?;
+    let main_pool = open_existing_main_pool(&main_db_path).await?;
+    let source = fetch_evidence_source(&main_pool, evidence_id).await;
+    main_pool.close().await;
+    source.map(|source| evidence_source_status(&source))
 }
 
 /// Auto-detect the disk image format based on headers extension or content.
 /// otherwise we return "RAW".
 #[tauri::command]
 fn check_disk_image_format(path: String) -> Result<String, String> {
-    let body: Body = Body::new(path.to_string(), "auto");
+    let body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     Ok(body.format_description().to_string())
 }
 
@@ -537,7 +1187,8 @@ fn check_disk_image_format(path: String) -> Result<String, String> {
 /// Returns the Partition object found by exhume_partitions.
 #[tauri::command]
 fn discover_partitions(path: String) -> Result<Partitions, String> {
-    let mut body: Body = Body::new(path.to_string(), "auto");
+    let mut body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     match Partitions::new(&mut body) {
         Ok(discover_partitions) => Ok(discover_partitions),
         Err(err) => Err(format!("Could not discover partitions: {:?}", err)),
@@ -548,7 +1199,8 @@ fn discover_partitions(path: String) -> Result<Partitions, String> {
 /// Here we try to read the selected partitions.
 #[tauri::command]
 fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool, String> {
-    let mut body: Body = Body::new(path.to_string(), "auto");
+    let mut body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     let partition_size_result =
         (partition.size_sectors as u64).checked_mul(body.get_sector_size() as u64);
 
@@ -589,7 +1241,8 @@ fn read_mbr_partition(partition: MBRPartitionEntry, path: String) -> Result<bool
 /// Detect the filesystem inside a logical image (single filesystem snapshot).
 #[tauri::command]
 fn detect_logical_filesystem(path: String) -> Result<String, String> {
-    let mut body: Body = Body::new(path.clone(), "auto");
+    let mut body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     let size = std::fs::metadata(&path)
         .map_err(|e| format!("Failed to stat image: {}", e))?
         .len();
@@ -607,7 +1260,8 @@ fn detect_logical_filesystem(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn read_gpt_partition(partition: GPTPartitionEntry, path: String) -> Result<bool, String> {
-    let mut body: Body = Body::new(path.to_string(), "auto");
+    let mut body: Body = Body::try_new(path.clone(), "auto")
+        .map_err(|err| format!("Unable to open evidence source '{path}': {err}"))?;
     let partition_size_result = (partition.ending_lba - partition.starting_lba + 1)
         .checked_mul(body.get_sector_size() as u64);
     let partition_first_byte_addr = partition
@@ -756,14 +1410,56 @@ async fn setup_evidence_pools(
     Some((main_pool, evidence_pool))
 }
 
-#[tauri::command]
-fn process_partitions(
+/// Re-open removable evidence for a processing stage without risking a
+/// process-wide exit if the source was disconnected after admission.
+async fn open_processing_body_or_stop(
     evidence_id: i64,
-    main_db_path: String,
-    evidence_db_path: String,
+    evidence_path: &str,
+    phase: &str,
+    failure_status: i64,
+    main_pool: &SqlitePool,
+    app: &AppHandle,
+) -> Option<Body> {
+    match Body::try_new(evidence_path.to_string(), "auto") {
+        Ok(body) => Some(body),
+        Err(error) => {
+            let message = format!(
+                "Evidence source became unavailable during {phase}; processing stopped and partial results were retained: {error}"
+            );
+            error!("Evidence {evidence_id}: {message}");
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                message,
+                app,
+            );
+            update_evidence_status(main_pool, evidence_id, failure_status)
+                .await
+                .ok();
+            None
+        }
+    }
+}
+
+#[tauri::command]
+async fn process_partitions(
+    evidence_id: i64,
     ai_config: AiConfig,
     app: AppHandle,
-) {
+) -> Result<(), String> {
+    let processing_state = app.state::<ProcessingState>();
+    let start_guard = processing_state.begin_idle_lifecycle(evidence_id, "start processing")?;
+    let (main_db_path, evidence_db_path) = app_evidence_paths(&app, evidence_id)?;
+    let admission = admit_processing_start_at_paths(
+        &main_db_path,
+        &evidence_db_path,
+        evidence_id,
+        ProcessingSourceKind::DiskImage,
+    )
+    .await?;
+    let rollback_main_db_path = admission.main_db_path.clone();
+    let rollback_status = admission.previous_status;
     let cancel_token = Arc::new(AtomicBool::new(false));
     let cancel_for_task = cancel_token.clone();
     let app_for_task = app.clone();
@@ -771,50 +1467,53 @@ fn process_partitions(
     let handle = tauri::async_runtime::spawn(async move {
         let app = app_for_task;
         let cancel_token = cancel_for_task;
+        let ProcessingAdmission {
+            source,
+            previous_status,
+            resume_stage: actual_status,
+            main_db_path,
+            evidence_db_path,
+        } = admission;
+        let main_db_path_text = main_db_path.to_string_lossy().into_owned();
+        let evidence_db_path_text = evidence_db_path.to_string_lossy().into_owned();
 
-        let (main_pool, evidence_pool) =
-            match setup_evidence_pools(evidence_id, &main_db_path, &evidence_db_path, &app).await {
-                Some(pools) => pools,
-                None => {
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
-                    return;
-                }
-            };
-
-        // Load evidence path from MAIN DB (authoritative)
-        let evidence_row = match sqlx::query("SELECT * FROM evidence WHERE id = ?")
-            .bind(evidence_id)
-            .fetch_one(&main_pool)
-            .await
+        let (main_pool, evidence_pool) = match setup_evidence_pools(
+            evidence_id,
+            &main_db_path_text,
+            &evidence_db_path_text,
+            &app,
+        )
+        .await
         {
-            Ok(row) => row,
-            Err(err) => {
-                let msg = format!("Error fetching evidence {evidence_id}: {err:?}");
-                emit_progress_event(
-                    &evidence_id,
-                    ProgressMessageLevel::Main,
-                    ProgressMessageType::Error,
-                    msg.clone(),
-                    &app,
-                );
-                error!("{msg}");
+            Some(pools) => pools,
+            None => {
+                restore_processing_admission(&main_db_path, evidence_id, previous_status).await;
                 return;
             }
         };
 
-        let evidence_path: String = evidence_row.get("path");
-        let evidence_status: i64 = evidence_row.try_get("status").unwrap_or(0);
-        let actual_status = if evidence_status < 0 && evidence_status != -2 {
-            evidence_status.abs()
-        } else {
-            evidence_status
-        };
+        let evidence_path = source.path;
 
         // Sector size and image size reference (uses logical size from body metadata,
         // not the container file size — critical for compressed formats like AFF4).
-        let body_for_info = Body::new(evidence_path.clone(), "auto");
+        let body_for_info = match Body::try_new(evidence_path.clone(), "auto") {
+            Ok(body) => body,
+            Err(error) => {
+                let message = format!(
+                    "Evidence source became unavailable before processing could start: {error}"
+                );
+                error!("Evidence {evidence_id}: {message}");
+                emit_progress_event(
+                    &evidence_id,
+                    ProgressMessageLevel::Main,
+                    ProgressMessageType::Error,
+                    message,
+                    &app,
+                );
+                restore_processing_admission(&main_db_path, evidence_id, previous_status).await;
+                return;
+            }
+        };
         let sector_size_u64 = body_for_info.get_sector_size() as u64;
         let image_size = body_for_info.get_image_size();
 
@@ -854,6 +1553,9 @@ fn process_partitions(
                     &app,
                 );
                 error!("{msg}");
+                update_evidence_status(&main_pool, evidence_id, previous_status)
+                    .await
+                    .ok();
                 return;
             }
 
@@ -924,6 +1626,9 @@ fn process_partitions(
                 &app,
             );
             error!("{msg}");
+            update_evidence_status(&main_pool, evidence_id, previous_status)
+                .await
+                .ok();
             return;
         }
 
@@ -943,9 +1648,6 @@ fn process_partitions(
                     update_evidence_status(&main_pool, evidence_id, -1)
                         .await
                         .ok();
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
                     return;
                 }
 
@@ -957,7 +1659,7 @@ fn process_partitions(
                     &app,
                 );
 
-                index_partition(
+                if let Err(error) = index_partition(
                     evidence_id,
                     p.id,
                     p.size_sectors,
@@ -967,7 +1669,22 @@ fn process_partitions(
                     &app,
                     Some(cancel_token.clone()),
                 )
-                .await;
+                .await
+                {
+                    emit_progress_event(
+                        &evidence_id,
+                        ProgressMessageLevel::Main,
+                        ProgressMessageType::Error,
+                        format!(
+                            "Partition indexing stopped; partial results were retained: {error}"
+                        ),
+                        &app,
+                    );
+                    update_evidence_status(&main_pool, evidence_id, -1)
+                        .await
+                        .ok();
+                    return;
+                }
             }
 
             // Update main DB status for UI completion screen
@@ -1005,13 +1722,21 @@ fn process_partitions(
                     update_evidence_status(&main_pool, evidence_id, -3)
                         .await
                         .ok();
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
                     return;
                 }
 
-                let mut body = Body::new(evidence_path.clone(), "auto");
+                let Some(mut body) = open_processing_body_or_stop(
+                    evidence_id,
+                    &evidence_path,
+                    "file identification",
+                    -3,
+                    &main_pool,
+                    &app,
+                )
+                .await
+                else {
+                    return;
+                };
 
                 let bytes_len = match p.kind {
                     "LOGICAL" => p.size_bytes,
@@ -1087,13 +1812,21 @@ fn process_partitions(
                     update_evidence_status(&main_pool, evidence_id, -4)
                         .await
                         .ok();
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
                     return;
                 }
 
-                let mut body = Body::new(evidence_path.clone(), "auto");
+                let Some(mut body) = open_processing_body_or_stop(
+                    evidence_id,
+                    &evidence_path,
+                    "artefact identification",
+                    -4,
+                    &main_pool,
+                    &app,
+                )
+                .await
+                else {
+                    return;
+                };
 
                 let bytes_len = match p.kind {
                     "LOGICAL" => p.size_bytes,
@@ -1160,13 +1893,21 @@ fn process_partitions(
                     update_evidence_status(&main_pool, evidence_id, -4)
                         .await
                         .ok();
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
                     return;
                 }
 
-                let mut body = Body::new(evidence_path.clone(), "auto");
+                let Some(mut body) = open_processing_body_or_stop(
+                    evidence_id,
+                    &evidence_path,
+                    "artefact parsing",
+                    -4,
+                    &main_pool,
+                    &app,
+                )
+                .await
+                else {
+                    return;
+                };
 
                 let bytes_len = match p.kind {
                     "LOGICAL" => p.size_bytes,
@@ -1295,31 +2036,55 @@ fn process_partitions(
         );
         app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id)
             .ok();
-        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-            tokens.remove(&evidence_id);
-        };
     });
 
-    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-        tokens.insert(
-            evidence_id,
-            ProcessingEntry {
-                cancel: cancel_token,
-                handle,
-            },
-        );
+    let mut pending_handle = Some(handle);
+    let registration_error = match processing_state.tokens.lock() {
+        Ok(tokens) if tokens.contains_key(&evidence_id) => Some(format!(
+            "Evidence {evidence_id} already has a registered processing task."
+        )),
+        Ok(mut tokens) => {
+            tokens.insert(
+                evidence_id,
+                ProcessingEntry {
+                    cancel: cancel_token,
+                    handle: pending_handle.take().expect("pending processing handle"),
+                },
+            );
+            None
+        }
+        Err(_) => Some("Failed to register the evidence processing task.".to_string()),
+    };
+    if let Some(message) = registration_error {
+        pending_handle
+            .take()
+            .expect("unregistered processing handle")
+            .abort();
+        restore_processing_admission(&rollback_main_db_path, evidence_id, rollback_status).await;
+        return Err(message);
     }
+    drop(start_guard);
+    Ok(())
 }
 
 #[tauri::command]
-fn process_folder(
+async fn process_folder(
     evidence_id: i64,
-    main_db_path: String,
-    evidence_db_path: String,
-    folder_path: String,
     ai_config: AiConfig,
     app: AppHandle,
-) {
+) -> Result<(), String> {
+    let processing_state = app.state::<ProcessingState>();
+    let start_guard = processing_state.begin_idle_lifecycle(evidence_id, "start processing")?;
+    let (main_db_path, evidence_db_path) = app_evidence_paths(&app, evidence_id)?;
+    let admission = admit_processing_start_at_paths(
+        &main_db_path,
+        &evidence_db_path,
+        evidence_id,
+        ProcessingSourceKind::Folder,
+    )
+    .await?;
+    let rollback_main_db_path = admission.main_db_path.clone();
+    let rollback_status = admission.previous_status;
     let cancel_token = Arc::new(AtomicBool::new(false));
     let cancel_for_task = cancel_token.clone();
     let app_for_task = app.clone();
@@ -1327,17 +2092,31 @@ fn process_folder(
     let handle = tauri::async_runtime::spawn(async move {
         let app = app_for_task;
         let cancel_token = cancel_for_task;
+        let ProcessingAdmission {
+            source,
+            previous_status,
+            resume_stage: _,
+            main_db_path,
+            evidence_db_path,
+        } = admission;
+        let main_db_path_text = main_db_path.to_string_lossy().into_owned();
+        let evidence_db_path_text = evidence_db_path.to_string_lossy().into_owned();
 
-        let (main_pool, evidence_pool) =
-            match setup_evidence_pools(evidence_id, &main_db_path, &evidence_db_path, &app).await {
-                Some(pools) => pools,
-                None => {
-                    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                        tokens.remove(&evidence_id);
-                    }
-                    return;
-                }
-            };
+        let (main_pool, evidence_pool) = match setup_evidence_pools(
+            evidence_id,
+            &main_db_path_text,
+            &evidence_db_path_text,
+            &app,
+        )
+        .await
+        {
+            Some(pools) => pools,
+            None => {
+                restore_processing_admission(&main_db_path, evidence_id, previous_status).await;
+                return;
+            }
+        };
+        let folder_path = source.path;
 
         // Create logical partition entry (in evidence DB) if none exist
         // For folders, we treat it as one logical partition
@@ -1365,6 +2144,9 @@ fn process_folder(
                     &app,
                 );
                 error!("{msg}");
+                update_evidence_status(&main_pool, evidence_id, previous_status)
+                    .await
+                    .ok();
                 return;
             }
             partition_rows =
@@ -1373,6 +2155,22 @@ fn process_folder(
                     .fetch_all(&evidence_pool)
                     .await
                     .unwrap_or_default();
+        }
+
+        if partition_rows.is_empty() {
+            let msg = "Folder processing could not create its logical partition.".to_string();
+            emit_progress_event(
+                &evidence_id,
+                ProgressMessageLevel::Main,
+                ProgressMessageType::Error,
+                msg.clone(),
+                &app,
+            );
+            error!("{msg}");
+            update_evidence_status(&main_pool, evidence_id, previous_status)
+                .await
+                .ok();
+            return;
         }
 
         let partition_id = partition_rows[0].get::<i64, _>("id");
@@ -1388,9 +2186,6 @@ fn process_folder(
             update_evidence_status(&main_pool, evidence_id, -1)
                 .await
                 .ok();
-            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                tokens.remove(&evidence_id);
-            }
             return;
         }
 
@@ -1447,9 +2242,6 @@ fn process_folder(
             update_evidence_status(&main_pool, evidence_id, -1)
                 .await
                 .ok();
-            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                tokens.remove(&evidence_id);
-            }
             return;
         }
 
@@ -1524,9 +2316,6 @@ fn process_folder(
             update_evidence_status(&main_pool, evidence_id, -4)
                 .await
                 .ok();
-            if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-                tokens.remove(&evidence_id);
-            }
             return;
         }
 
@@ -1615,20 +2404,37 @@ fn process_folder(
         );
         app.emit(&format!("pipeline_complete_{}", evidence_id), evidence_id)
             .ok();
-        if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-            tokens.remove(&evidence_id);
-        };
     });
 
-    if let Ok(mut tokens) = app.state::<ProcessingState>().tokens.lock() {
-        tokens.insert(
-            evidence_id,
-            ProcessingEntry {
-                cancel: cancel_token,
-                handle,
-            },
-        );
+    let mut pending_handle = Some(handle);
+    let registration_error = match processing_state.tokens.lock() {
+        Ok(tokens) if tokens.contains_key(&evidence_id) => Some(format!(
+            "Evidence {evidence_id} already has a registered processing task."
+        )),
+        Ok(mut tokens) => {
+            tokens.insert(
+                evidence_id,
+                ProcessingEntry {
+                    cancel: cancel_token,
+                    handle: pending_handle
+                        .take()
+                        .expect("pending folder processing handle"),
+                },
+            );
+            None
+        }
+        Err(_) => Some("Failed to register the folder processing task.".to_string()),
+    };
+    if let Some(message) = registration_error {
+        pending_handle
+            .take()
+            .expect("unregistered folder processing handle")
+            .abort();
+        restore_processing_admission(&rollback_main_db_path, evidence_id, rollback_status).await;
+        return Err(message);
     }
+    drop(start_guard);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1793,6 +2599,632 @@ async fn load_ai_config(app: AppHandle) -> Result<AiConfig, String> {
     serde_json::from_str(&json).map_err(|e| format!("Failed to parse AI config: {}", e))
 }
 
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(name: &str) -> Self {
+            let unique = NEXT_TEST_DIRECTORY.fetch_add(1, AtomicOrdering::Relaxed);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "thanatology-{name}-{}-{nanos}-{unique}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn create_test_pool(path: &Path) -> SqlitePool {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal),
+            )
+            .await
+            .expect("create test database")
+    }
+
+    #[test]
+    fn source_validation_enforces_file_and_folder_evidence_kinds() {
+        let directory = TestDirectory::new("source-validation");
+        let file_path = directory.path().join("source.raw");
+        std::fs::write(&file_path, b"evidence").expect("write source");
+
+        assert!(validate_evidence_source(&file_path, "Physical Disk image").is_ok());
+        assert!(validate_evidence_source(directory.path(), "Folder").is_ok());
+        assert!(validate_evidence_source(&file_path, "Folder")
+            .expect_err("folder must reject file")
+            .contains("requires a directory"));
+        assert!(
+            validate_evidence_source(directory.path(), "Logical Disk image")
+                .expect_err("image must reject directory")
+                .contains("requires a file or device")
+        );
+        assert!(
+            validate_evidence_source(&directory.path().join("missing.raw"), "Memory Image")
+                .expect_err("missing source")
+                .contains("was not found")
+        );
+    }
+
+    #[test]
+    fn missing_disk_image_is_reported_without_terminating_the_application() {
+        let directory = TestDirectory::new("missing-body-source");
+        let missing_path = directory.path().join("disconnected.raw");
+
+        let error = check_disk_image_format(missing_path.to_string_lossy().into_owned())
+            .expect_err("a disconnected evidence source must be returned as an error");
+
+        assert!(error.contains("Unable to open evidence source"));
+        assert!(error.contains("disconnected.raw"));
+    }
+
+    #[test]
+    fn source_status_reports_validation_failures_with_camel_case_fields() {
+        let directory = TestDirectory::new("source-status");
+        let file_path = directory.path().join("source.raw");
+        std::fs::write(&file_path, b"evidence").expect("write source");
+
+        let available = evidence_source_status(&EvidenceSourceRecord {
+            path: file_path.to_string_lossy().into_owned(),
+            evidence_type: "Logical Disk image".to_string(),
+            status: 6,
+        });
+        assert!(available.available);
+        assert_eq!(available.reason, None);
+
+        let unavailable = evidence_source_status(&EvidenceSourceRecord {
+            path: directory.path().to_string_lossy().into_owned(),
+            evidence_type: "Logical Disk image".to_string(),
+            status: 6,
+        });
+        assert!(!unavailable.available);
+        assert!(unavailable
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("requires a file or device")));
+
+        let serialized = serde_json::to_value(&unavailable).expect("serialize source status");
+        assert_eq!(serialized["evidenceType"], "Logical Disk image");
+        assert!(serialized.get("evidence_type").is_none());
+    }
+
+    #[tokio::test]
+    async fn processing_admission_claims_only_pending_or_resumable_statuses() {
+        let directory = TestDirectory::new("processing-admission");
+        let main_db_path = directory.path().join("thanatology.db");
+        let evidence_db_path = directory.path().join("evidences").join("31.db");
+        let source_path = directory.path().join("source.raw");
+        std::fs::write(&source_path, b"evidence").expect("write source");
+
+        let pool = create_test_pool(&main_db_path).await;
+        sqlx::query(
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("evidence schema");
+        sqlx::query(
+            "INSERT INTO evidence (id, path, type, status) VALUES (31, ?, 'Logical Disk image', 1)",
+        )
+        .bind(source_path.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .expect("evidence row");
+
+        for status in [1, -1, -3, -4] {
+            sqlx::query("UPDATE evidence SET status = ? WHERE id = 31")
+                .bind(status)
+                .execute(&pool)
+                .await
+                .expect("prepare lifecycle status");
+
+            let admission = admit_processing_start_at_paths(
+                &main_db_path,
+                &evidence_db_path,
+                31,
+                ProcessingSourceKind::DiskImage,
+            )
+            .await
+            .expect("eligible processing admission");
+            assert_eq!(admission.previous_status, status);
+            assert_eq!(admission.resume_stage, 1);
+            let claimed: i64 = sqlx::query_scalar("SELECT status FROM evidence WHERE id = 31")
+                .fetch_one(&pool)
+                .await
+                .expect("claimed status");
+            assert_eq!(claimed, 2);
+        }
+
+        for status in [0, -2, 2, 3, 4, 5, 6] {
+            sqlx::query("UPDATE evidence SET status = ? WHERE id = 31")
+                .bind(status)
+                .execute(&pool)
+                .await
+                .expect("prepare rejected lifecycle status");
+            let error = admit_processing_start_at_paths(
+                &main_db_path,
+                &evidence_db_path,
+                31,
+                ProcessingSourceKind::DiskImage,
+            )
+            .await
+            .expect_err("ineligible processing admission");
+            if status == 0 {
+                assert!(error.contains("not preprocessed"));
+            }
+            let unchanged: i64 = sqlx::query_scalar("SELECT status FROM evidence WHERE id = 31")
+                .fetch_one(&pool)
+                .await
+                .expect("unchanged status");
+            assert_eq!(unchanged, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn delayed_start_after_stale_stop_cleanup_cannot_reclaim_status_zero() {
+        let directory = TestDirectory::new("processing-admission-after-stop");
+        let main_db_path = directory.path().join("thanatology.db");
+        let evidence_db_path = directory.path().join("evidences").join("32.db");
+        let source_path = directory.path().join("source.raw");
+        std::fs::write(&source_path, b"evidence").expect("write source");
+
+        let pool = create_test_pool(&main_db_path).await;
+        sqlx::query(
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("evidence schema");
+        sqlx::query(
+            "INSERT INTO evidence (id, path, type, status) VALUES (32, ?, 'Logical Disk image', 0)",
+        )
+        .bind(source_path.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .expect("reset evidence row");
+
+        let error = admit_processing_start_at_paths(
+            &main_db_path,
+            &evidence_db_path,
+            32,
+            ProcessingSourceKind::DiskImage,
+        )
+        .await
+        .expect_err("delayed start must not cross stale cleanup");
+        assert!(error.contains("not preprocessed"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT status FROM evidence WHERE id = 32")
+                .fetch_one(&pool)
+                .await
+                .expect("status"),
+            0
+        );
+        assert!(!evidence_db_path.exists());
+    }
+
+    #[test]
+    fn missing_evidence_check_is_a_false_result_not_an_error() {
+        let directory = TestDirectory::new("exists");
+        let missing = directory.path().join("missing.raw");
+        assert_eq!(
+            check_evidence_exists(missing.to_string_lossy().into_owned()),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn orphan_cleanup_is_limited_to_stale_running_statuses() {
+        for status in [2, 3, 4, -2] {
+            assert!(is_stale_running_status(status), "status {status}");
+        }
+        for status in [0, 1, 5, 6, -1, -3, -4] {
+            assert!(!is_stale_running_status(status), "status {status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn database_cleanup_removes_main_and_orphan_sidecars_idempotently() {
+        let directory = TestDirectory::new("analysis-cleanup");
+        let database_path = directory.path().join("7.db");
+        let wal_path = directory.path().join("7.db-wal");
+        let shm_path = directory.path().join("7.db-shm");
+        for path in [&database_path, &wal_path, &shm_path] {
+            std::fs::write(path, b"generated").expect("write generated file");
+        }
+
+        remove_analysis_database_files(&database_path)
+            .await
+            .expect("first cleanup");
+        remove_analysis_database_files(&database_path)
+            .await
+            .expect("idempotent cleanup");
+
+        assert!(!database_path.exists());
+        assert!(!wal_path.exists());
+        assert!(!shm_path.exists());
+
+        std::fs::create_dir(&database_path).expect("create unsafe directory target");
+        assert!(remove_analysis_database_files(&database_path)
+            .await
+            .expect_err("must refuse recursive removal")
+            .contains("Refusing to remove"));
+        assert!(database_path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn stale_reset_clears_preprocessing_but_preserves_evidence_and_images() {
+        let directory = TestDirectory::new("stale-reset");
+        let database_path = directory.path().join("thanatology.db");
+        let pool = create_test_pool(&database_path).await;
+        for statement in [
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, status INTEGER NOT NULL)",
+            "CREATE TABLE partitions (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "CREATE TABLE evidence_preprocessing_metadata (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "CREATE TABLE evidence_images (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "INSERT INTO evidence (id, status) VALUES (9, 2)",
+            "INSERT INTO partitions (id, evidence_id) VALUES (1, 9)",
+            "INSERT INTO evidence_preprocessing_metadata (id, evidence_id) VALUES (1, 9)",
+            "INSERT INTO evidence_images (id, evidence_id) VALUES (1, 9)",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("test schema statement");
+        }
+
+        reset_stale_processing_state(&pool, 9)
+            .await
+            .expect("stale reset");
+
+        let status: i64 = sqlx::query_scalar("SELECT status FROM evidence WHERE id = 9")
+            .fetch_one(&pool)
+            .await
+            .expect("status");
+        let partitions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM partitions")
+            .fetch_one(&pool)
+            .await
+            .expect("partitions");
+        let metadata: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM evidence_preprocessing_metadata")
+                .fetch_one(&pool)
+                .await
+                .expect("metadata");
+        let images: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM evidence_images")
+            .fetch_one(&pool)
+            .await
+            .expect("images");
+
+        assert_eq!(status, 0);
+        assert_eq!(partitions, 0);
+        assert_eq!(metadata, 0);
+        assert_eq!(images, 1);
+    }
+
+    #[tokio::test]
+    async fn failed_stale_reset_rolls_back_and_keeps_nonzero_status() {
+        let directory = TestDirectory::new("stale-reset-rollback");
+        let database_path = directory.path().join("thanatology.db");
+        let pool = create_test_pool(&database_path).await;
+        for statement in [
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, status INTEGER NOT NULL)",
+            "CREATE TABLE evidence_preprocessing_metadata (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "INSERT INTO evidence (id, status) VALUES (10, 2)",
+            "INSERT INTO evidence_preprocessing_metadata (id, evidence_id) VALUES (1, 10)",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("test schema statement");
+        }
+
+        assert!(reset_stale_processing_state(&pool, 10).await.is_err());
+        let status: i64 = sqlx::query_scalar("SELECT status FROM evidence WHERE id = 10")
+            .fetch_one(&pool)
+            .await
+            .expect("status");
+        let metadata: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM evidence_preprocessing_metadata")
+                .fetch_one(&pool)
+                .await
+                .expect("metadata");
+        assert_eq!(status, 2, "failed cleanup must not claim Not processed");
+        assert_eq!(metadata, 1, "failed transaction must roll back metadata");
+    }
+
+    #[tokio::test]
+    async fn atomic_relink_removes_analysis_and_commits_pending_source() {
+        let directory = TestDirectory::new("atomic-relink");
+        let main_db_path = directory.path().join("thanatology.db");
+        let analysis_db_path = directory.path().join("11.db");
+        let old_source = directory.path().join("old.raw");
+        let new_source = directory.path().join("new.raw");
+        std::fs::write(&old_source, b"old").expect("old source");
+        std::fs::write(&new_source, b"new").expect("new source");
+        for path in [
+            analysis_db_path.clone(),
+            PathBuf::from(format!("{}-wal", analysis_db_path.display())),
+            PathBuf::from(format!("{}-shm", analysis_db_path.display())),
+        ] {
+            std::fs::write(path, b"generated analysis").expect("analysis file");
+        }
+
+        let main_pool = create_test_pool(&main_db_path).await;
+        for statement in [
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+            "CREATE TABLE partitions (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "CREATE TABLE evidence_preprocessing_metadata (id INTEGER PRIMARY KEY, evidence_id INTEGER NOT NULL)",
+            "INSERT INTO partitions (id, evidence_id) VALUES (1, 11)",
+            "INSERT INTO evidence_preprocessing_metadata (id, evidence_id) VALUES (1, 11)",
+        ] {
+            sqlx::query(statement)
+                .execute(&main_pool)
+                .await
+                .expect("main schema");
+        }
+        sqlx::query("INSERT INTO evidence (id, path, type, status) VALUES (11, ?, 'Physical Disk image', 5)")
+            .bind(old_source.to_string_lossy().as_ref())
+            .execute(&main_pool)
+            .await
+            .expect("main evidence");
+
+        let result = relink_evidence_source_and_reset_storage(
+            &main_pool,
+            &analysis_db_path,
+            11,
+            new_source.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("relink source");
+        assert_eq!(result.evidence_id, 11);
+        assert_eq!(result.old_path, old_source.to_string_lossy());
+        assert_eq!(result.new_path, new_source.to_string_lossy());
+        assert_eq!(result.status, 1);
+
+        let row = sqlx::query("SELECT path, status FROM evidence WHERE id = 11")
+            .fetch_one(&main_pool)
+            .await
+            .expect("relinked evidence");
+        assert_eq!(
+            row.try_get::<String, _>("path").expect("path"),
+            new_source.to_string_lossy()
+        );
+        assert_eq!(row.try_get::<i64, _>("status").expect("status"), 1);
+        assert!(!analysis_db_path.exists());
+        assert!(!PathBuf::from(format!("{}-wal", analysis_db_path.display())).exists());
+        assert!(!PathBuf::from(format!("{}-shm", analysis_db_path.display())).exists());
+        for table in ["partitions", "evidence_preprocessing_metadata"] {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE evidence_id = 11"
+            ))
+            .fetch_one(&main_pool)
+            .await
+            .expect("preserved preprocessing row");
+            assert_eq!(count, 1, "{table} should be preserved");
+        }
+
+        assert_eq!(
+            serde_json::to_value(&result).expect("serialize relink")["evidenceId"],
+            11
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_relink_keeps_old_registration_and_analysis() {
+        let directory = TestDirectory::new("atomic-relink-rejected");
+        let main_db_path = directory.path().join("thanatology.db");
+        let analysis_db_path = directory.path().join("12.db");
+        let old_source = directory.path().join("old.raw");
+        std::fs::write(&old_source, b"old").expect("old source");
+        std::fs::write(&analysis_db_path, b"old analysis").expect("analysis database");
+
+        let main_pool = create_test_pool(&main_db_path).await;
+        sqlx::query(
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+        )
+        .execute(&main_pool)
+        .await
+        .expect("main schema");
+        sqlx::query("INSERT INTO evidence (id, path, type, status) VALUES (12, ?, 'Physical Disk image', 5)")
+            .bind(old_source.to_string_lossy().as_ref())
+            .execute(&main_pool)
+            .await
+            .expect("main evidence");
+
+        assert!(relink_evidence_source_and_reset_storage(
+            &main_pool,
+            &analysis_db_path,
+            12,
+            directory.path().to_string_lossy().as_ref(),
+        )
+        .await
+        .expect_err("image relocation must reject directory")
+        .contains("requires a file or device"));
+
+        let row = sqlx::query("SELECT path, status FROM evidence WHERE id = 12")
+            .fetch_one(&main_pool)
+            .await
+            .expect("original registration");
+        assert_eq!(
+            row.try_get::<String, _>("path").expect("path"),
+            old_source.to_string_lossy()
+        );
+        assert_eq!(row.try_get::<i64, _>("status").expect("status"), 5);
+        assert_eq!(
+            std::fs::read(&analysis_db_path).expect("old analysis retained"),
+            b"old analysis"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_failure_keeps_old_registration() {
+        let directory = TestDirectory::new("atomic-relink-cleanup-failure");
+        let main_db_path = directory.path().join("thanatology.db");
+        let analysis_db_path = directory.path().join("13.db");
+        let old_source = directory.path().join("old.raw");
+        let new_source = directory.path().join("new.raw");
+        std::fs::write(&old_source, b"old").expect("old source");
+        std::fs::write(&new_source, b"new").expect("new source");
+        std::fs::create_dir(&analysis_db_path).expect("unsafe analysis directory");
+
+        let main_pool = create_test_pool(&main_db_path).await;
+        sqlx::query(
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+        )
+        .execute(&main_pool)
+        .await
+        .expect("main schema");
+        sqlx::query("INSERT INTO evidence (id, path, type, status) VALUES (13, ?, 'Physical Disk image', 6)")
+            .bind(old_source.to_string_lossy().as_ref())
+            .execute(&main_pool)
+            .await
+            .expect("main evidence");
+
+        let error = relink_evidence_source_and_reset_storage(
+            &main_pool,
+            &analysis_db_path,
+            13,
+            new_source.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect_err("directory cleanup must fail");
+        assert!(error.contains("source was not changed"));
+        let row = sqlx::query("SELECT path, status FROM evidence WHERE id = 13")
+            .fetch_one(&main_pool)
+            .await
+            .expect("original registration");
+        assert_eq!(
+            row.try_get::<String, _>("path").expect("path"),
+            old_source.to_string_lossy()
+        );
+        assert_eq!(row.try_get::<i64, _>("status").expect("status"), 6);
+        assert!(analysis_db_path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn transaction_failure_reports_removed_analysis_without_committing_new_path() {
+        let directory = TestDirectory::new("atomic-relink-transaction-failure");
+        let main_db_path = directory.path().join("thanatology.db");
+        let analysis_db_path = directory.path().join("14.db");
+        let old_source = directory.path().join("old.raw");
+        let new_source = directory.path().join("new.raw");
+        std::fs::write(&old_source, b"old").expect("old source");
+        std::fs::write(&new_source, b"new").expect("new source");
+        std::fs::write(&analysis_db_path, b"generated analysis").expect("analysis database");
+
+        let main_pool = create_test_pool(&main_db_path).await;
+        for statement in [
+            "CREATE TABLE evidence (id INTEGER PRIMARY KEY, path TEXT NOT NULL, type TEXT NOT NULL, status INTEGER NOT NULL)",
+            "CREATE TRIGGER reject_evidence_update BEFORE UPDATE ON evidence BEGIN SELECT RAISE(ABORT, 'blocked for test'); END",
+        ] {
+            sqlx::query(statement)
+                .execute(&main_pool)
+                .await
+                .expect("main schema");
+        }
+        sqlx::query("INSERT INTO evidence (id, path, type, status) VALUES (14, ?, 'Physical Disk image', 6)")
+            .bind(old_source.to_string_lossy().as_ref())
+            .execute(&main_pool)
+            .await
+            .expect("main evidence");
+
+        let error = relink_evidence_source_and_reset_storage(
+            &main_pool,
+            &analysis_db_path,
+            14,
+            new_source.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect_err("transaction must fail");
+        assert!(error.contains("analysis database files were removed"));
+        assert!(error.contains("path and status remain unchanged"));
+        let row = sqlx::query("SELECT path, status FROM evidence WHERE id = 14")
+            .fetch_one(&main_pool)
+            .await
+            .expect("original registration");
+        assert_eq!(
+            row.try_get::<String, _>("path").expect("path"),
+            old_source.to_string_lossy()
+        );
+        assert_eq!(row.try_get::<i64, _>("status").expect("status"), 6);
+        assert!(!analysis_db_path.exists());
+    }
+
+    #[tokio::test]
+    async fn processing_state_reaps_finished_handles_but_reports_live_tasks() {
+        let state = ProcessingState {
+            tokens: Mutex::new(HashMap::new()),
+            lifecycle_operations: Mutex::new(HashSet::new()),
+        };
+
+        let finished = tauri::async_runtime::spawn(async {});
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(finished.inner().is_finished());
+        state.tokens.lock().expect("state lock").insert(
+            20,
+            ProcessingEntry {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: finished,
+            },
+        );
+        let finished_guard = state
+            .begin_idle_lifecycle(20, "restart")
+            .expect("finished task must be reaped");
+        assert!(!state.tokens.lock().expect("state lock").contains_key(&20));
+        drop(finished_guard);
+
+        let live = tauri::async_runtime::spawn(std::future::pending::<()>());
+        state.tokens.lock().expect("state lock").insert(
+            21,
+            ProcessingEntry {
+                cancel: Arc::new(AtomicBool::new(false)),
+                handle: live,
+            },
+        );
+        assert!(state.begin_idle_lifecycle(21, "restart").is_err());
+        let (cancellation, entry) = state
+            .begin_cancellation(21)
+            .expect("begin live cancellation");
+        let entry = entry.expect("live entry");
+        assert!(state.begin_idle_lifecycle(21, "delete").is_err());
+        entry.handle.abort();
+        let _ = entry.handle.await;
+        drop(cancellation);
+
+        let batch = state
+            .begin_idle_lifecycle_batch(&[22, 23], "delete")
+            .expect("reserve batch");
+        assert!(state.begin_idle_lifecycle(22, "restart").is_err());
+        assert!(state.begin_cancellation(23).is_err());
+        drop(batch);
+        assert!(state.begin_idle_lifecycle(22, "restart").is_ok());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(init_migrations: Vec<Migration>) {
     env_logger::Builder::new()
@@ -1801,8 +3233,10 @@ pub fn run(init_migrations: Vec<Migration>) {
     let mut builder = tauri::Builder::default()
         .manage(modules::th_filesystem::SharedState::default())
         .manage(modules::th_filesystem::MediaServeState::default())
+        .manage(modules::th_directory_export::DirectoryExportState::default())
         .manage(ProcessingState {
             tokens: Mutex::new(HashMap::new()),
+            lifecycle_operations: Mutex::new(HashSet::new()),
         })
         .manage(modules::th_memory::MemoryExecutionState::default())
         .manage(modules::agents::runtime::AgentRuntimeState::default())
@@ -1836,11 +3270,7 @@ pub fn run(init_migrations: Vec<Migration>) {
                 }
 
                 let state_guard = window.state::<ProcessingState>();
-                let is_processing = if let Ok(tokens) = state_guard.tokens.lock() {
-                    !tokens.is_empty()
-                } else {
-                    false
-                };
+                let is_processing = state_guard.has_in_flight_work().unwrap_or(false);
 
                 if is_processing {
                     api.prevent_close();
@@ -1861,15 +3291,8 @@ pub fn run(init_migrations: Vec<Migration>) {
 
                                 // Trigger cancellation for all tasks and collect active evidence IDs
                                 let state_guard = app_clone.state::<ProcessingState>();
-                                let active_evidences: Vec<i64> = if let Ok(tokens) = state_guard.tokens.lock() {
-                                    for (_, entry) in tokens.iter() {
-                                        entry.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        entry.handle.abort();
-                                    }
-                                    tokens.keys().cloned().collect()
-                                } else {
-                                    Vec::new()
-                                };
+                                let active_evidences =
+                                    state_guard.abort_all_live_tasks().unwrap_or_default();
 
                                 // Spawn a targeted task to force DB states to Stopped (-1) and exit immediately
                                 tauri::async_runtime::spawn(async move {
@@ -1930,6 +3353,7 @@ pub fn run(init_migrations: Vec<Migration>) {
             create_case_with_evidence,
             modules::th_evidences::delete_evidences,
             check_evidence_exists,
+            get_evidence_source_status,
             check_disk_image_format,
             discover_partitions,
             read_mbr_partition,
@@ -1953,12 +3377,16 @@ pub fn run(init_migrations: Vec<Migration>) {
             process_folder,
             detect_logical_filesystem,
             dump_file_to_disk,
+            modules::th_directory_export::start_directory_export,
+            modules::th_directory_export::get_directory_export_jobs,
+            modules::th_directory_export::cancel_directory_export,
             compute_hash,
             parse_pe,
             has_evtx_data,
             has_pml_data,
             cancel_processing,
             reset_evidence,
+            relink_evidence_source_and_reset,
             save_evidence_images,
             get_evidence_images,
             save_ai_config,

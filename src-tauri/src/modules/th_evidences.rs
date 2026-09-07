@@ -165,27 +165,7 @@ pub async fn delete_evidences(
         return Err("At most 1,000 evidences can be deleted at once.".to_string());
     }
 
-    {
-        let active = processing_state
-            .tokens
-            .lock()
-            .map_err(|_| "Failed to inspect active evidence processing tasks.".to_string())?;
-        let processing_ids = evidence_ids
-            .iter()
-            .filter(|id| active.contains_key(id))
-            .copied()
-            .collect::<Vec<_>>();
-        if !processing_ids.is_empty() {
-            return Err(format!(
-                "Cannot delete evidence while processing is active: {}",
-                processing_ids
-                    .iter()
-                    .map(i64::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    }
+    let _lifecycle_guard = processing_state.begin_idle_lifecycle_batch(&evidence_ids, "delete")?;
 
     for evidence_id in &evidence_ids {
         close_agent_sessions_for_evidence(agent_state.inner(), *evidence_id).await?;

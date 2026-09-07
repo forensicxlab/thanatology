@@ -448,7 +448,16 @@ async fn run_audio_specialist(
                 } else {
                     use exhume_body::Body;
                     use exhume_filesystem::detected_fs::detect_filesystem;
-                    let mut body = Body::new(ev_path, "auto");
+                    let mut body = match Body::try_new(ev_path.clone(), "auto") {
+                        Ok(body) => body,
+                        Err(error) => {
+                            warn!(
+                                "Audio Specialist: Evidence source '{}' is unavailable: {}",
+                                ev_path, error
+                            );
+                            continue;
+                        }
+                    };
                     let mut addr = 0u64;
                     let mut sz = 0u64;
                     if let Ok(part) = sqlx::query("SELECT first_byte_addr, size_bytes FROM partitions WHERE id = ?")

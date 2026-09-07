@@ -54,8 +54,11 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
   const [files, setFiles] = useState<File[]>([]);
   const [rowCount, setRowCount] = useState(0);
   const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<MediaStats>({ images: 0, videos: 0, audio: 0, total: 0 });
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   // Selection state
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
@@ -84,15 +87,32 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
 
   // Fetch stats (once per partition)
   useEffect(() => {
+    let cancelled = false;
+    setStatsLoading(true);
+    setStatsError(null);
+
     getMediaStats(evidenceId, partitionId)
-      .then(setStats)
-      .catch(console.error);
+      .then((nextStats) => {
+        if (!cancelled) setStats(nextStats);
+      })
+      .catch((statsError) => {
+        console.error("getMediaStats error:", statsError);
+        if (!cancelled) setStatsError(statsError?.message ?? String(statsError));
+      })
+      .finally(() => {
+        if (!cancelled) setStatsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [evidenceId, partitionId, tfStart, tfEnd, fileTimeField]);
 
   // Fetch filtered data
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
 
     searchMediaFiltered(evidenceId, partitionId, page * PAGE_SIZE, PAGE_SIZE, {
       searchText: debouncedSearch || undefined,
@@ -104,10 +124,16 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
         if (cancelled) return;
         setFiles(rows);
         setRowCount(total);
-        setLoading(false);
       })
-      .catch((err) => {
-        console.error("searchMediaFiltered error:", err);
+      .catch((searchError) => {
+        console.error("searchMediaFiltered error:", searchError);
+        if (!cancelled) {
+          setFiles([]);
+          setRowCount(0);
+          setError(searchError?.message ?? String(searchError));
+        }
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
       });
 
@@ -144,6 +170,12 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
   }, []);
 
   const totalPages = Math.ceil(rowCount / PAGE_SIZE);
+  const noTypesSelected = !typeFilter.images && !typeFilter.videos && !typeFilter.audio;
+  const emptyMessage = noTypesSelected
+    ? "Select at least one media type"
+    : debouncedSearch
+      ? "No media files match this search"
+      : "No media files found";
 
   return (
     <Box
@@ -173,7 +205,10 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
           typeFilter={typeFilter}
           onTypeFilterChange={setTypeFilter}
           stats={stats}
+          statsLoading={statsLoading}
+          statsError={statsError}
           files={files}
+          loading={loading}
           selectedFileId={selectedFileId}
           onFileSelect={handleSidebarFileSelect}
         />
@@ -205,7 +240,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
           >
             <Typography variant="subtitle2" sx={{ fontWeight: 600, fontSize: "0.82rem" }}>
               Media Gallery
-              {rowCount > 0 && (
+              {!loading && rowCount > 0 && (
                 <Typography
                   component="span"
                   variant="caption"
@@ -225,6 +260,9 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
           {/* Gallery grid */}
           <MediaGallery
             media={media}
+            loading={loading}
+            error={error}
+            emptyMessage={emptyMessage}
             selectedId={selectedFileId}
             onSelect={handleGallerySelect}
           />
@@ -232,7 +270,7 @@ const Media: React.FC<MediaProps> = ({ evidenceId, partitionId }) => {
       </Box>
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {!loading && totalPages > 1 && (
         <Stack direction="row" sx={{ justifyContent: "center", py: 0.5, flexShrink: 0 }}>
           <Pagination
             count={totalPages}

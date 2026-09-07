@@ -224,12 +224,13 @@ export interface File {
 export type FileQueryScope =
   | { kind: "root" }
   | { kind: "directory"; pathKey: string }
-  | { kind: "file"; pathKey: string };
+  | { kind: "file"; fileId: number; pathKey: string };
 
 export type FilesystemTreeItemKind = "root" | "directory" | "file";
 
 export interface FilesystemTreeItem {
   id: string;
+  fileId: number | null;
   label: string;
   pathKey: string;
   parentPathKey: string | null;

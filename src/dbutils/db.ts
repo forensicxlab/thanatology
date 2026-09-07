@@ -12,7 +12,13 @@ export async function getMainDb(): Promise<Database> {
   if (!mainDbPromise) {
     mainDbPromise = Database.load("sqlite:thanatology.db");
   }
-  return mainDbPromise;
+  const pending = mainDbPromise;
+  try {
+    return await pending;
+  } catch (error) {
+    if (mainDbPromise === pending) mainDbPromise = null;
+    throw error;
+  }
 }
 
 export async function getEvidenceDbPath(evidenceId: number): Promise<string> {
@@ -30,7 +36,14 @@ export async function getEvidenceDb(evidenceId: number): Promise<Database> {
   })();
 
   evidenceDbPromises.set(evidenceId, p);
-  return p;
+  try {
+    return await p;
+  } catch (error) {
+    if (evidenceDbPromises.get(evidenceId) === p) {
+      evidenceDbPromises.delete(evidenceId);
+    }
+    throw error;
+  }
 }
 
 export async function closeEvidenceDb(evidenceId: number): Promise<void> {

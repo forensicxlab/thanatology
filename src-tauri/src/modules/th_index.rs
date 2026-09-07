@@ -75,7 +75,7 @@ pub async fn index_partition(
     pool: &SqlitePool,
     app: &AppHandle,
     cancel_token: Option<Arc<AtomicBool>>,
-) {
+) -> Result<(), String> {
     info!("Starting internal index_partition via exhume_indexer");
     let (tx, rx) = mpsc::channel(100);
 
@@ -108,7 +108,10 @@ pub async fn index_partition(
             format!("Indexation failed: {}", err),
             app,
         );
+        return Err(err.to_string());
     }
+
+    Ok(())
 }
 
 pub async fn index_folder(

@@ -3,7 +3,7 @@ import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
-import Database from "@tauri-apps/plugin-sql";
+import type Database from "@tauri-apps/plugin-sql";
 import "./App.css";
 import { ThemeProvider } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
@@ -26,6 +26,7 @@ import { createGlassTheme } from "./glassTheme";
 import { NavHistoryProvider } from "./components/navigation/NavHistory";
 import { ThemeModeProvider, useThemeMode } from "./ThemeContext";
 import { WindowFrame } from "./components/windows/shared/WindowTitlebar";
+import { getMainDb } from "./dbutils/db";
 
 const ViewerRoute: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -51,7 +52,7 @@ const AppWithTheme: React.FC = () => {
   const [firstLaunch, setFirstLaunch] = React.useState<Boolean>(false);
 
   const loadDatabase = async () => {
-    const db = await Database.load("sqlite:thanatology.db");
+    const db = await getMainDb();
     setDatabase(db);
     const users: Array<any> = await db.select("SELECT * from users");
     console.log(users);

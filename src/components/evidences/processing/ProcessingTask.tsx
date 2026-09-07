@@ -16,9 +16,10 @@ import {
 import IconButton from "@mui/material/IconButton";
 
 import { Check, Preview, StopCircle, Warning } from "@mui/icons-material";
-import { invoke } from "@tauri-apps/api/core";
 import { Evidence } from "../../../dbutils/types";
 import Typography from "@mui/material/Typography";
+import { useNavigate } from "react-router";
+import { cancelEvidenceProcessing } from "../../../dbutils/evidenceLifecycle";
 import ParserActivityStatus, {
   ParserProgressPayload,
 } from "./ParserActivityStatus";
@@ -92,6 +93,7 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
   evidence,
   onComplete,
 }) => {
+  const navigate = useNavigate();
   const evidenceId = evidence.id;
   const evidenceName = evidence.name;
   const status = evidence.status;
@@ -219,14 +221,29 @@ const ProcessingTask: React.FC<ProcessingTaskProps> = ({
   const handleCancel = async () => {
     setCancelling(true);
     try {
-      await invoke("cancel_processing", { evidenceId });
-      setMainProgress("Stopping…");
-      setMainColor("error");
+      const result = await cancelEvidenceProcessing(evidenceId);
       setProgress(null);
       setParserActivity(null);
+
+      if (result.outcome === "resetToNotProcessed") {
+        setMainProgress(
+          "No active processing task remained. Partial analysis was removed; preprocessing is required.",
+        );
+        setMainColor("secondary");
+        onComplete?.();
+        navigate(`/evidences/preprocess/${evidenceId}`, { replace: true });
+        return;
+      }
+
+      setMainProgress(
+        "Processing stopped. Partial analysis was preserved and can be resumed.",
+      );
+      setMainColor("error");
       onComplete?.();
     } catch (err) {
       setCancelling(false);
+      setMainProgress(`Failed to stop processing: ${String(err)}`);
+      setMainColor("error");
       console.error("Failed to cancel processing", err);
     }
   };

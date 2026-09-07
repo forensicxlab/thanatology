@@ -1,4 +1,4 @@
-import Database from "@tauri-apps/plugin-sql";
+import type Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import {
   MBRPartitionEntry,
@@ -55,7 +55,7 @@ import type { FileTimeField } from "../store/timeFilterStore";
 
 export async function createUser(username: string, db: Database | null) {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   // Check if the username already exists
@@ -97,7 +97,7 @@ export async function fetchFiles(
 
 export async function getCases(db: Database | null) {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   const cases: Array<any> = await db.select("SELECT * FROM cases");
   return cases;
@@ -105,7 +105,7 @@ export async function getCases(db: Database | null) {
 
 export async function getEvidenceByCaseId(db: Database | null, caseId: number) {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   const evidences: Array<any> = await db.select(
     "SELECT * FROM evidence WHERE case_id = ?",
@@ -119,7 +119,7 @@ export async function getCaseWithEvidences(
   caseId: string | undefined,
 ): Promise<{ case: Case; evidences: Evidence[] }> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   if (!caseId) {
     throw new Error("Unknown case");
@@ -143,7 +143,7 @@ export async function getEvidence(
   evidenceId: string | undefined,
 ) {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   const evidenceData: Array<Evidence> = await db.select(
@@ -158,7 +158,7 @@ export async function deleteCase(
   db: Database | null,
 ): Promise<void> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   // Begin a transaction to ensure atomicity.
@@ -197,7 +197,7 @@ export async function deleteCase(
 }
 
 export async function deleteCases(caseIds: number[]): Promise<void> {
-  const db = await Database.load("sqlite:thanatology.db");
+  const db = await getMainDb();
 
   // If there are no IDs provided, exit early.
   if (caseIds.length === 0) return;
@@ -258,7 +258,7 @@ export async function savePreprocessingMetadata(
   db: Database | null,
 ): Promise<number> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   // Ensure the evidence record in 'evidence' table has a valid 'id'
@@ -475,7 +475,7 @@ export async function getSelectedPartitions(
   logicalRows: LogicalPartitionEntry[];
 }> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   const rows = await db.select<any[]>(
@@ -541,7 +541,7 @@ export async function getModulesForProcessing(
   db: Database | null,
 ): Promise<Module[]> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   // Fetch the parent (root) module
   const parentModules: Module[] = await db.select(
@@ -556,29 +556,13 @@ export async function getModulesForProcessing(
   return [parentModules[0], ...childModules];
 }
 
-// Set the processing status to running (2)
-export async function setProcessingInProgress(
-  db: Database | null,
-  metadata: ProcessedEvidenceMetadata,
-) {
-  if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
-  }
-  await db.execute(
-    `UPDATE evidence
-           SET status = 2
-         WHERE id = $1`,
-    [metadata.evidenceData.id],
-  );
-}
-
 // Set the processing status to finish for an evidence
 export async function setProcessingDone(
   db: Database | null,
   metadata: ProcessedEvidenceMetadata,
 ) {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   await db.execute(
     `UPDATE evidence
@@ -592,7 +576,7 @@ export async function getEvidencesStatus(
   db: Database | null,
 ): Promise<Evidence[]> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
   const evidences: Evidence[] = await db.select(
     "SELECT * FROM evidence WHERE status >= 1",
@@ -615,7 +599,7 @@ export async function getFilesByEvidenceAndParent(
   parentDirectory: string,
 ): Promise<File[]> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   const normalizedParentDirectory = normalizePathKey(parentDirectory);
@@ -652,7 +636,6 @@ export async function getFilesystemTreeChildren(
   parentPathKey: string,
 ): Promise<FilesystemTreeItem[]> {
   const db = await getEvidenceDb(evidenceId);
-  const normalizedParentPathKey = normalizePathKey(parentPathKey);
 
   const rows = await db.select<FilesystemTreeRow[]>((
     `
@@ -664,33 +647,27 @@ export async function getFilesystemTreeChildren(
         sf.parent_path_key,
         sf.ftype,
         sf.is_dir,
-        COALESCE(child_counts.child_count, 0) AS children_count
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM system_files child
+          WHERE child.evidence_id = sf.evidence_id
+            AND child.partition_id = sf.partition_id
+            AND child.parent_path_key = sf.path_key
+          LIMIT 1
+        ) THEN 1 ELSE 0 END AS children_count
       FROM system_files sf
-      LEFT JOIN (
-        SELECT
-          evidence_id,
-          partition_id,
-          parent_path_key,
-          COUNT(*) AS child_count
-        FROM system_files
-        WHERE evidence_id = $1
-          AND partition_id = $2
-        GROUP BY evidence_id, partition_id, parent_path_key
-      ) AS child_counts
-        ON child_counts.evidence_id = sf.evidence_id
-       AND child_counts.partition_id = sf.partition_id
-       AND child_counts.parent_path_key = sf.path_key
       WHERE sf.evidence_id = $1
         AND sf.partition_id = $2
         AND sf.parent_path_key = $3
       ORDER BY sf.is_dir DESC, LOWER(sf.name) ASC, sf.name ASC, sf.id ASC
     `
-  ), [evidenceId, partitionId, normalizedParentPathKey]);
+  ), [evidenceId, partitionId, parentPathKey]);
 
   return rows.map((row) => {
     const isDir = Number(row.is_dir ?? 0) === 1;
     return {
-      id: row.path_key,
+      id: filesystemTreeItemId(row.id),
+      fileId: Number(row.id),
       label: makeFilesystemTreeLabel(row.name, row.absolute_path, isDir),
       pathKey: row.path_key,
       parentPathKey: row.parent_path_key,
@@ -719,18 +696,32 @@ export async function getFilesystemTreeTrail(
     `WITH RECURSIVE trail AS (
        SELECT
          id, name, absolute_path, path_key, parent_path_key,
-         ftype, is_dir, depth, 0 AS level
+         ftype, is_dir, depth, 0 AS level,
+         printf(',%d,', id) AS visited_ids
        FROM system_files
        WHERE evidence_id = $1 AND partition_id = $2 AND id = $3
        UNION ALL
        SELECT
          parent.id, parent.name, parent.absolute_path, parent.path_key,
          parent.parent_path_key, parent.ftype, parent.is_dir, parent.depth,
-         trail.level + 1
-       FROM system_files parent
-       INNER JOIN trail ON parent.path_key = trail.parent_path_key
-       WHERE parent.evidence_id = $1 AND parent.partition_id = $2
-         AND trail.level < 256
+         trail.level + 1,
+         trail.visited_ids || parent.id || ','
+       FROM trail
+       INNER JOIN system_files parent
+         ON parent.id = (
+           SELECT candidate.id
+           FROM system_files candidate
+           WHERE candidate.evidence_id = $1
+             AND candidate.partition_id = $2
+             AND candidate.path_key = trail.parent_path_key
+             AND candidate.is_dir = 1
+           ORDER BY candidate.id ASC
+           LIMIT 1
+         )
+       WHERE trail.level < 256
+         AND trail.parent_path_key IS NOT NULL
+         AND trail.parent_path_key <> $4
+         AND instr(trail.visited_ids, printf(',%d,', parent.id)) = 0
      )
      SELECT
        trail.id,
@@ -741,19 +732,22 @@ export async function getFilesystemTreeTrail(
        trail.ftype,
        trail.is_dir,
        trail.depth,
-       (
-         SELECT COUNT(*) FROM system_files child
+       CASE WHEN EXISTS (
+         SELECT 1 FROM system_files child
          WHERE child.evidence_id = $1 AND child.partition_id = $2
            AND child.parent_path_key = trail.path_key
-       ) AS children_count
+         LIMIT 1
+       ) THEN 1 ELSE 0 END AS children_count
      FROM trail
-     ORDER BY trail.depth ASC, trail.id ASC`,
-    [evidenceId, partitionId, fileId],
+     WHERE trail.path_key <> $4
+     ORDER BY trail.level DESC, trail.id ASC`,
+    [evidenceId, partitionId, fileId, ROOT_PATH_KEY],
   );
   return rows.map((row) => {
     const isDir = Number(row.is_dir ?? 0) === 1;
     return {
-      id: row.path_key,
+      id: filesystemTreeItemId(row.id),
+      fileId: Number(row.id),
       label: makeFilesystemTreeLabel(row.name, row.absolute_path, isDir),
       pathKey: row.path_key,
       parentPathKey: row.parent_path_key,
@@ -774,7 +768,7 @@ export async function getFileByEvidenceAndAbsolutePath(
   absolutePath: string,
 ): Promise<File | null> {
   if (!db) {
-    db = await Database.load("sqlite:thanatology.db");
+    db = await getMainDb();
   }
 
   const rows: File[] = await db.select(
@@ -847,7 +841,7 @@ export async function getMediaStats(
     timeScope,
   );
 
-  const statsParams: any[] = [partitionId];
+  const statsParams: any[] = [evidenceId, partitionId];
   const statsTimeWhere = fileTimeFilterClause(
     "system_files",
     statsParams,
@@ -862,7 +856,8 @@ export async function getMediaStats(
        END AS kind,
        COUNT(*) as count
      FROM system_files
-     WHERE partition_id = $1
+     WHERE evidence_id = $1
+       AND partition_id = $2
        AND (sig_mime LIKE 'image%' OR sig_mime LIKE 'video%' OR sig_mime LIKE 'audio%')
        ${statsTimeWhere}
      GROUP BY kind`,
@@ -913,7 +908,7 @@ export async function searchMediaFiltered(
   }
 
   const typeWhere = `(${typeClauses.join(" OR ")})`;
-  const params: any[] = [partitionId];
+  const params: any[] = [evidenceId, partitionId];
   let searchWhere = "";
 
   if (options?.searchText && options.searchText.trim().length > 0) {
@@ -923,7 +918,7 @@ export async function searchMediaFiltered(
   }
 
   const mediaTimeWhere = fileTimeFilterClause("system_files", params, scope);
-  const where = `WHERE partition_id = $1 AND ${typeWhere}${searchWhere}${mediaTimeWhere}`;
+  const where = `WHERE evidence_id = $1 AND partition_id = $2 AND ${typeWhere}${searchWhere}${mediaTimeWhere}`;
 
   const countResult: Array<{ count: number }> = await db.select(
     `SELECT COUNT(*) as count FROM system_files ${where}`,
@@ -3041,6 +3036,25 @@ export async function getEvidenceTimeBounds(
  * distinct from every media file on disk — and is the only place the
  * hidden/trashed/favorite state and true capture date are recorded.
  */
+export async function hasIosPhotoLibraryArtifacts(
+  evidenceId: number,
+  partitionId: number,
+): Promise<boolean> {
+  const db = await getEvidenceDb(evidenceId);
+  const rows = await db.select<Array<{ found: number }>>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM artifact_objects
+       WHERE evidence_id = $1
+         AND partition_id = $2
+         AND parser = 'mobile_ios_photos'
+     ) AS found`,
+    [evidenceId, partitionId],
+  );
+
+  return Number(rows?.[0]?.found ?? 0) !== 0;
+}
+
 export async function getIosPhotoAssetsPage(
   evidenceId: number,
   partitionId: number,
@@ -4154,6 +4168,10 @@ function escapeLike(raw: string): string {
 
 export const ROOT_PATH_KEY = "/";
 
+export function filesystemTreeItemId(fileId: number): string {
+  return `file:${fileId}`;
+}
+
 function normalizePathKey(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   const parts = normalized.split("/").filter((part) => part.length > 0);
@@ -4300,13 +4318,13 @@ function buildFileScope(
 
   if (listingMode === "direct-children") {
     if (resolvedScope.kind === "file") {
-      clauses.push(`path_key = $${++lastIndex}`);
-      params.push(normalizePathKey(resolvedScope.pathKey));
+      clauses.push(`id = $${++lastIndex}`);
+      params.push(resolvedScope.fileId);
       orderBy = "id ASC";
     } else {
       const parentPath =
         resolvedScope.kind === "directory"
-          ? normalizePathKey(resolvedScope.pathKey)
+          ? resolvedScope.pathKey
           : ROOT_PATH_KEY;
 
       clauses.push(`parent_path_key = $${++lastIndex}`);
@@ -4321,15 +4339,15 @@ function buildFileScope(
   clauses.push("is_dir = 0");
 
   if (resolvedScope.kind === "directory") {
-    const normalizedPath = normalizePathKey(resolvedScope.pathKey);
+    const normalizedPath = resolvedScope.pathKey;
 
     if (normalizedPath !== ROOT_PATH_KEY) {
       clauses.push(`path_key LIKE $${++lastIndex} ESCAPE '\\'`);
       params.push(`${escapeLike(normalizedPath)}/%`);
     }
   } else if (resolvedScope.kind === "file") {
-    clauses.push(`path_key = $${++lastIndex}`);
-    params.push(normalizePathKey(resolvedScope.pathKey));
+    clauses.push(`id = $${++lastIndex}`);
+    params.push(resolvedScope.fileId);
   }
 
   return { clauses, params, lastIndex, orderBy };

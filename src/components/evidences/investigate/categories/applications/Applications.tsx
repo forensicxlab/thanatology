@@ -15,6 +15,8 @@ import CalendarGrid from "../mobile/CalendarGrid";
 import MailGrid from "../mobile/MailGrid";
 import NotesGrid from "../mobile/NotesGrid";
 import SpotlightExplore from "../explore/SpotlightExplore";
+import InstalledApplicationsView from "./InstalledApplicationsView";
+import { INSTALLED_APPLICATION_PARSERS } from "../../../../../dbutils/installedApplications";
 
 interface ApplicationsProps {
   evidenceId: number;
@@ -82,7 +84,18 @@ const loadApplicationGroups = async (
       sourceParser: "macos_spotlight",
     });
   }
-  return regular.sort((left, right) => left.tag.localeCompare(right.tag));
+  return regular.sort((left, right) => {
+    const leftIsInventory = hasParserCapability(
+      left,
+      ...INSTALLED_APPLICATION_PARSERS,
+    );
+    const rightIsInventory = hasParserCapability(
+      right,
+      ...INSTALLED_APPLICATION_PARSERS,
+    );
+    if (leftIsInventory !== rightIsInventory) return leftIsInventory ? -1 : 1;
+    return left.tag.localeCompare(right.tag);
+  });
 };
 
 const Applications: React.FC<ApplicationsProps> = ({
@@ -93,6 +106,20 @@ const Applications: React.FC<ApplicationsProps> = ({
   const viewsForItem = useCallback(
     (item: ApplicationTagDescriptor): CategoryTagView[] => {
       const views: CategoryTagView[] = [];
+
+      if (hasParserCapability(item, ...INSTALLED_APPLICATION_PARSERS)) {
+        views.push({
+          id: "installed-applications",
+          label: "Inventory & events",
+          node: (
+            <InstalledApplicationsView
+              evidenceId={evidenceId}
+              partitionId={partitionId}
+              onRevealFile={onRevealFile}
+            />
+          ),
+        });
+      }
 
       if (hasParserCapability(item, ...CHAT_PARSERS)) {
         views.push({

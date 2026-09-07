@@ -28,18 +28,26 @@ import {
 } from "@mui/icons-material";
 import { useNavigate } from "react-router";
 import { Evidence } from "../../../dbutils/types";
-import { invoke } from "@tauri-apps/api/core";
-import { appLocalDataDir } from "@tauri-apps/api/path";
 import { useSnackbar } from "../../SnackbarProvider";
 import LinearProgress from "@mui/material/LinearProgress";
 import CheckCircle from "@mui/icons-material/CheckCircle";
 import Autorenew from "@mui/icons-material/Autorenew";
 import { listen } from "@tauri-apps/api/event";
+import { deleteEvidences } from "../../../dbutils/sqlite";
+import {
+  cancelEvidenceProcessing,
+  getEvidenceSourceStatus,
+  relinkEvidenceSourceAndReset,
+  restartEvidenceProcessing,
+} from "../../../dbutils/evidenceLifecycle";
 import {
   EVIDENCE_STATUS,
   PROCESSING_STAGES,
   getEvidenceStatusInfo,
 } from "../../../dbutils/evidenceStatus";
+import EvidenceSourceRecoveryDialog, {
+  EvidenceSourceRecoveryIntent,
+} from "../dialogs/EvidenceSourceRecoveryDialog";
 
 const getStatusIcon = (status: number) => {
   const info = getEvidenceStatusInfo(status);
@@ -75,6 +83,7 @@ interface EvidenceCardProps {
   isSelected: boolean;
   onToggleSelect: (id: number) => void;
   onEvidenceChange?: () => void;
+  onEvidenceDeleted: (id: number) => void;
 }
 
 const EvidenceCard: React.FC<EvidenceCardProps> = ({
@@ -82,46 +91,174 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
   isSelected,
   onToggleSelect,
   onEvidenceChange,
+  onEvidenceDeleted,
 }) => {
   const navigate = useNavigate();
   const { display_message } = useSnackbar();
   const [hovered, setHovered] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [sourceRecovery, setSourceRecovery] = useState<{
+    intent: EvidenceSourceRecoveryIntent;
+    reason: string;
+    sourcePath?: string;
+    evidenceType?: Evidence["type"];
+  } | null>(null);
+
+  const showSourceRecovery = (
+    intent: EvidenceSourceRecoveryIntent,
+    reason: string,
+    sourcePath?: string,
+    evidenceType?: Evidence["type"],
+  ) => {
+    setSourceRecovery({ intent, reason, sourcePath, evidenceType });
+  };
+
+  const checkRegisteredSource = async (
+    intent: EvidenceSourceRecoveryIntent,
+  ): Promise<boolean> => {
+    try {
+      const source = await getEvidenceSourceStatus(evidence.id);
+      if (!source.available) {
+        showSourceRecovery(
+          intent,
+          source.reason ??
+            `The registered ${source.evidenceType} source is not available at ${source.path}.`,
+          source.path,
+          source.evidenceType,
+        );
+      }
+      return source.available;
+    } catch (error) {
+      showSourceRecovery(
+        intent,
+        `The registered evidence source could not be accessed: ${String(error)}`,
+      );
+      return false;
+    }
+  };
 
   const handleRestart = async () => {
+    if (actionBusy) return;
+    setActionBusy(true);
     try {
-      const baseDir = await appLocalDataDir();
-      await invoke("reset_evidence", {
-        evidenceId: evidence.id,
-        mainDbPath: `${baseDir}/thanatology.db`,
-        evidenceDbPath: `${baseDir}/evidences/${evidence.id}.db`,
-      });
+      if (!(await checkRegisteredSource("restart"))) return;
+      await restartEvidenceProcessing(evidence.id);
       display_message("success", "Evidence processing restarted.");
       onEvidenceChange?.();
     } catch (err) {
       display_message("error", `Failed to restart evidence: ${err}`);
+    } finally {
+      setActionBusy(false);
     }
   };
 
   const handleStop = async () => {
+    if (actionBusy) return;
+    setActionBusy(true);
     try {
-      await invoke("cancel_processing", { evidenceId: evidence.id });
-      display_message("info", "Stop requested, the process will complete its current task and stop.");
+      const result = await cancelEvidenceProcessing(evidence.id);
+      if (result.outcome === "resetToNotProcessed") {
+        display_message(
+          "info",
+          "No active processing task was found. Incomplete analysis data was removed and the evidence was reset to Not processed.",
+        );
+      } else {
+        display_message(
+          "info",
+          "Stop requested. The evidence is now marked as stopped.",
+        );
+      }
       onEvidenceChange?.();
     } catch (e) {
       display_message("error", `Failed to stop processing: ${e}`);
+    } finally {
+      setActionBusy(false);
     }
   };
 
   const handleInvestigate = async () => {
+    if (actionBusy) return;
+    setActionBusy(true);
     try {
-      const exists: boolean = await invoke("check_evidence_exists", { path: evidence.path });
-      if (exists) {
-        navigate(`/evidences/investigate/${evidence.id}`);
-      } else {
-        display_message("error", "The source evidence file is missing on disk. Please relink it manually.");
-      }
+      if (!(await checkRegisteredSource("review"))) return;
+      navigate(`/evidences/investigate/${evidence.id}`);
     } catch (e) {
       display_message("error", `Error checking evidence: ${e}`);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleOpenEvidenceWorkflow = async (
+    intent: "preprocess" | "process",
+  ) => {
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      if (!(await checkRegisteredSource(intent))) return;
+      navigate(
+        intent === "preprocess"
+          ? `/evidences/preprocess/${evidence.id}`
+          : `/evidences/process/${evidence.id}`,
+      );
+    } catch (error) {
+      display_message("error", `Error checking evidence: ${String(error)}`);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleRelink = async (newPath: string) => {
+    if (!sourceRecovery || actionBusy) return;
+    setActionBusy(true);
+    try {
+      const recoveryIntent = sourceRecovery.intent;
+      const result = await relinkEvidenceSourceAndReset(evidence.id, newPath);
+
+      display_message(
+        "success",
+        `Evidence source relinked to ${result.newPath}. Existing analysis was reset safely.`,
+      );
+      onEvidenceChange?.();
+      setSourceRecovery(null);
+      navigate(
+        recoveryIntent === "preprocess"
+          ? `/evidences/preprocess/${evidence.id}`
+          : `/evidences/process/${evidence.id}`,
+      );
+    } catch (error) {
+      throw new Error(`Failed to relink evidence source: ${String(error)}`);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleDeleteMissingEvidence = async () => {
+    if (actionBusy) return;
+    setActionBusy(true);
+    try {
+      const result = await deleteEvidences([evidence.id]);
+      if (!result.deletedEvidenceIds.includes(evidence.id)) {
+        throw new Error("The evidence record was not deleted.");
+      }
+
+      setSourceRecovery(null);
+      onEvidenceDeleted(evidence.id);
+      if (result.cleanupWarnings.length > 0) {
+        display_message(
+          "warning",
+          `Evidence record deleted, but some generated files could not be removed: ${result.cleanupWarnings.join(" ")}`,
+        );
+      } else {
+        display_message(
+          "success",
+          `EV-${evidence.id} was deleted. The original source was not modified.`,
+        );
+      }
+    } catch (error) {
+      display_message("error", `Failed to delete evidence: ${String(error)}`);
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -132,7 +269,11 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
     if (status === EVIDENCE_STATUS.NOT_PROCESSED) {
       return (
         <Tooltip title="Review for processing">
-          <IconButton size="small" onClick={() => navigate(`/evidences/preprocess/${evidence.id}`)}>
+          <IconButton
+            size="small"
+            disabled={actionBusy}
+            onClick={() => void handleOpenEvidenceWorkflow("preprocess")}
+          >
             <DoubleArrowSharp fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -145,7 +286,7 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
       <Tooltip
         title={info.isPartial ? "Review investigation (incomplete results)" : "Review investigation"}
       >
-        <IconButton size="small" onClick={handleInvestigate}>
+        <IconButton size="small" disabled={actionBusy} onClick={handleInvestigate}>
           <Visibility fontSize="small" color={info.isPartial ? "warning" : "inherit"} />
         </IconButton>
       </Tooltip>
@@ -162,7 +303,6 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
     const canResume =
       status === EVIDENCE_STATUS.PENDING ||
       status === EVIDENCE_STATUS.STOPPED ||
-      status === EVIDENCE_STATUS.STOPPING ||
       status === EVIDENCE_STATUS.INDEXING_FAILED ||
       status === EVIDENCE_STATUS.ARTEFACTS_FAILED;
 
@@ -173,10 +313,14 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
             title={
               status === EVIDENCE_STATUS.PENDING
                 ? "Start extraction"
-                : `Resume from ${PROCESSING_STAGES[info.stagesDone]?.label ?? "the last stage"}`
+                : "Restart analysis from indexing"
             }
           >
-            <IconButton size="small" onClick={() => navigate(`/evidences/process/${evidence.id}`)}>
+            <IconButton
+              size="small"
+              disabled={actionBusy}
+              onClick={() => void handleOpenEvidenceWorkflow("process")}
+            >
               <PlayArrow fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -184,7 +328,7 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
 
         {info.isRunning && status !== EVIDENCE_STATUS.STOPPING && (
           <Tooltip title="Stop processing">
-            <IconButton size="small" onClick={handleStop}>
+            <IconButton size="small" disabled={actionBusy} onClick={handleStop}>
               <Stop fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -192,9 +336,9 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
 
         {reviewAction}
 
-        {status !== EVIDENCE_STATUS.PENDING && (
+        {!info.isRunning && status !== EVIDENCE_STATUS.PENDING && (
           <Tooltip title="Restart processing">
-            <IconButton size="small" onClick={handleRestart}>
+            <IconButton size="small" disabled={actionBusy} onClick={handleRestart}>
               <RestartAlt fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -254,6 +398,7 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
   );
 
   return (
+    <>
     <Card
       variant="outlined"
       onMouseEnter={() => setHovered(true)}
@@ -386,6 +531,23 @@ const EvidenceCard: React.FC<EvidenceCardProps> = ({
         </>
       )}
     </Card>
+    {sourceRecovery && (
+      <EvidenceSourceRecoveryDialog
+        open
+        evidence={{
+          ...evidence,
+          path: sourceRecovery.sourcePath ?? evidence.path,
+          type: sourceRecovery.evidenceType ?? evidence.type,
+        }}
+        intent={sourceRecovery.intent}
+        reason={sourceRecovery.reason}
+        busy={actionBusy}
+        onClose={() => setSourceRecovery(null)}
+        onRelink={handleRelink}
+        onDelete={handleDeleteMissingEvidence}
+      />
+    )}
+    </>
   );
 };
 
@@ -415,6 +577,14 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
     });
   };
 
+  const handleEvidenceDeleted = (id: number) => {
+    const next = new Set(selectedIds);
+    next.delete(id);
+    setSelectedIds(next);
+    onSelectionChange(Array.from(next));
+    onEvidenceChange?.();
+  };
+
   return (
     <Box
       sx={{
@@ -431,6 +601,7 @@ const EvidenceList: React.FC<EvidenceListProps> = ({
           isSelected={selectedIds.has(evidence.id)}
           onToggleSelect={handleToggleSelect}
           onEvidenceChange={onEvidenceChange}
+          onEvidenceDeleted={handleEvidenceDeleted}
         />
       ))}
     </Box>

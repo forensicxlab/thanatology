@@ -112,7 +112,10 @@ impl Tool for ExhumeExtractionTool {
         let mut first_byte_addr: Option<u64> = None;
         let mut size_bytes: Option<u64> = None;
 
-        let mut body = Body::new(ev_path.clone(), "auto");
+        let mut body =
+            Body::try_new(ev_path.clone(), "auto").map_err(|error| ExtractFileError {
+                message: format!("Unable to open evidence source '{}': {error}", ev_path),
+            })?;
         let sector_size = body.get_sector_size() as u64;
 
         if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")
@@ -409,7 +412,10 @@ impl Tool for AnalyzeImageTool {
             let mut first_byte_addr: Option<u64> = None;
             let mut size_bytes: Option<u64> = None;
 
-            let mut body = Body::new(ev_path.clone(), "auto");
+            let mut body =
+                Body::try_new(ev_path.clone(), "auto").map_err(|error| ExtractFileError {
+                    message: format!("Unable to open evidence source '{}': {error}", ev_path),
+                })?;
             let sector_size = body.get_sector_size() as u64;
 
             if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")
@@ -780,7 +786,10 @@ impl Tool for QuerySqliteFileTool {
             let mut first_byte_addr: Option<u64> = None;
             let mut size_bytes: Option<u64> = None;
 
-            let mut body = Body::new(ev_path.clone(), "auto");
+            let mut body =
+                Body::try_new(ev_path.clone(), "auto").map_err(|error| QuerySqliteFileError {
+                    message: format!("Unable to open evidence source '{}': {error}", ev_path),
+                })?;
             let sector_size = body.get_sector_size() as u64;
 
             if let Ok(row) = sqlx::query("SELECT first_byte_addr, size_sectors, sector_size, size_bytes FROM partitions WHERE id = ?")

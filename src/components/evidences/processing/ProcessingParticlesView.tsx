@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
 import {
   Box,
   CircularProgress,
@@ -13,6 +12,8 @@ import {
 } from "@mui/material";
 import { StopCircle } from "@mui/icons-material";
 import { Evidence } from "../../../dbutils/types";
+import { useNavigate } from "react-router";
+import { cancelEvidenceProcessing } from "../../../dbutils/evidenceLifecycle";
 import ParserActivityStatus, {
   ParserProgressPayload,
 } from "./ParserActivityStatus";
@@ -124,6 +125,7 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
   evidence,
   onComplete,
 }) => {
+  const navigate = useNavigate();
   const evidenceId = evidence.id;
 
   const [activeStep, setActiveStep] = useState(stepForStatus(evidence.status));
@@ -382,13 +384,26 @@ const ProcessingParticlesView: React.FC<ProcessingParticlesViewProps> = ({
   const handleCancel = async () => {
     setCancelling(true);
     try {
-      await invoke("cancel_processing", { evidenceId });
-      setMainProgress("Stopping…");
+      const result = await cancelEvidenceProcessing(evidenceId);
       setProgress(null);
       setParserActivity(null);
+
+      if (result.outcome === "resetToNotProcessed") {
+        setMainProgress(
+          "No active processing task remained. Partial analysis was removed; preprocessing is required.",
+        );
+        onComplete?.();
+        navigate(`/evidences/preprocess/${evidenceId}`, { replace: true });
+        return;
+      }
+
+      setMainProgress(
+        "Processing stopped. Partial analysis was preserved and can be resumed.",
+      );
       onComplete?.();
     } catch (err) {
       setCancelling(false);
+      setMainProgress(`Failed to stop processing: ${String(err)}`);
       console.error("Failed to cancel processing", err);
     }
   };
