@@ -1,0 +1,95 @@
+name: Build desktop bundles
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - name: Windows x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - name: Linux x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            libudev-dev \
+            libusb-1.0-0-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config \
+            xdg-utils
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify LeechCore resources
+        run: node scripts/verify-leechcore-resources.mjs ${{ matrix.target }}
+
+      - name: Ad-hoc sign nested macOS libraries
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - --timestamp=none src-tauri/resources/leechcore/aarch64-apple-darwin/leechcore_ft601_driver_macos.dylib
+          codesign --force --sign - --timestamp=none src-tauri/resources/leechcore/aarch64-apple-darwin/libftd3xx.dylib
+          codesign --verify --strict src-tauri/resources/leechcore/aarch64-apple-darwin/leechcore_ft601_driver_macos.dylib
+          codesign --verify --strict src-tauri/resources/leechcore/aarch64-apple-darwin/libftd3xx.dylib
+
+      - name: Build desktop bundles
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        with:
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: thanatology-[version]-[platform]-[arch]-[bundle]
