@@ -838,13 +838,22 @@ export default function AgentWorkspace({
         minWidth: 0,
         overflow: "hidden",
         display: "grid",
-        gridTemplateRows: `${WINDOW_TITLEBAR_HEIGHT}px minmax(0, 1fr) auto ${STATUSBAR_HEIGHT}px`,
+        gridTemplateRows: `${WINDOW_TITLEBAR_HEIGHT}px auto minmax(0, 1fr) auto ${STATUSBAR_HEIGHT}px`,
       }}
     >
       <AgentTitlebar
         evidenceName={workspace.evidenceName}
         evidencePath={workspace.evidencePath}
       />
+
+      <Alert
+        severity="warning"
+        variant="outlined"
+        sx={{ mx: 0.75, mt: 0.75, py: 0 }}
+      >
+        <strong>Testing feature:</strong> The AI Agent (Exhume Agent) is not
+        stable and is subject to major changes.
+      </Alert>
 
       <Box
         sx={{

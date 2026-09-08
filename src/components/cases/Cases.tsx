@@ -8,6 +8,7 @@ import { Case } from "../../dbutils/types";
 import { getCases, deleteCases } from "../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
 import { useSnackbar } from "../SnackbarProvider";
+import type { UpdatedCaseMetadata } from "../../dbutils/cases";
 
 interface CasesProps {
   database: Database | null;
@@ -17,6 +18,16 @@ const Cases: React.FC<CasesProps> = ({ database }) => {
   const [cases, setCases] = useState<Case[]>([]);
   const [deleting, setDeleting] = useState(false); // NEW ✔
   const { display_message } = useSnackbar();
+
+  const handleCaseUpdated = (updatedCase: UpdatedCaseMetadata) => {
+    setCases((currentCases) =>
+      currentCases.map((caseItem) =>
+        caseItem.id === updatedCase.id
+          ? { ...caseItem, ...updatedCase }
+          : caseItem,
+      ),
+    );
+  };
 
   /* ---- handlers ---- */
   const handleDeleteCases = async (selectedIds: number[]) => {
@@ -37,12 +48,20 @@ const Cases: React.FC<CasesProps> = ({ database }) => {
 
   /* ---- initial fetch ---- */
   useEffect(() => {
+    let active = true;
+
     getCases(database)
-      .then((result: Case[]) => setCases(result))
+      .then((result: Case[]) => {
+        if (active) setCases(result);
+      })
       .catch(() => {
-        display_message("error", "Could not fetch cases.");
+        if (active) display_message("error", "Could not fetch cases.");
       });
-  }, [database]);
+
+    return () => {
+      active = false;
+    };
+  }, [database, display_message]);
 
   /* ---- render ---- */
   return (
@@ -52,7 +71,12 @@ const Cases: React.FC<CasesProps> = ({ database }) => {
       </Typography>
 
       {/* Main list */}
-      <CaseList cases={cases} onDeleteCases={handleDeleteCases} />
+      <CaseList
+        cases={cases}
+        database={database}
+        onDeleteCases={handleDeleteCases}
+        onCaseUpdated={handleCaseUpdated}
+      />
 
       {/* Full-screen loader while deleting */}
       <Backdrop

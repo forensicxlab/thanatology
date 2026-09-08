@@ -671,7 +671,21 @@ const InvestigateLinux: React.FC = () => {
                 />
               </TabPanel>
               <TabPanel value={value} index={8}>
-                Explore content
+                <Box
+                  sx={{
+                    display: "grid",
+                    placeItems: "center",
+                    flexGrow: 1,
+                    minHeight: 0,
+                    px: 2,
+                  }}
+                >
+                  <Alert severity="info" variant="outlined" sx={{ maxWidth: 560 }}>
+                    <strong>Explore is in progress.</strong> This workspace is
+                    still under development and is not available in this
+                    release.
+                  </Alert>
+                </Box>
               </TabPanel>
               <TabPanel value={value} index={9}>
                 <AiArtifacts

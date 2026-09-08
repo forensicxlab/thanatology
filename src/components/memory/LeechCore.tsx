@@ -418,7 +418,7 @@ const LeechCore: React.FC = () => {
       sx={{
         height: "100%",
         display: "grid",
-        gridTemplateRows: "auto auto minmax(0, 1fr)",
+        gridTemplateRows: "auto auto auto minmax(0, 1fr)",
         gap: 1.25,
         p: 1.25,
         boxSizing: "border-box",
@@ -654,6 +654,10 @@ const LeechCore: React.FC = () => {
           </Grid>
         </Stack>
       </Paper>
+      <Alert severity="warning" variant="outlined" sx={{ py: 0 }}>
+        <strong>Testing feature:</strong> The LeechCore benchmark is not stable
+        and is subject to major changes.
+      </Alert>
       <Paper variant="outlined" sx={{ px: 1.5, py: 1.25 }}>
         <Stack spacing={1.25}>
           <Box>

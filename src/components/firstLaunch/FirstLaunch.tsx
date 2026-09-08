@@ -1,5 +1,6 @@
 import React, { useState, ChangeEvent, FormEvent } from "react";
 import {
+  Alert,
   Box,
   Button,
   Container,
@@ -92,10 +93,13 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
           minHeight: "100%"
         }}>
         {/* Logo Placeholder */}
-        <Box sx={{
-          mb: 3
-        }}>
-          <img src="/ThanatologyFull.svg" alt="Logo" width={500} />
+        <Box sx={{ width: "100%", maxWidth: 500, mb: 3 }}>
+          <Box
+            component="img"
+            src="/ThanatologyFull.svg"
+            alt="Thanatology"
+            sx={{ display: "block", width: "100%", height: "auto" }}
+          />
         </Box>
 
         <Typography variant="h4" gutterBottom>
@@ -104,6 +108,19 @@ const FirstLaunch: React.FC<FirstLaunchProps> = ({
         <Typography variant="subtitle2" gutterBottom>
           Post-Mortem Forensics
         </Typography>
+
+        <Alert
+          severity="warning"
+          variant="outlined"
+          sx={{ width: "100%", mt: 1, mb: 2 }}
+        >
+          <Typography variant="subtitle2" component="div">
+            Demo software
+          </Typography>
+          Thanatology is still a demonstration project. Use it carefully,
+          independently validate its results, and take responsibility for how
+          you use the software.
+        </Alert>
 
         {/* User Form */}
         <form onSubmit={handleSubmit} style={{ width: "100%" }}>

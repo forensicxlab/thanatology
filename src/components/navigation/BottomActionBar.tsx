@@ -150,13 +150,13 @@ export default function BottomActionBar() {
           <Tooltip
             title={
               activeEvidenceId
-                ? "Open Exhume Agent workspace"
-                : "Open an evidence investigation to use Exhume Agent"
+                ? "Open Exhume Agent workspace (testing)"
+                : "Open an evidence investigation to use Exhume Agent (testing)"
             }
           >
             <span>
               <IconButton
-                aria-label="Open Exhume Agent workspace"
+                aria-label="Open Exhume Agent workspace (testing)"
                 size="small"
                 disabled={!activeEvidenceId || openingAgent}
                 onClick={() => void openAgentWorkspace()}

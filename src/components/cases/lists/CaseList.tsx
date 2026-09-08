@@ -24,13 +24,23 @@ import { Info, Numbers, Work } from "@mui/icons-material";
 import AddIcon from "@mui/icons-material/Add";
 import { Case } from "../../../dbutils/types";
 import { useNavigate } from "react-router";
+import type Database from "@tauri-apps/plugin-sql";
+import type { UpdatedCaseMetadata } from "../../../dbutils/cases";
+import EditCaseDialog from "../dialogs/EditCaseDialog";
 
 interface CaseListProps {
   cases: Case[];
+  database: Database | null;
   onDeleteCases: (selectedIds: number[]) => void; // Delete handler passed as a prop
+  onCaseUpdated: (updatedCase: UpdatedCaseMetadata) => void;
 }
 
-const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
+const CaseList: React.FC<CaseListProps> = ({
+  cases,
+  database,
+  onDeleteCases,
+  onCaseUpdated,
+}) => {
   const navigate = useNavigate();
 
   // Store selection (array of ids)
@@ -40,6 +50,7 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
   });
   // Control the delete confirmation dialog
   const [openConfirm, setOpenConfirm] = useState(false);
+  const [editingCase, setEditingCase] = useState<Case | null>(null);
 
   // Open the confirmation dialog when delete is clicked
   const handleDeleteSelected = () => {
@@ -102,21 +113,18 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
       headerName: "Actions",
       type: "actions",
       getActions: (params) => [
-        <Tooltip title="View Case">
+        <Tooltip key="view" title="View Case">
           <GridActionsCellItem
             icon={<VisibilityIcon />}
             label="View"
             onClick={() => navigate(`/cases/${params.id}`)}
           />
         </Tooltip>,
-        <Tooltip title="Edit Case">
+        <Tooltip key="edit" title="Edit Case">
           <GridActionsCellItem
             icon={<EditIcon />}
             label="Edit"
-            // sx={{
-            //   color: "primary.main",
-            // }}
-            onClick={() => console.log("Editing case:", params.id)}
+            onClick={() => setEditingCase(params.row as Case)}
           />
         </Tooltip>,
       ],
@@ -183,6 +191,21 @@ const CaseList: React.FC<CaseListProps> = ({ cases, onDeleteCases }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <EditCaseDialog
+        open={editingCase !== null}
+        caseDetails={editingCase}
+        database={database}
+        onClose={() => setEditingCase(null)}
+        onSaved={(updatedCase) => {
+          onCaseUpdated(updatedCase);
+          setEditingCase((currentCase) =>
+            currentCase?.id === updatedCase.id
+              ? { ...currentCase, ...updatedCase }
+              : currentCase,
+          );
+        }}
+      />
     </Box>
   );
 };

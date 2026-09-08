@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import NewEvidenceDialog from "../evidences/dialogs/NewEvidenceDialog";
 import {
@@ -14,16 +14,20 @@ import {
   Divider,
   Backdrop,
   CircularProgress,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import EditIcon from "@mui/icons-material/Edit";
 import EvidenceList from "../evidences/lists/EvidenceList";
 import { Case, Evidence } from "../../dbutils/types";
 import { getCaseWithEvidences, deleteEvidences } from "../../dbutils/sqlite";
 import Database from "@tauri-apps/plugin-sql";
 import { useSnackbar } from "../SnackbarProvider";
+import EditCaseDialog from "./dialogs/EditCaseDialog";
 
 interface CaseDetailsProps {
   database: Database | null;
@@ -38,32 +42,39 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
   const [openNewEvidenceDialog, setOpenNewEvidenceDialog] =
     useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [loadingCase, setLoadingCase] = useState(true);
+  const fetchRequestRef = useRef(0);
   const { display_message } = useSnackbar();
 
-  const fetchCaseData = async () => {
+  const fetchCaseData = useCallback(async () => {
+    const requestId = ++fetchRequestRef.current;
+    setLoadingCase(true);
     try {
       const { case: fetchedCase, evidences: fetchedEvidences } =
         await getCaseWithEvidences(database, id);
+      if (requestId !== fetchRequestRef.current) return;
       setCaseDetails(fetchedCase);
       setEvidences(fetchedEvidences);
     } catch (error) {
+      if (requestId !== fetchRequestRef.current) return;
       console.error("Error fetching case details:", error);
+      display_message("error", `Could not load case details: ${String(error)}`);
+    } finally {
+      if (requestId === fetchRequestRef.current) setLoadingCase(false);
     }
-  };
+  }, [database, display_message, id]);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const { case: fetchedCase, evidences: fetchedEvidences } =
-          await getCaseWithEvidences(database, id);
-        setEvidences(fetchedEvidences);
-        setCaseDetails(fetchedCase);
-      } catch (error) {
-        console.error("Error fetching case details:", error);
-      }
-    }
-    fetchData();
-  }, [id, database]);
+    setCaseDetails(null);
+    setEvidences([]);
+    setSelectedEvidenceIds([]);
+    setEditDialogOpen(false);
+    void fetchCaseData();
+    return () => {
+      fetchRequestRef.current += 1;
+    };
+  }, [fetchCaseData]);
 
   const handleDeleteSelected = async () => {
     if (selectedEvidenceIds.length === 0) {
@@ -115,9 +126,20 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
         <Grid size={12}>
           {caseDetails ? (
             <>
-              <Typography variant="h6" color="secondary">
-                CASES/{caseDetails.name}
-              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Typography variant="h6" color="secondary" sx={{ flexGrow: 1 }}>
+                  CASES/{caseDetails.name}
+                </Typography>
+                <Tooltip title="Edit case metadata">
+                  <IconButton
+                    size="small"
+                    aria-label="Edit case metadata"
+                    onClick={() => setEditDialogOpen(true)}
+                  >
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
               <Divider sx={{ my: 2 }} />
               <Typography variant="body1">
                 <strong>Identifier:</strong> CASE-{caseDetails.id}
@@ -126,8 +148,12 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
                 <strong>Description:</strong> {caseDetails.description}
               </Typography>
             </>
-          ) : (
+          ) : loadingCase ? (
             <Typography>Loading case details...</Typography>
+          ) : (
+            <Typography color="text.secondary">
+              Case details unavailable.
+            </Typography>
           )}
         </Grid>
 
@@ -163,13 +189,28 @@ const CaseDetails: React.FC<CaseDetailsProps> = ({ database }) => {
       </Box>
 
       {caseDetails && (
-        <NewEvidenceDialog
-          open={openNewEvidenceDialog}
-          onClose={() => setOpenNewEvidenceDialog(false)}
-          caseId={caseDetails.id}
-          database={database}
-          onEvidenceCreated={fetchCaseData}
-        />
+        <>
+          <NewEvidenceDialog
+            open={openNewEvidenceDialog}
+            onClose={() => setOpenNewEvidenceDialog(false)}
+            caseId={caseDetails.id}
+            database={database}
+            onEvidenceCreated={fetchCaseData}
+          />
+          <EditCaseDialog
+            open={editDialogOpen}
+            caseDetails={caseDetails}
+            database={database}
+            onClose={() => setEditDialogOpen(false)}
+            onSaved={(updatedCase) =>
+              setCaseDetails((currentCase) =>
+                currentCase?.id === updatedCase.id
+                  ? { ...currentCase, ...updatedCase }
+                  : currentCase,
+              )
+            }
+          />
+        </>
       )}
 
       {/* Delete Confirmation Dialog */}
