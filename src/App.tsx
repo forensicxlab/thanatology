@@ -20,7 +20,6 @@ import CaseDetails from "./components/cases/CaseDetails";
 import PreProcessing from "./components/evidences/preprocessing/PreProcessing";
 import Processing from "./components/evidences/processing/Processing";
 import LinuxInvestigation from "./components/evidences/investigate/Main";
-import { LicenseInfo } from "@mui/x-license";
 import RawViewer from "./components/windows/fileviewer/RawViewer";
 import { createGlassTheme } from "./glassTheme";
 import { NavHistoryProvider } from "./components/navigation/NavHistory";
@@ -41,8 +40,6 @@ const ViewerRoute: React.FC = () => {
     />
   );
 };
-
-LicenseInfo.setLicenseKey("LICENCE_KEY_HERE");
 
 const AppWithTheme: React.FC = () => {
   const { themeMode } = useThemeMode();

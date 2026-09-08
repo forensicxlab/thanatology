@@ -1,3 +1,4 @@
+import "./muiXLicense";
 import { createRoot } from "react-dom/client";
 import FileViewerApp from "./components/windows/fileviewer/FileViewerApp";
 import "@fontsource/roboto/300.css";
