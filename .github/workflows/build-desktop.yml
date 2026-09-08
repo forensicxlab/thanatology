@@ -45,6 +45,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Verify MUI X license key
+        env:
+          VITE_MUI_X_LICENSE_KEY: ${{ secrets.MUI_X_LICENSE_KEY }}
+        run: node -e "if ((process.env.VITE_MUI_X_LICENSE_KEY || '').trim().length === 0) { console.error('MUI_X_LICENSE_KEY repository secret is not configured.'); process.exit(1); }"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -93,6 +98,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          VITE_MUI_X_LICENSE_KEY: ${{ secrets.MUI_X_LICENSE_KEY }}
         with:
           args: --verbose --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
 
