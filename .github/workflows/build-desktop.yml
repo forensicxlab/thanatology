@@ -23,21 +23,26 @@ jobs:
             runner: macos-latest
             target: aarch64-apple-darwin
             bundles: dmg
+            artifact: thanatology-macos-aarch64
           - name: Windows x64
-            runner: windows-latest
+            # WiX 3 MSI validation depends on VBScript, which is not reliable on
+            # the newer Windows Server 2025 / Visual Studio 2026 runner image.
+            runner: windows-2022
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
+            artifact: thanatology-windows-x64
           - name: Linux x64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
+            artifact: thanatology-linux-x64
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -86,10 +91,18 @@ jobs:
           codesign --verify --strict src-tauri/resources/leechcore/aarch64-apple-darwin/libftd3xx.dylib
 
       - name: Build desktop bundles
+        id: build
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         with:
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: thanatology-[version]-[platform]-[arch]-[bundle]
+          args: --verbose --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+
+      - name: Upload desktop bundles
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/**
+          if-no-files-found: warn
+          compression-level: 0

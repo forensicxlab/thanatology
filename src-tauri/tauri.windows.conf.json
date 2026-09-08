@@ -9,6 +9,11 @@
       "resources/leechcore/x86_64-pc-windows-msvc/license_info_all.txt": "leechcore-runtime/license_info_all.txt",
       "resources/leechcore/x86_64-pc-windows-msvc/redist_vcruntime.txt": "leechcore-runtime/redist_vcruntime.txt",
       "resources/leechcore/x86_64-pc-windows-msvc/vcruntime140.dll": "leechcore-runtime/vcruntime140.dll"
+    },
+    "windows": {
+      "wix": {
+        "upgradeCode": "adf5c0fd-b53e-50da-9051-49fcdc748555"
+      }
     }
   }
 }
