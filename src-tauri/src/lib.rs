@@ -51,6 +51,7 @@ use modules::utils::th_progress::{emit_progress_event, ProgressMessageLevel, Pro
 use modules::th_identifier::identify_file_types;
 
 use modules::th_index::{index_folder, index_partition};
+use modules::th_paths::main_database_path;
 
 use std::{
     fs::File,
@@ -538,7 +539,7 @@ fn app_evidence_paths(app: &AppHandle, evidence_id: i64) -> Result<(PathBuf, Pat
         .app_local_data_dir()
         .map_err(|error| format!("Failed to resolve app-local data directory: {error}"))?;
     Ok((
-        app_data_dir.join("thanatology.db"),
+        main_database_path(app)?,
         app_data_dir
             .join("evidences")
             .join(format!("{evidence_id}.db")),
@@ -1038,13 +1039,8 @@ async fn save_evidence_images(
         return Ok(());
     }
 
-    let base_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
-    let main_db_path = format!("{}/thanatology.db", base_dir.display());
-
-    let pool = open_pool(&main_db_path)
+    let main_db_path = main_database_path(&app)?;
+    let pool = open_existing_main_pool(&main_db_path)
         .await
         .map_err(|e| format!("Failed to open main DB: {}", e))?;
 
@@ -1092,13 +1088,8 @@ async fn get_evidence_images(
     evidence_id: i64,
     app: tauri::AppHandle,
 ) -> Result<Vec<EvidenceImageResponse>, String> {
-    let base_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("Failed to get app local data dir: {}", e))?;
-    let main_db_path = format!("{}/thanatology.db", base_dir.display());
-
-    let pool = open_pool(&main_db_path)
+    let main_db_path = main_database_path(&app)?;
+    let pool = open_existing_main_pool(&main_db_path)
         .await
         .map_err(|e| format!("Failed to open main DB: {}", e))?;
 
@@ -3296,10 +3287,8 @@ pub fn run(init_migrations: Vec<Migration>) {
 
                                 // Spawn a targeted task to force DB states to Stopped (-1) and exit immediately
                                 tauri::async_runtime::spawn(async move {
-                                    use tauri::Manager;
-                                    if let Ok(base_dir) = app_clone.path().app_local_data_dir() {
-                                        let main_db_path = format!("{}/thanatology.db", base_dir.display());
-                                        if let Ok(pool) = sqlx::SqlitePool::connect(&format!("sqlite:{}", main_db_path)).await {
+                                    if let Ok(main_db_path) = main_database_path(&app_clone) {
+                                        if let Ok(pool) = open_existing_main_pool(&main_db_path).await {
                                             for eid in active_evidences {
                                                 // Force status to "Stopped/Error" (-1)
                                                 let _ = sqlx::query("UPDATE evidence SET status = -1 WHERE id = ? AND (status = -2 OR (status > 0 AND status < 5))")
@@ -3332,9 +3321,8 @@ pub fn run(init_migrations: Vec<Migration>) {
         .setup(|app| {
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(base_dir) = app_handle.path().app_local_data_dir() {
-                    let main_db_path = format!("sqlite:{}/thanatology.db", base_dir.display());
-                    if let Ok(pool) = sqlx::SqlitePool::connect(&main_db_path).await {
+                if let Ok(main_db_path) = main_database_path(&app_handle) {
+                    if let Ok(pool) = open_existing_main_pool(&main_db_path).await {
                         let result = sqlx::query("UPDATE evidence SET status = -1 WHERE status = -2")
                             .execute(&pool)
                             .await;

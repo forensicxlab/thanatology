@@ -13,8 +13,14 @@ import { createCaseAndEvidences } from "../../../dbutils/cases";
 import Database from "@tauri-apps/plugin-sql";
 import { useNavigate } from "react-router";
 import { CheckCircle } from "@mui/icons-material";
+import { useSnackbar } from "../../SnackbarProvider";
 
 const steps = ["Case information", "Evidence(s)", "Summary"];
+
+function formatCaseCreationError(error: unknown): string {
+  const message = String(error).replace(/\s+/g, " ").trim();
+  return message || "Unknown error";
+}
 
 interface CaseCreationStepperProps {
   database: Database | null;
@@ -22,6 +28,7 @@ interface CaseCreationStepperProps {
 
 const CaseCreationStepper: React.FC<CaseCreationStepperProps> = (_props) => {
   const navigate = useNavigate();
+  const { display_message } = useSnackbar();
   const [activeStep, setActiveStep] = useState(0);
   const [skipped, setSkipped] = useState(new Set<number>());
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -109,6 +116,11 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = (_props) => {
 
   // This async function will be triggered on the last step to create the case in the database.
   const handleFinish = async () => {
+    if (isSubmitting) {
+      return;
+    }
+
+    setCreatedCaseId(null);
     setIsSubmitting(true);
     try {
       const caseId = await createCaseAndEvidences(
@@ -136,7 +148,10 @@ const CaseCreationStepper: React.FC<CaseCreationStepperProps> = (_props) => {
       setActiveStep(steps.length);
     } catch (error) {
       console.error("Error creating case:", error);
-      // TODO: surface a user-visible message/snackbar
+      display_message(
+        "error",
+        `Could not create case: ${formatCaseCreationError(error)}`,
+      );
     } finally {
       setIsSubmitting(false);
     }

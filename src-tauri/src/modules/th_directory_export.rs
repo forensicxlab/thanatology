@@ -1,8 +1,10 @@
+use crate::modules::th_paths::main_database_path;
 use exhume_body::Body;
-use exhume_filesystem::detected_fs::{DetectedFs, ImageStream, KeyMaterial, detect_filesystem};
+use exhume_filesystem::detected_fs::{detect_filesystem, DetectedFs, ImageStream, KeyMaterial};
 use exhume_filesystem::directory_export::{
-    DirectoryExportControl, DirectoryExportError, DirectoryExportOptions, DirectoryExportProgress,
-    DirectoryExportProvenance, DirectoryExportSource, DirectoryExportStage, export_directory,
+    export_directory, DirectoryExportControl, DirectoryExportError, DirectoryExportOptions,
+    DirectoryExportProgress, DirectoryExportProvenance, DirectoryExportSource,
+    DirectoryExportStage,
 };
 use exhume_filesystem::filesystem::{FileCommon, Filesystem};
 use exhume_filesystem::folder_impl::FolderFS;
@@ -692,12 +694,13 @@ async fn load_prepared_context(
     app: &AppHandle,
     request: &StartDirectoryExportRequest,
 ) -> Result<PreparedDirectoryExport, String> {
+    let main_db_path = main_database_path(app)?;
     let base_dir = app
         .path()
         .app_local_data_dir()
         .map_err(|error| format!("Failed to locate application data: {error}"))?;
     load_prepared_context_at_paths(
-        &base_dir.join("thanatology.db"),
+        &main_db_path,
         &base_dir
             .join("evidences")
             .join(format!("{}.db", request.evidence_id)),

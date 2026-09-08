@@ -1,4 +1,5 @@
 use crate::modules::agents::runtime::{close_agent_sessions_for_evidence, AgentRuntimeState};
+use crate::modules::th_paths::main_database_path;
 use crate::modules::th_spatiotemporal::{
     close_spatiotemporal_sessions_for_evidence, SpatiotemporalSessionState,
 };
@@ -47,11 +48,20 @@ pub struct EvidenceDeletionResult {
 
 #[tauri::command]
 pub async fn create_case_with_evidence(
+    app: AppHandle,
     case: CaseInput,
     evidences: Vec<EvidenceInput>,
-    db_path: String,
 ) -> Result<i64, String> {
-    let pool = SqlitePool::connect(&db_path)
+    let db_path = main_database_path(&app)?;
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(30));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
         .await
         .map_err(|e| format!("DB connection error: {e}"))?;
 
@@ -182,11 +192,11 @@ pub async fn delete_evidences(
         })?;
     }
 
+    let main_db_path = main_database_path(&app)?;
     let app_data_dir = app
         .path()
         .app_local_data_dir()
         .map_err(|error| format!("Failed to resolve app-local data directory: {error}"))?;
-    let main_db_path = app_data_dir.join("thanatology.db");
     let options = SqliteConnectOptions::new()
         .filename(&main_db_path)
         .create_if_missing(false)

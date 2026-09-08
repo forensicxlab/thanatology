@@ -1,6 +1,5 @@
 // src/dbutils/tauriCommands.ts
 import { invoke } from "@tauri-apps/api/core";
-import { appLocalDataDir } from "@tauri-apps/api/path";
 import { EvidenceImageInput } from "./types";
 
 type CaseInput = {
@@ -21,11 +20,9 @@ export async function createCaseAndEvidences(
   caseData: CaseInput,
   evidences: EvidenceInput[],
 ): Promise<number> {
-  const appLocalDataDirPath = await appLocalDataDir();
   // Returns the created case_id
   return await invoke<number>("create_case_with_evidence", {
     case: caseData,
     evidences,
-    dbPath: `${appLocalDataDirPath}/thanatology.db`,
   });
 }

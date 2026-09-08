@@ -8,5 +8,6 @@ pub mod th_identifier;
 pub mod th_index;
 pub mod th_maps;
 pub mod th_memory;
+pub mod th_paths;
 pub mod th_spatiotemporal;
 pub mod utils;

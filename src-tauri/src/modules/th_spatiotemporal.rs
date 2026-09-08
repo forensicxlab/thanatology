@@ -1,3 +1,4 @@
+use crate::modules::th_paths::main_database_path;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::collections::HashMap;
@@ -704,11 +705,7 @@ fn apply_state_update(
 }
 
 async fn validate_reviewable_evidence(app: &AppHandle, evidence_id: i64) -> Result<(), String> {
-    let base_dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Failed to locate application data: {error}"))?;
-    let main_database_path = base_dir.join("thanatology.db");
+    let main_database_path = main_database_path(app)?;
     let options = SqliteConnectOptions::new()
         .filename(&main_database_path)
         .read_only(true)
