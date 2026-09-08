@@ -25,11 +25,9 @@ jobs:
             bundles: dmg
             artifact: thanatology-macos-aarch64
           - name: Windows x64
-            # WiX 3 MSI validation depends on VBScript, which is not reliable on
-            # the newer Windows Server 2025 / Visual Studio 2026 runner image.
             runner: windows-2022
             target: x86_64-pc-windows-msvc
-            bundles: nsis,msi
+            bundles: nsis
             artifact: thanatology-windows-x64
           - name: Linux x64
             runner: ubuntu-22.04
