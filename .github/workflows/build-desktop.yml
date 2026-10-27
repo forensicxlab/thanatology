@@ -1,13 +1,22 @@
-name: Build desktop bundles
+name: Prepare desktop release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Version tag matching package.json (for example v26.1.1)'
+        required: true
+        type: string
+      release_notes:
+        description: 'Release notes shown in the application and GitHub draft'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-build-${{ github.ref }}
+  group: desktop-release-${{ inputs.release_tag }}
   cancel-in-progress: false
 
 jobs:
@@ -22,7 +31,7 @@ jobs:
           - name: macOS Apple Silicon
             runner: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
             artifact: thanatology-macos-aarch64
           - name: Windows x64
             runner: windows-2022
@@ -85,6 +94,13 @@ jobs:
       - name: Verify LeechCore resources
         run: node scripts/verify-leechcore-resources.mjs ${{ matrix.target }}
 
+      - name: Prepare signed updater configuration
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/prepare-updater-build.mjs
+
       - name: Ad-hoc sign nested macOS libraries
         if: runner.os == 'macOS'
         run: |
@@ -93,20 +109,117 @@ jobs:
           codesign --verify --strict src-tauri/resources/leechcore/aarch64-apple-darwin/leechcore_ft601_driver_macos.dylib
           codesign --verify --strict src-tauri/resources/leechcore/aarch64-apple-darwin/libftd3xx.dylib
 
+      - name: Validate optional macOS signing configuration
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          const identity = (process.env.APPLE_SIGNING_IDENTITY || '').trim();
+          const certificate = (process.env.APPLE_CERTIFICATE || '').trim();
+          const password = process.env.APPLE_CERTIFICATE_PASSWORD || '';
+          if (identity || certificate || password) {
+            if (!identity.startsWith('Developer ID Application:') || !certificate || !password) {
+              console.error('Configure APPLE_SIGNING_IDENTITY (Developer ID Application), APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD together. Partial signing configuration cannot fall back to ad-hoc signing.');
+              process.exit(1);
+            }
+          } else {
+            console.log('No Developer ID configured; using the existing ad-hoc build mode.');
+          }
+          NODE
+
       - name: Build desktop bundles
         id: build
         uses: tauri-apps/tauri-action@v0.6.2
         env:
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && (vars.APPLE_SIGNING_IDENTITY || '-') || '' }}
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           VITE_MUI_X_LICENSE_KEY: ${{ secrets.MUI_X_LICENSE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: --verbose --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci -- --locked
+          args: --verbose --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.updater.conf.json --ci -- --locked
 
       - name: Upload desktop bundles
-        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/**
-          if-no-files-found: warn
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+          if-no-files-found: error
           compression-level: 0
+
+  draft-release:
+    name: Assemble draft release
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: thanatology-*
+          path: release-artifacts
+      - name: Assemble complete release manifest
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          node --input-type=module -e "import {writeFileSync} from 'node:fs'; writeFileSync('release-notes.md', process.env.RELEASE_NOTES);"
+          node scripts/assemble-updater-release.mjs release-artifacts release-output release-notes.md
+      - name: Create or reuse this commit's draft
+        uses: actions/github-script@v8
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const repo = context.repo;
+            // An existing tag must identify exactly the commit being built.
+            try {
+              const { data: commit } = await github.rest.repos.getCommit({ ...repo, ref: tag });
+              if (commit.sha !== context.sha) throw new Error('The release tag points to a different commit.');
+            } catch (error) {
+              if (error.status !== 404 && error.status !== 422) throw error;
+            }
+            let existing;
+            try {
+              existing = (await github.rest.repos.getReleaseByTag({ ...repo, tag })).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (existing) {
+              if (!existing.draft || existing.target_commitish !== context.sha) {
+                throw new Error('Only an unpublished draft from this exact commit can be rebuilt. Use a new version otherwise.');
+              }
+              await github.rest.repos.updateRelease({ ...repo, release_id: existing.id,
+                body: process.env.RELEASE_NOTES, prerelease: true });
+            } else {
+              await github.rest.repos.createRelease({ ...repo, tag_name: tag, target_commitish: context.sha,
+                name: `Thanatology ${tag}`, body: process.env.RELEASE_NOTES, draft: true, prerelease: true });
+            }
+      - name: Upload signed assets to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" release-output/* --clobber
+      - name: Retain manifest for review
+        uses: actions/upload-artifact@v6
+        with:
+          name: thanatology-update-manifest
+          path: release-output/latest.json
+          if-no-files-found: error
